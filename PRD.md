@@ -96,8 +96,13 @@ Files specific to one pitch.
 
 **Technical notes**:
 
-- Spec and text files go through the standard RAG pipeline
-- Visual references require multimodal processing, deferred to Phase 2
+- Spec and text files go through the standard RAG pipeline (parse → chunk → embed → Pinecone)
+- Visual references (design decks, moodboards) require multimodal processing, deferred to Phase 2:
+  - Render slides to images → Claude Vision extracts structured style descriptions
+  - Style attributes: color palette, layout patterns, typography, visual density, design keywords
+  - Descriptions are embedded as text into `brand_spec_{client_id}` for downstream RAG
+  - PPT Builder uses retrieved style info to select templates and configure visual parameters
+  - Does NOT reproduce pixel-perfect designs; provides style alignment guidance
 
 ---
 
@@ -555,7 +560,7 @@ Brief Analyzer processes
 
 ## 6. Open Questions
 
-- [ ] Processing depth for visual reference files (moodboard, competitor screenshots)
+- [x] ~~Processing depth for visual reference files~~ → Claude Vision style extraction, embed as text descriptions, used for template selection and tone alignment (not pixel reproduction)
 - [ ] Compliance and feasibility of social media data acquisition (varies by locale)
 - [ ] Cold-start strategy for resource databases (where does initial data come from)
 - [ ] Resource Agent trigger boundary: is Strategy output sufficient to determine resource types, or should the user explicitly select at Node 2?

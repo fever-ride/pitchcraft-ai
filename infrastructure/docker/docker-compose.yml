@@ -1,0 +1,106 @@
+services:
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - pitchcraft_network
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=pitchcraft
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - EMBEDDING_SERVICE_URL=http://embedding:8001
+    env_file:
+      - ../../.env
+    depends_on:
+      - mongodb
+      - redis
+      - embedding
+    networks:
+      - pitchcraft_network
+
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    command: celery -A backend.core.tasks worker --loglevel=info
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=pitchcraft
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - EMBEDDING_SERVICE_URL=http://embedding:8001
+    env_file:
+      - ../../.env
+    depends_on:
+      - mongodb
+      - redis
+      - embedding
+    networks:
+      - pitchcraft_network
+
+  embedding:
+    build:
+      context: ../../infrastructure/docker/embedding
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    networks:
+      - pitchcraft_network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - pitchcraft_network
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - pitchcraft_network
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - pitchcraft_network
+
+networks:
+  pitchcraft_network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  redis_data:
+  pptx_output:
+  uploaded_files:

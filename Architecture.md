@@ -331,9 +331,10 @@ Identify file type (determines namespace and chunk strategy)
 └── visual_ref    → store in MongoDB, Phase 2 multimodal processing
         ↓
 Format parsing
-├── PDF  → PyPDF2
+├── PDF  → pypdf (text extraction)
 ├── PPTX → python-pptx (extract text + page structure)
-└── DOCX → python-docx
+├── DOCX → python-docx
+└── visual_ref → Phase 2 multimodal pipeline (see 3.4)
         ↓
 Semantic chunking
 ├── Unit: tokens (BGE-M3 tokenizer)
@@ -349,6 +350,88 @@ Write to corresponding Pinecone namespace
 Write metadata to MongoDB files collection
 (filename, file_category, file_type, namespace, processing_status)
 ```
+
+### 3.4 Visual Reference Processing Pipeline (Phase 2)
+
+Design decks and moodboards contain minimal extractable text. A multimodal pipeline converts visual slides into structured style descriptions for embedding.
+
+```
+User uploads visual_ref file (PPTX / PDF)
+        ↓
+Celery task: process_visual_file_task
+        ↓
+Render to images
+├── PPTX → LibreOffice headless → PNG per slide
+└── PDF  → pdf2image (poppler) → PNG per page
+        ↓
+Filter: skip slides with >80% text area (already in text pipeline)
+        ↓
+Claude Vision analysis (batched, 5 slides per request)
+        ↓
+Per-slide structured output:
+{
+  "slide_index": 3,
+  "color_palette": {
+    "primary": "#1A2B5E",
+    "secondary": "#F5A623",
+    "accent": "#FFFFFF",
+    "background": "#F8F8F8"
+  },
+  "layout_pattern": "left-right split, image left, text right",
+  "typography": {
+    "heading": "sans-serif, bold, high contrast",
+    "body": "sans-serif, regular, 14-16pt equivalent"
+  },
+  "image_text_ratio": 0.65,
+  "visual_density": "moderate",
+  "design_keywords": ["corporate", "clean", "data-driven"],
+  "notable_elements": ["line charts", "icon set", "photography: office/team"]
+}
+        ↓
+Aggregate across all slides → Visual Identity Summary:
+{
+  "dominant_colors": ["#1A2B5E", "#F5A623"],
+  "primary_layout": "left-right split",
+  "typography_family": "sans-serif",
+  "overall_density": "moderate",
+  "design_language": "corporate clean with data visualization focus",
+  "photography_style": "professional team/office shots, natural lighting"
+}
+        ↓
+Embed: per-slide descriptions + summary → brand_spec_{client_id} namespace
+Store: PNG thumbnails → object storage (for UI preview)
+Update: MongoDB file record (chunk_count, processing_status, thumbnail_urls)
+```
+
+**Claude Vision prompt structure:**
+
+```
+Analyze this presentation slide as a design reference. Do not describe the
+content/message. Focus only on visual design attributes.
+
+Output a JSON object with these fields:
+- color_palette: {primary, secondary, accent, background} as hex
+- layout_pattern: describe the spatial arrangement in one phrase
+- typography: {heading, body} describe style, not content
+- image_text_ratio: float 0-1 (1 = all image)
+- visual_density: "minimal" | "moderate" | "dense"
+- design_keywords: 3-5 style descriptors
+- notable_elements: list of visual elements present
+```
+
+**Downstream usage:**
+
+| Consumer | What it retrieves | How it uses it |
+|----------|------------------|----------------|
+| PPT Builder | Visual Identity Summary | Select matching template, set color scheme and fonts |
+| Slide Content Agent | Per-slide layout patterns | Adjust copy length to match visual density |
+| Brand Check | Design keywords | Flag if strategy tone contradicts visual identity |
+
+**Cost estimation:**
+
+Assuming 15 slides per file, 5 slides per Vision request = 3 API calls per file.
+At ~$0.02/image (Claude Vision pricing), processing one deck costs ~$0.30.
+Batch mode and skip-text-heavy filter reduce this by ~30% in practice.
 
 ---
 
