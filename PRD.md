@@ -1,497 +1,565 @@
-# PRD: Marketing Automation Multi-Agent System
+# PRD: Pitchcraft
 
-**版本**：v0.4  
-**状态**：草稿  
-**最后更新**：2026-05  
-**更新内容**：新增PPT结构自定义、Human-in-the-loop机制、客户反馈触发重跑逻辑
-
----
-
-## 1. 项目背景
-
-### 1.1 是什么
-
-一个面向**乙方公关/营销公司Account角色**的AI提案辅助系统。通过Multi-Agent架构，自动化提案阶段的核心工作流：从理解客户brief，到产出策略、文案、竞品分析、外部资源匹配，最终生成可直接使用的提案PPT。
-
-### 1.2 解决什么问题
-
-Account在提案阶段面临的核心痛点：
-
-- **时间压力大**：从收到brief到提案通常只有3-5天
-- **信息分散**：品牌资料、竞品信息、KOL数据分散在不同地方
-- **重复劳动多**：每次提案都要重新整理相似结构的内容
-- **对齐成本高**：要同时对齐客户需求、创意方向、执行可行性
-
-### 1.3 目标用户
-
-**主要用户**：乙方PR/MKT公司的Account Executive / Account Manager
-
-**用户特征**：
-
-- 熟悉品牌传播逻辑，但技术背景较弱
-- 时间敏感，需要快速产出
-- 需要产出物可以直接用或稍加修改后使用
-- 同时管理多个客户账户
+**Version**: v0.4
+**Status**: Draft
+**Last updated**: 2026-05
 
 ---
 
-## 2. 核心功能模块
+## 1. Background
 
-### 2.1 文件管理系统
+### 1.1 What is Pitchcraft
 
-Account在提案前需要整理两类文件，系统需要区分管理。
+An AI proposal assistant for Account teams at PR and marketing agencies. It uses a multi-agent architecture to automate the core pitch workflow: understanding client briefs, generating strategy, writing copy, analyzing competitors, matching external resources, and producing a ready-to-use PowerPoint deck.
 
-#### 长期品牌文件库（Brand Library）
+### 1.2 Problem
 
-某个客户的长期沉淀资产，跨项目复用。
+Account teams face four pain points during pitch season:
 
-| 文件类型   | 示例                            | 用途                 |
-| ---------- | ------------------------------- | -------------------- |
-| 品牌规范类 | VI指南、品牌手册、Tone of Voice | 生成内容时的底层约束 |
-| 历史提案类 | 过往campaign deck、策略文档     | RAG风格参照          |
-| 品牌内容类 | 历史文案、social内容            | 文案风格学习         |
+- **Time pressure**: 3-5 days from brief to delivery
+- **Scattered information**: Brand assets, competitor intel, and KOL data live in different places
+- **Repetitive structure work**: Every pitch rebuilds similar slide frameworks from scratch
+- **High alignment cost**: Strategy, creative direction, and execution feasibility must all agree
 
-#### 项目文件库（Project Library）
+### 1.3 Target Users
 
-针对某个具体提案项目，项目结束后归档。
+**Primary user**: Account Executive / Account Manager at agency-side PR or marketing firms.
 
-| 文件类型   | 示例                               | 用途                    |
-| ---------- | ---------------------------------- | ----------------------- |
-| 需求文档类 | 客户brief、会议记录                | Brief解析输入           |
-| 视觉参考类 | Moodboard、竞品截图、inspiration图 | 视觉方向参考（Phase 2） |
-| 竞品资料类 | 竞品文案、竞品deck截图             | 竞品分析输入            |
+**User traits**:
 
-**技术说明**：
+- Strong brand communications instincts, weak technical background
+- Time-sensitive, needs fast output
+- Expects deliverables that are usable immediately or with minimal edits
+- Manages multiple client accounts simultaneously
+- Multiple Accounts at the same agency may collaborate on one client
 
-- 规范类和文字内容类走标准RAG pipeline
-- 视觉参考类需要多模态处理，列入Phase 2
+### 1.4 Multi-Tenancy and Collaboration
 
----
+The system uses the agency (company) as the top-level tenant and supports multi-Account collaboration.
 
-### 2.2 Brief Analyzer（核心入口）
-
-用户用自然语言输入客户需求，系统结构化理解并补全信息缺口。
-
-**输入**：自然语言brief（可以很口语化、不完整）
-
-**处理逻辑**：
+**Data hierarchy**:
 
 ```
-提取已知信息
-├── 品牌/客户名称
-├── Campaign主题或方向
-├── 目标受众
-├── 传播渠道
-├── 预算范围
-├── 时间节点
-└── Campaign目标（曝光/转化/品牌）
-
-识别模糊信息
-├── 意图不清晰的描述（"年轻化"、"有温度"）
-└── 指代不明的表述（"跟上次类似"）
-
-检测必填缺口
-└── 核心信息缺失时生成追问清单
-
-判断可否执行
-├── 信息足够 → 进入Agent流水线
-└── 信息不足 → 返回结构化追问
+Organization (Agency)
+    ↓
+Client ← Brand Library lives here, visible to all org members
+    ↓
+Project ← Can be restricted to assigned Accounts only
+    ↓
+Proposal ← Individual Account's work product
 ```
 
-**输出**：结构化的Brief卡片 + 追问清单（如有）
+**Permission tiers**:
+
+| Action | Account | Lead Account | Admin |
+|--------|---------|--------------|-------|
+| View Brand Library | Yes | Yes | Yes |
+| Upload to Brand Library | Yes | Yes | Yes |
+| Delete Brand Library files | No | Yes | Yes |
+| Modify client default deck structure | No | Yes | Yes |
+| View all projects | No | Yes | Yes |
+
+**Concurrency handling**:
+
+- Duplicate filename upload: auto-suffix the later upload, prompt user to confirm replacement
+- File deletion: soft-delete (`deleted=true`), does not affect running pipelines
+- Deck structure modification: pipeline snapshots the structure at start time, later edits do not affect in-progress runs
 
 ---
 
-### 2.3 Research Agent（竞品调研子系统）
+## 2. Core Modules
 
-提案阶段调研是最耗时的环节，也是最有价值的自动化点。
+### 2.1 File Management
 
-#### 调研维度
+Accounts organize two types of files before pitching. The system manages them separately.
 
-| 维度       | 内容                             | 数据来源                                          |
-| ---------- | -------------------------------- | ------------------------------------------------- |
-| 品牌定位   | 竞品的核心价值主张、slogan、定位 | 网络搜索、官网                                    |
-| 传播策略   | 近期campaign主题、传播节奏       | 新闻、公开报道                                    |
-| 社媒表现   | 各平台内容风格、互动数据         | 用户上传截图（Phase 1）/ 第三方平台API（Phase 2） |
-| 视觉风格   | 色调、设计语言                   | 用户上传竞品截图                                  |
-| 历史库检索 | 是否做过该竞品的相关分析         | 内部RAG素材库                                     |
+#### Brand Library (long-term, cross-project)
 
-#### 数据获取策略
+Persistent brand assets for a client, reused across projects.
 
-**Phase 1（可行）**：
+| Type | Examples | Purpose |
+|------|----------|---------|
+| Brand specs | VI guide, brand book, Tone of Voice | Constraints for content generation |
+| Historical proposals | Past campaign decks, strategy docs | RAG style reference |
+| Brand content | Past copywriting, social posts | Copy style learning |
 
-- 实时网络搜索：品牌新闻、公开报道、官网信息
-- 用户手动上传竞品截图，系统分析整理
-- 检索内部历史分析文件
+#### Project Library (per-project, archived after completion)
 
-**Phase 2（扩展）**：
+Files specific to one pitch.
 
-- 接入第三方数据平台（蝉妈妈、飞瓜数据）获取社媒数据
-- 多模态分析竞品视觉风格
+| Type | Examples | Purpose |
+|------|----------|---------|
+| Requirements | Client brief, meeting notes | Brief Analyzer input |
+| Visual references | Moodboard, competitor screenshots | Visual direction (Phase 2) |
+| Competitor materials | Competitor copy, competitor deck screenshots | Research input |
 
-**输出**：结构化竞品分析报告，可直接插入提案deck的竞品分析页
+**Technical notes**:
+
+- Spec and text files go through the standard RAG pipeline
+- Visual references require multimodal processing, deferred to Phase 2
+
+---
+
+### 2.2 Brief Analyzer (Entry Point)
+
+Users input client requirements in natural language. The system extracts structure and fills information gaps.
+
+**Input**: Free-form brief (can be informal, incomplete)
+
+**Processing logic**:
+
+```
+Extract known fields
+├── Brand / client name
+├── Campaign theme or direction
+├── Target audience
+├── Channels
+├── Budget range
+├── Timeline
+└── Campaign objective (awareness / conversion / branding)
+
+Flag ambiguous language
+├── Unclear intent ("make it youthful", "something warm")
+└── Unresolved references ("similar to last time")
+
+Detect required gaps
+└── Generate clarification questions for missing critical fields
+
+Decide readiness
+├── Sufficient info → enter agent pipeline
+└── Insufficient → return structured follow-up questions
+```
+
+**Output**: Structured brief card + clarification list (if needed)
+
+---
+
+### 2.3 Research Agent
+
+Research is the most time-consuming part of pitching and the highest-value automation target.
+
+#### Research dimensions
+
+| Dimension | Content | Data source |
+|-----------|---------|-------------|
+| Brand positioning | Competitor value propositions, slogans | Web search, official sites |
+| Communication strategy | Recent campaigns, messaging cadence | News, public reports |
+| Social media performance | Platform content style, engagement data | User-uploaded screenshots (P1) / third-party APIs (P2) |
+| Visual style | Color palette, design language | User-uploaded competitor screenshots |
+| Internal history | Whether past analysis exists for this competitor | Internal RAG library |
+
+#### Data acquisition strategy
+
+**Phase 1**:
+
+- Real-time web search: brand news, public reports, official sites
+- User-uploaded competitor screenshots, analyzed by the system
+- Internal history file retrieval
+
+**Phase 2**:
+
+- Third-party social data platforms (Chanmama, Feigua)
+- Multimodal visual style analysis
+
+**Output**: Structured competitor analysis report, insertable directly into the pitch deck.
 
 ---
 
 ### 2.4 Strategy Agent
 
-基于Brief和Research结果，生成提案的策略框架。
+Generates the strategy framework in two phases based on the brief and research results.
 
-**输出内容**：
+#### Phase 1: Insights (runs in parallel with Research)
 
-- Campaign主题 / Big Idea
-- 传播逻辑（为什么这样打）
-- 受众洞察（目标人群的insight）
-- 渠道组合建议
-- 预算分配建议（基于总预算自动分配各渠道比例）
-- KPI建议
+Does not depend on competitor data. Uses Brief + Brand Library only:
 
-**品牌一致性检查**：Strategy生成后，自动对比品牌长期文件库，检查方向是否与品牌调性冲突。
+- Audience insight (target segment analysis)
+- Brand direction (initial strategic angle based on brand assets)
+
+#### Phase 2: Strategy (runs after Research completes)
+
+Integrates competitor research to generate the full strategy:
+
+- Campaign theme / Big Idea
+- Communication logic (why this approach)
+- Channel mix recommendation
+- Budget allocation (auto-distribute across channels)
+- KPI recommendations
+
+**Design rationale**: Competitor research directly affects differentiation positioning, but audience insights and brand direction do not depend on competitors. The two-phase design maintains strategy quality while reducing wait time through parallelism.
+
+**Brand consistency check**: After Phase 2 completes, the system compares the strategy against the Brand Library to detect conflicts with brand tone.
 
 ---
 
-### 2.5 Resource Agent（可插拔资源匹配层）
+### 2.5 Resource Agent (Pluggable)
 
-不同类型的项目需要匹配完全不同的外部资源。KOL只是其中一种，PR项目需要媒体资源，线下活动需要供应商，投放项目需要媒介资源。因此将资源匹配设计为**独立的可插拔Agent**，而非硬编码进流水线。
+Different project types require different external resources. KOLs are one type; PR projects need media outlets, offline events need vendors, ad campaigns need media placements. Resource matching is designed as an independent, pluggable agent rather than hardcoded into the pipeline.
 
-#### 触发逻辑
+#### Trigger logic
 
 ```
-Strategy Agent输出渠道组合
+Strategy Agent outputs channel mix
         ↓
-Resource Agent判断需要哪类资源
-        ├── 含社媒渠道 → 查KOL/KOC数据库
-        ├── 含PR/媒体渠道 → 查媒体资源库
-        ├── 含线下渠道 → 查供应商数据库
-        ├── 含广告投放 → 查媒介资源库
-        └── 无需外部资源 → 跳过，不进入流水线
+Resource Agent determines which resource types are needed
+        ├── Social channels → query KOL/KOC database
+        ├── PR/media channels → query media resource database
+        ├── Offline channels → query vendor database
+        ├── Ad placement channels → query placement database
+        └── No external resources needed → skip entirely
 ```
 
-**设计原则**：Resource Agent是可选节点，不是每个项目都会触发；新增资源类型只需扩展数据库和标签，不改动Agent逻辑。
+**Design principle**: Resource Agent is optional. Not every project triggers it. Adding a new resource type only requires extending the database and tag schema, not modifying agent logic.
 
-#### 资源库类型
+#### Resource databases
 
-**KOL/KOC数据库**（社媒渠道）
+**KOL/KOC Database** (social channels)
 
-| 字段     | 内容                                      |
-| -------- | ----------------------------------------- |
-| 基础信息 | 平台、账号名、粉丝量级、内容方向、MCN机构 |
-| 受众画像 | 年龄/性别/地域分布                        |
-| 合作记录 | 合作品牌、内容形式、效果数据              |
-| 报价参考 | 历史合作价格区间                          |
-| 标签     | 行业/内容风格/受众特征                    |
+| Field | Content |
+|-------|---------|
+| Basic info | Platform, handle, follower tier, content direction, MCN |
+| Audience profile | Age/gender/region distribution |
+| Collaboration history | Past brands, content formats, performance data |
+| Pricing reference | Historical price range |
+| Tags | Industry / content style / audience traits |
 
-数据来源：初期手动录入或Excel批量导入；Phase 2接入蝉妈妈、飞瓜数据API。
-
----
-
-**媒体资源库**（PR/媒体渠道）
-
-| 字段     | 内容                                       |
-| -------- | ------------------------------------------ |
-| 基础信息 | 媒体名称、类型（平媒/网媒/垂媒）、覆盖领域 |
-| 联系人   | 记者/编辑姓名、条线、联系方式              |
-| 发稿类型 | 新闻稿、专访、评测、内容合作               |
-| 报价参考 | 商业发稿价格区间                           |
-| 标签     | 行业/受众/地域                             |
+Data source: manual entry or Excel bulk import initially; third-party APIs in Phase 2.
 
 ---
 
-**供应商数据库**（线下渠道）
+**Media Resource Database** (PR channels)
 
-| 字段     | 内容                                              |
-| -------- | ------------------------------------------------- |
-| 基础信息 | 公司名称、服务类型（场地/搭建/活动执行/摄影摄像） |
-| 过往合作 | 合作品牌、项目类型、执行质量评级                  |
-| 报价参考 | 服务价格区间                                      |
-| 标签     | 擅长行业/地域/规模                                |
+| Field | Content |
+|-------|---------|
+| Basic info | Outlet name, type (print/online/vertical), coverage domain |
+| Contact | Journalist/editor name, beat, contact info |
+| Publish types | Press release, interview, review, content partnership |
+| Pricing reference | Commercial publishing price range |
+| Tags | Industry / audience / region |
 
 ---
 
-**媒介资源库**（广告投放渠道）
+**Vendor Database** (offline channels)
 
-| 字段     | 内容                                      |
-| -------- | ----------------------------------------- |
-| 基础信息 | 媒介类型（户外/电梯/杂志/院线）、覆盖城市 |
-| 资源详情 | 位置/版面、受众规模、档期                 |
-| 报价参考 | 刊例价、折扣区间                          |
-| 标签     | 受众画像/地域/场景                        |
+| Field | Content |
+|-------|---------|
+| Basic info | Company name, service type (venue/setup/event execution/photography) |
+| Past work | Brands served, project types, quality rating |
+| Pricing reference | Service price range |
+| Tags | Industry / region / scale |
 
-#### 统一数据模型
+---
 
-四类资源库共享相同的底层结构，差异只在标签体系，便于统一管理和检索：
+**Placement Database** (ad channels)
+
+| Field | Content |
+|-------|---------|
+| Basic info | Placement type (OOH/elevator/magazine/cinema), cities covered |
+| Details | Location/slot, audience size, availability |
+| Pricing reference | Rate card, discount range |
+| Tags | Audience profile / region / scenario |
+
+#### Unified data model
+
+All four resource types share the same underlying structure. Only the tag schema differs:
 
 ```
 Resource
 ├── id
 ├── type              # kol / media / vendor / placement
 ├── name
-├── tags              # 标签体系（各类型不同）
-├── pricing           # 报价参考
-├── collaboration_history  # 历史合作记录
-└── metadata          # 类型特有字段
+├── tags              # tag schema varies by type
+├── pricing           # price reference
+├── collaboration_history
+└── metadata          # type-specific fields
 ```
 
 ---
 
-### 2.6 Deck系统（原Copy Agent + Deck Builder合并重构）
+### 2.6 Deck System
 
-经过讨论，独立的Copy Agent没有必要存在——提案阶段的文案是服务于每一页PPT的，不是独立交付物。因此将文案生成能力内化进Deck系统，并将整个Deck系统拆分为四个职责清晰的子Agent。
+Copywriting in the pitch phase serves individual slides, not standalone deliverables. Copy generation is built into the Deck system rather than existing as a separate agent. The Deck system has four sub-agents:
 
 ```
 Deck Orchestrator
-    ├── Slide Content Agent   内容生成（含文案）
-    ├── Narrative Agent       叙事逻辑检查
-    └── PPT Builder           技术组装输出
+    ├── Slide Content Agent     Content generation (including copy)
+    ├── Narrative Agent         Coherence suggestions (non-blocking, background)
+    └── PPT Builder             Technical assembly
 ```
 
 ---
 
 #### 2.6.1 Deck Orchestrator
 
-**职责**：根据项目类型和用户设置决定这份deck需要哪些页面、顺序如何、每页的内容深度。
+**Role**: Decides which slides the deck needs, their order, and content depth per slide based on project type and user settings.
 
-**页面结构优先级**（从高到低）：
+**Structure priority** (highest to lowest):
 
 ```
-项目级临时指定  ← 用户在这次提案里手动调整，只影响这一次
+Project-level override ← user adjusts for this specific pitch only
         ↓
-客户级默认结构  ← 用户为某个客户设置的专属模板
+Client-level default ← user sets a custom template for this client
         ↓
-全局默认结构    ← 系统内置，开箱即用
+Global default ← built-in, works out of the box
 ```
 
-不同项目类型的系统默认结构不同：
+Default structures vary by project type:
 
-| 项目类型     | 核心页面差异                  |
-| ------------ | ----------------------------- |
-| 社媒营销提案 | 有KOL策略页、平台分渠道执行页 |
-| PR传播提案   | 有媒体矩阵页、发稿节奏页      |
-| 整合营销提案 | 全渠道覆盖，有预算分配总览页  |
-| 品牌焕新提案 | 有品牌诊断页、前后对比页      |
+| Project type | Key slide differences |
+|-------------|----------------------|
+| Social media pitch | KOL strategy page, per-platform execution pages |
+| PR pitch | Media matrix page, press release cadence page |
+| Integrated marketing pitch | Full-channel coverage, budget allocation overview page |
+| Brand refresh pitch | Brand diagnosis page, before/after comparison page |
 
-**用户干预点（节点3）**：Orchestrator输出页面结构后，暂停等待用户确认。用户可以增删页面、调整顺序，确认后再进入Slide Content Agent逐页生成。
+**Checkpoint (Node 3)**: After the Orchestrator outputs the slide structure, it pauses for user confirmation. Users can add, remove, or reorder slides before generation begins.
 
 ---
 
 #### 2.6.2 Slide Content Agent
 
-**职责**：逐页生成每一张幻灯片的具体内容，包括文案、数据、表格、要点。
+**Role**: Generates content for each slide including copy, data points, tables, and bullet points.
 
-这里承接了原Copy Agent的所有文案生成能力，但始终在"为这一页服务"的语境下工作。
+| Slide type | Source | Generated content |
+|-----------|--------|-------------------|
+| Market and competitor insights | Research Agent output | Competitor comparison, market trend highlights |
+| Audience insights | Brief + web search | Audience persona, insight distillation |
+| Strategy framework / Big Idea | Strategy Agent output | Core communication logic, theme |
+| Creative direction | Strategy + RAG history | Sample slogans, creative concept descriptions |
+| Channel execution plans | Strategy output | Per-channel content strategy, execution cadence |
+| External resources | Resource Agent output | KOL list / media matrix / vendor recommendations |
+| Budget allocation | Strategy output | Allocation ratios, cost breakdowns |
+| Timeline | Brief timeline + Strategy cadence | Campaign Gantt chart |
+| KPIs and projections | Strategy output | KPI targets, benchmark reference data |
 
-| 页面类型            | 内容来源                     | 生成内容                            |
-| ------------------- | ---------------------------- | ----------------------------------- |
-| 市场与竞品洞察      | Research Agent输出           | 竞品对比、市场趋势要点              |
-| 受众洞察            | Brief + 外部搜索             | 人群画像、insight提炼               |
-| 策略框架 / Big Idea | Strategy Agent输出           | 核心传播逻辑、主题提炼              |
-| 创意方向            | Strategy输出 + RAG历史参照   | 示意性slogan、创意概念描述          |
-| 各渠道执行方案      | Strategy输出                 | 各渠道内容策略、执行节奏            |
-| 外部资源方案        | Resource Agent输出           | KOL推荐列表 / 媒体矩阵 / 供应商建议 |
-| 预算分配            | Strategy输出                 | 预算分配比例、各项费用说明          |
-| 时间线              | Brief时间节点 + Strategy节奏 | Campaign执行甘特图                  |
-| KPI与效果预估       | Strategy输出                 | KPI指标、基准参考数据               |
+**Style enforcement**: When generating copy, the agent retrieves Tone of Voice and historical copy from the Brand Library to match brand tone.
 
-**风格约束**：生成文案时自动检索品牌长期文件库中的Tone of Voice和历史文案，确保语气和用词符合品牌调性。
+**Checkpoint (Node 4), Gallery Review mode**:
 
-**用户干预点（节点4）**：每页内容生成后，用户可以对单页提出修改要求（"这页竞品分析不够深"、"文案语气太正式"），系统只重跑该页，不影响其他页面。
+All slides are presented together as structured content cards (title, copy, bullets, data). This is not rendered PPT. PPT layout happens after confirmation in PPT Builder. Slides stream in as they complete, so users can start reviewing before all slides are done.
+
+Users browse freely (not forced sequential) and mark each slide: confirm / flag for revision (with notes) / skip. After marking, all flagged slides regenerate in batch and return to the Gallery for re-review.
+
+**Layout**:
+- Left: slide thumbnail navigation (check = confirmed, warning = flagged, blank = unreviewed)
+- Right: current slide full preview + Narrative suggestions (if any)
+- Bottom: progress bar + two exit buttons ("Process flagged slides" / "Confirm all, generate PPT")
+
+**Streaming**: Each slide pushes to the Gallery immediately upon completion. Users can review finished slides while later ones are still generating.
 
 ---
 
-#### 2.6.3 Narrative Agent
+#### 2.6.3 Narrative Agent (Non-blocking Advisor)
 
-**职责**：检查整份deck的叙事逻辑是否连贯、有说服力。
+**Role**: Checks whether the full deck tells a coherent, persuasive story. Presents findings as suggestions, not directives.
 
-这是整个系统里最体现PR/MKT专业判断的环节。它不看单页内容是否正确，而是看**整份提案作为一个说服结构是否成立**。
+This is the most PR/marketing-judgment-heavy component. It evaluates the proposal as a persuasion structure, not individual slide correctness. It does not control the flow. The user has final say.
 
-检查维度：
+**Checks**:
 
 ```
-洞察 → 策略 → 执行 这条逻辑链是否清晰？
-    ├── 洞察是否支撑了策略方向？
-    │   （不能洞察说"Z世代注重个性"，策略却是"打价格战"）
-    ├── 策略是否能被执行方案承接？
-    │   （不能策略说"情感共鸣"，执行全是硬广）
-    ├── 资源方案是否匹配受众和渠道？
-    │   （不能目标受众是中老年，KOL全是Z世代博主）
-    └── 预算分配是否与策略优先级一致？
-        （不能说重点打社媒，但社媒预算只占10%）
+Is the insight → strategy → execution logic chain clear?
+    ├── Does the insight support the strategy direction?
+    │   (Can't have insight "Gen Z values individuality" + strategy "compete on price")
+    ├── Can the execution plan deliver the strategy?
+    │   (Can't have strategy "emotional resonance" + execution all hard ads)
+    ├── Do resource choices match audience and channels?
+    │   (Can't target middle-aged audience + all KOLs are Gen Z influencers)
+    └── Does budget allocation match strategy priorities?
+        (Can't say social is the priority + social gets 10% of budget)
 ```
 
-**输出**：
+**Execution**: Triggers in the background after Slide Content Agent completes. Does not block the flow. Results appear as a suggestion panel in the Node 4 Gallery.
 
-- 通过 → 交给PPT Builder组装
-- 发现逻辑断裂 → 标注具体问题，打回Slide Content Agent修改对应页面（最多循环2次）
+**Output**: Structured suggestion list. Each suggestion references a specific page number and describes the issue. Users can:
+- Ignore suggestions and confirm directly
+- Accept suggestions and trigger page regeneration
+- Partially accept
+
+**Design principle**: Narrative Agent plays the role of a colleague glancing over your shoulder, not a gatekeeper. It never blocks, never auto-rejects, never loops.
 
 ---
 
 #### 2.6.4 PPT Builder
 
-**职责**：纯技术执行，将所有内容组装成`.pptx`文件。不包含任何业务判断。
+**Role**: Pure technical execution. Assembles all content into a `.pptx` file. Makes no business judgments.
 
-- 使用`python-pptx`按模板填充内容
-- 初期固定模板；Phase 2支持参照客户VI调整配色和字体
-- 输出文件供用户直接下载
-
----
-
-### 2.7 版本管理
-
-提案通常需要多次修改，系统记录每个版本。
-
-**功能**：
-
-- 每次重新生成或手动修改后保存版本
-- 版本间对比（哪些内容发生了变化）
-- 一键回滚到历史版本
-- 版本备注（记录为什么改）
+- Uses `python-pptx` to fill content into templates
+- Fixed templates initially; Phase 2 supports client VI color/font customization
+- Provides a read-only web preview + `.pptx` download after generation
+- **Not a review checkpoint**: content was already confirmed at Node 4. PPT Builder produces deterministic output.
+- Preview page includes a "Layout issue? Give feedback" link for reporting template/layout problems (does not trigger content rerun)
 
 ---
 
-### 2.8 客户反馈与迭代机制
+### 2.7 Version Management
 
-客户反馈不只是记录，而是能直接触发流程重跑的闭环机制。
+Proposals typically go through multiple revisions. The system tracks every version.
 
-#### 反馈录入
+**Features**:
 
-- 录入客户对本次提案的文字反馈
-- 标记被否定的方向（下次自动规避）
-- 标记被认可的方向（下次优先参照）
-- 所有反馈沉淀进该客户的Brand Library，影响后续所有项目
-
-#### 触发重跑（用户干预点5）
-
-根据反馈内容的性质，系统判断从哪个节点重跑，不需要从头来：
-
-| 反馈类型       | 示例                               | 重跑节点                 | 成本 |
-| -------------- | ---------------------------------- | ------------------------ | ---- |
-| 整体方向错误   | "策略方向不对，Big Idea不符合品牌" | 从Strategy Agent重跑     | 高   |
-| 局部内容不满意 | "竞品分析太浅"、"文案语气不对"     | 只重跑对应Slide          | 低   |
-| 结构问题       | "不需要KOL页，加一页危机公关"      | Orchestrator重新规划结构 | 中   |
-| 资源匹配问题   | "这些KOL不合适，换垂直类博主"      | 只重跑Resource Agent     | 低   |
-
-**设计原则**：系统判断反馈类型并给出建议重跑节点，最终由用户确认后执行。避免因小问题触发全流程重跑浪费时间。
+- Auto-save a new version after each regeneration or manual edit
+- Version diff (what changed between versions)
+- One-click rollback to any previous version
+- Version notes (why this revision was made)
 
 ---
 
-## 3. 用户旅程概览
+### 2.8 Client Feedback and Iteration
+
+Client feedback is not just a record. It is a closed-loop mechanism that triggers targeted pipeline reruns.
+
+#### Feedback entry
+
+- Record client's text feedback on the proposal
+- Tag rejected directions (auto-avoid next time)
+- Tag approved directions (prioritize next time)
+- All feedback persists in that client's Brand Library, influencing all future projects
+
+#### Targeted rerun (Checkpoint Node 5)
+
+Based on feedback type, the system determines which node to rerun from. No need to restart from scratch:
+
+| Feedback type | Example | Rerun from | Cost |
+|--------------|---------|-----------|------|
+| Overall direction wrong | "Strategy is off, Big Idea doesn't fit the brand" | Strategy (user chooses whether to also refresh Research) | High |
+| Partial content dissatisfaction | "Competitor analysis too shallow", "Copy tone too formal" | Only the affected slide(s) | Low |
+| Structure issue | "Don't need KOL page, add a crisis PR page" | Orchestrator re-plans structure | Medium |
+| Resource mismatch | "These KOLs don't fit, use vertical niche bloggers" | Only Resource Agent | Low |
+
+**Design principle**: The system suggests a rerun node based on feedback type. The user confirms before execution. This prevents full-pipeline reruns for minor issues.
+
+---
+
+## 3. User Journey
 
 ```
-Account登录
+Account logs in (belongs to an Agency)
     ↓
-选择/创建客户账户
+Select or create client (shared across org)
     ↓
-上传文件（长期库 or 项目库）
+Upload files (Brand Library or Project Library)
     ↓
-输入Brief（自然语言）
+Input brief (natural language)
     ↓
-Brief Analyzer处理
-    ├── 信息不足 → 追问 → 补充 → 继续
-    └── 信息足够 →
+Brief Analyzer processes
+    ├── Insufficient info → ask follow-ups → user supplements → continue
+    └── Sufficient →
               ↓
-    【节点1：用户确认Brief解读】
-    用户确认结构化Brief是否正确，可修改后继续
+    [Node 1: User confirms brief interpretation]
+    User reviews structured brief, can edit before proceeding
               ↓
-    ┌─────────────────────────┐
-    │       并行执行           │
-    ├── Research Agent        │
-    │   └── 竞品调研           │
-    └── Strategy Agent        │
-    └─────────────────────────┘
+    ┌──────────────────────────────────────────┐
+    │              Parallel execution            │
+    ├── Research Agent (competitor research)     │
+    ├── Strategy Phase 1 (audience insights)    │
+    └──────────────────────────────────────────┘
+              ↓ Both complete, then merge
+    Strategy Phase 2 (full strategy using research results)
               ↓
-    品牌一致性检查
+    Brand consistency check
               ↓
-    【节点2：用户确认策略方向】 ← 最重要的节点
-    用户确认Big Idea和传播逻辑，可要求调整后重跑Strategy Agent
+    [Node 2: User confirms strategy] ← most critical checkpoint
+    Shows research data with timestamp + [Refresh] button
+    Rerun options: strategy only / refresh research + strategy
               ↓
-    Resource Agent（可选）
-    ├── 社媒 → KOL/KOC匹配
-    ├── PR → 媒体资源匹配
-    ├── 线下 → 供应商匹配
-    ├── 投放 → 媒介资源匹配
-    └── 无需资源 → 跳过
+    Resource Agent (optional)
+    ├── Social → KOL/KOC matching
+    ├── PR → media resource matching
+    ├── Offline → vendor matching
+    ├── Ads → placement matching
+    └── None needed → skip
               ↓
-    Deck Orchestrator（生成页面结构）
+    Deck Orchestrator (generates slide structure)
               ↓
-    【节点3：用户确认/调整页面结构】
-    可增删页面、调整顺序、套用客户级或项目级自定义结构
+    [Node 3: User confirms/adjusts slide structure]
+    Can add/remove/reorder, apply client-level or project-level templates
               ↓
-    Slide Content Agent（逐页生成）
+    Slide Content Agent (generates per-slide)
+              ║
+              ║ After generation completes, triggers both:
+              ╠══════════════════════╗
+              ↓                      ↓
+    Node 4 Gallery ready     Narrative Agent (background check)
+                                     ↓
+                           Suggestions pushed to Node 4
               ↓
-    【节点4：用户逐页审阅】
-    可对单页要求重新生成，不影响其他页面
+    [Node 4: Gallery Review]
+    Streaming display, browse as slides complete
+    ├── Left: slide thumbnail nav (check/warning/blank)
+    ├── Right: current slide preview + Narrative suggestions
+    └── Bottom: progress + action buttons
               ↓
-    Narrative Agent（叙事逻辑检查）
-    ├── 通过 → 继续
-    └── 不通过 → 标注问题，打回修改（最多2次）
+    User marks slides for revision
+    ├── Has marks → batch regenerate flagged slides → return to Gallery
+    └── No marks → confirm all
               ↓
-    PPT Builder → 下载.pptx
+    User confirms
               ↓
-    版本保存
+    PPT Builder → web preview (non-blocking) + download .pptx
               ↓
-    【节点5：客户反馈录入】
-    ├── 沉淀Brand Library（影响未来项目）
-    └── 触发定点重跑（按反馈性质选择重跑节点）
+    Version saved
+              ↓
+    [Node 5: Client feedback entry]
+    ├── Persists to Brand Library (influences future projects)
+    └── Triggers targeted rerun (user selects rerun node)
 ```
 
 ---
 
-## 4. 技术架构要点
+## 4. Tech Stack Summary
 
-| 模块      | 技术选型             | 说明                          |
-| --------- | -------------------- | ----------------------------- |
-| Agent编排 | LangGraph            | 状态管理 + 有条件分支的流水线 |
-| RAG       | Pinecone + Embedding | 品牌风格检索、历史提案参照    |
-| 文件处理  | PyPDF2、python-pptx  | 文件解析和PPT生成             |
-| 网络搜索  | Tavily / MCP         | Research Agent实时搜索        |
-| 后端      | FastAPI              | API层                         |
-| 异步任务  | Celery + Redis       | PPT生成等重任务异步处理       |
-| 数据库    | MongoDB              | 客户档案、项目记录、版本历史  |
-| 前端      | Next.js              | 用户界面                      |
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| Agent orchestration | LangGraph | State management, conditional branching, HITL |
+| RAG | Pinecone + BGE-M3 | Brand style retrieval, historical reference (BGE-M3 for Chinese marketing terminology) |
+| File processing | PyPDF2, python-pptx | Document parsing and PPT generation |
+| Web search | Tavily | Research Agent real-time search |
+| Backend | FastAPI | API layer |
+| Async tasks | Celery + Redis | Heavy tasks (PPT generation, file vectorization) |
+| Database | MongoDB | Client records, projects, versions, feedback |
+| Frontend | Next.js | User interface |
 
 ---
 
-## 5. 开发阶段规划
+## 5. Development Phases
 
-### Phase 1：核心流水线（MVP）
+### Phase 1: Core Pipeline (MVP)
 
 - Brief Analyzer
-- Strategy Agent
-- Deck系统（Orchestrator + Slide Content Agent + Narrative Agent + PPT Builder）
-- Human-in-the-loop节点1-4（Brief确认、策略确认、结构确认、单页重生成）
-- PPT结构三级优先级（全局默认 / 客户级 / 项目级）
-- 基础RAG（文字类文件）
-- Resource Agent框架 + KOL/KOC数据库（手动录入）
+- Research Agent basic (web search + internal history retrieval)
+- Strategy Agent (Phase 1 insights + Phase 2 strategy, depends on Research)
+- Deck System (Orchestrator + Slide Content Agent + Narrative Agent + PPT Builder)
+- Human-in-the-loop Nodes 1-4 (brief, strategy, structure, Gallery Review)
+- Three-tier deck structure priority (global / client / project)
+- Basic RAG (text files)
+- Resource Agent framework + KOL/KOC database (manual entry)
 
-### Phase 2：调研与资源增强
+### Phase 2: Research and Resource Enhancement
 
-- Research Agent（网络搜索 + 竞品分析）
-- Resource Agent扩展：媒体资源库、供应商库、媒介资源库
-- Human-in-the-loop节点5（客户反馈录入 + 定点重跑）
-- 视觉参考类文件处理（多模态）
-- KOL数据库接入第三方API（蝉妈妈、飞瓜数据）
+- Research Agent enhancement: multimodal competitor analysis, third-party data platform integration
+- Resource Agent expansion: media, vendor, and placement databases
+- Human-in-the-loop Node 5 (client feedback + targeted rerun)
+- Visual reference file processing (multimodal)
+- KOL database third-party API integration (Chanmama, Feigua)
 
-### Phase 3：工程完善
+### Phase 3: Production Hardening
 
-- 版本管理
-- 客户反馈闭环
-- CI/CD + 监控
-- Terraform部署
-
----
-
-## 6. 待讨论 / 待决策
-
-- [ ] 视觉参考类文件（moodboard、竞品图）的处理深度
-- [ ] 中国社媒平台数据获取的合规性和可行性
-- [ ] 各资源库的冷启动方案（初期数据从哪来）
-- [ ] Resource Agent判断"需要哪类资源"的逻辑边界（Strategy输出足够判断吗？还是需要用户在节点2确认时一并指定）
-- [ ] Narrative Agent的判断标准如何设计（逻辑连贯性的评估prompt怎么写）
-- [ ] 节点4单页重生成的交互形式（用户怎么表达"只改这一页"）
-- [ ] 客户反馈触发重跑时，系统自动判断重跑节点还是由用户手动选择
-- [ ] 多语言支持（中英文）的优先级
-- [ ] Deck模板初期数量和覆盖的项目类型范围
+- Version management
+- Client feedback closed loop
+- CI/CD + monitoring
+- Terraform deployment
 
 ---
 
-_本文档随项目推进持续更新_
+## 6. Open Questions
+
+- [ ] Processing depth for visual reference files (moodboard, competitor screenshots)
+- [ ] Compliance and feasibility of China social media data acquisition
+- [ ] Cold-start strategy for resource databases (where does initial data come from)
+- [ ] Resource Agent trigger boundary: is Strategy output sufficient to determine resource types, or should the user explicitly select at Node 2?
+- [ ] Narrative Agent prompt design: how to ensure suggestions are specific, actionable, and reference page numbers
+- [x] ~~Node 4 per-slide interaction model~~ → Gallery Review with batch mark and regenerate
+- [ ] Client feedback rerun: system auto-detects rerun node vs user manually selects
+- [x] ~~Multilingual support priority~~ → Language Router: language detection + prompt template switching. LLM stays Claude, embedding stays BGE-M3 (natively multilingual)
+- [ ] Initial PPT template count and project type coverage

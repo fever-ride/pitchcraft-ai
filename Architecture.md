@@ -1,14 +1,13 @@
-# Architecture Design: Marketing Automation Multi-Agent System
+# Architecture: Pitchcraft
 
-**版本**：v0.2  
-**状态**：草稿  
-**最后更新**：2026-05  
-**关联文档**：PRD v0.4  
-**更新内容**：完善文件库和资源库的数据层设计，对齐PRD全部文件类型和资源类型
+**Version**: v0.2
+**Status**: Draft
+**Last updated**: 2026-05
+**Related**: PRD v0.4
 
 ---
 
-## 1. 系统全景
+## 1. System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -32,8 +31,8 @@
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │              LangGraph Multi-Agent Pipeline               │  │
 │  │                                                           │  │
-│  │  BriefAnalyzer → [Research ‖ Strategy] → Resource →      │  │
-│  │  DeckOrchestrator → SlideContent → Narrative → PPTBuilder │  │
+│  │  BriefAnalyzer → [Research ‖ StrategyP1] → StrategyP2 →   │  │
+│  │  Resource → DeckOrch → SlideContent → Narrative → PPTBld  │  │
 │  │                                                           │  │
 │  │  ┌─────────────────┐    ┌──────────────────────────────┐ │  │
 │  │  │  Request Budget  │    │   Deterministic Fallback     │ │  │
@@ -45,21 +44,29 @@
 │  ┌──────────────────────┐   ┌─────────────────────────────┐    │
 │  │     RAG Pipeline     │   │      Memory & Cache         │    │
 │  │  - Brand Library     │   │  - Project State            │    │
-│  │    (规范类/历史类)    │   │  - Semantic Response Cache  │    │
+│  │    (specs / history) │   │  - Semantic Response Cache  │    │
 │  │  - Project Library   │   │  - Client Feedback Store    │    │
-│  │    (需求/竞品资料)    │   │                             │    │
+│  │    (briefs / comps)  │   │                             │    │
 │  │  - Resource Index    │   │                             │    │
-│  │    (KOL/媒体/供应商)  │   │                             │    │
+│  │    (KOL/media/vendor)│   │                             │    │
+│  │  - BGE-M3 Embedding  │   │                             │    │
 │  └──────────────────────┘   └─────────────────────────────┘    │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │              Language Router                              │   │
+│  │  - Language detection (langdetect)                       │   │
+│  │  - Prompt template selection (Chinese / English)         │   │
+│  │  - Output language follows input, supports mixed         │   │
+│  └──────────────────────────────────────────────────────────┘   │
 └──────────┬──────────────────────────────┬───────────────────────┘
            │                              │
            ▼                              ▼
 ┌──────────────────┐            ┌──────────────────────┐
 │   TASK QUEUE     │            │    EXTERNAL TOOLS    │
 │  Celery + Redis  │            │  - Tavily Search     │
-│  - PPT生成        │            │  - Anthropic API     │
-│  - 文件向量化      │            │  - python-pptx       │
-│  - Research任务   │            │                      │
+│  - PPT generation │            │  - Anthropic API     │
+│  - File indexing  │            │  - python-pptx       │
+│  - Research tasks │            │                      │
 └──────────────────┘            └──────────────────────┘
            │
            ▼
@@ -69,72 +76,89 @@
 │  ┌────────────────────────┐    ┌───────────────────────────┐   │
 │  │      MongoDB Atlas     │    │        Pinecone DB        │   │
 │  │                        │    │                           │   │
-│  │  - clients             │    │  brand_spec_{client_id}   │   │
-│  │  - projects            │    │  brand_history_{client_id}│   │
-│  │  - proposals           │    │  project_{project_id}     │   │
-│  │  - files               │    │  resource_kol             │   │
-│  │    (brand & project)   │    │  resource_media           │   │
-│  │  - resources           │    │  resource_vendor          │   │
-│  │    (kol/media/vendor/  │    │  resource_placement       │   │
-│  │     placement)         │    │                           │   │
-│  │  - feedback            │    │  (namespace隔离，          │   │
-│  │  - stage_metrics       │    │   防跨库污染)              │   │
+│  │  - organizations       │    │  brand_spec_{client_id}   │   │
+│  │  - users               │    │  brand_history_{client_id}│   │
+│  │  - clients             │    │  project_{project_id}     │   │
+│  │  - projects            │    │  resource_kol             │   │
+│  │  - proposals           │    │  resource_media           │   │
+│  │  - files               │    │  resource_vendor          │   │
+│  │    (brand & project)   │    │  resource_placement       │   │
+│  │  - resources           │    │                           │   │
+│  │    (kol/media/vendor/  │    │  (namespace isolation     │   │
+│  │     placement)         │    │   prevents cross-index    │   │
+│  │  - feedback            │    │   contamination)          │   │
+│  │  - stage_metrics       │    │                           │   │
 │  └────────────────────────┘    └───────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Agent系统设计
+## 2. Agent System Design
 
-### 2.1 LangGraph状态机
+### 2.1 LangGraph State Machine
 
-整个pipeline用LangGraph管理状态，支持条件分支、Human-in-the-loop暂停、定点重跑。
+The entire pipeline is managed by LangGraph. It supports conditional branching, human-in-the-loop pauses, and targeted reruns.
 
 ```python
 class PipelineState(TypedDict, total=False):
-    # 基础信息
+    # Identity
     client_id: str
     project_id: str
     proposal_id: str
 
-    # Brief层
+    # Brief
     raw_brief: str
-    structured_brief: dict          # BriefAnalyzer输出
-    brief_confirmed: bool           # 节点1用户确认
+    structured_brief: dict          # BriefAnalyzer output
+    brief_confirmed: bool           # Node 1 user confirmation
 
-    # 调研层
-    research_result: dict           # ResearchAgent输出
-    strategy_result: dict           # StrategyAgent输出
-    brand_check_passed: bool        # 品牌一致性检查
+    # Research + Strategy
+    research_result: dict           # Research Agent output
+    research_fetched_at: float      # Research completion timestamp
+    strategy_insight: dict          # Strategy Phase 1 output (audience, brand direction)
+    strategy_result: dict           # Strategy Phase 2 output (full strategy)
+    brand_check_passed: bool        # Brand consistency check result
 
-    # 策略层
-    strategy_confirmed: bool        # 节点2用户确认
-    strategy_feedback: str          # 用户修改意见
+    # Strategy confirmation
+    strategy_confirmed: bool        # Node 2 user confirmation
+    strategy_feedback: str          # User revision notes
 
-    # 资源层
-    resource_result: dict           # ResourceAgent输出
+    # Resources
+    resource_result: dict           # Resource Agent output
     resource_types_needed: list     # ["kol", "media", "vendor"]
 
-    # Deck层
-    deck_structure: list            # 页面列表
-    structure_confirmed: bool       # 节点3用户确认
-    slides: list                    # 逐页内容
-    slides_confirmed: bool          # 节点4用户确认
-    narrative_passed: bool          # Narrative检查
-    narrative_feedback: str
-    narrative_retry_count: int      # 最多2次
+    # Deck
+    deck_structure: list            # Slide list
+    structure_confirmed: bool       # Node 3 user confirmation
+    slides: list                    # Per-slide content
+    slides_confirmed: bool          # Node 4 user confirmation
+    narrative_suggestions: list     # Narrative suggestions (non-blocking)
 
-    # 输出
+    # Output
     pptx_path: str
 
-    # 控制
-    rerun_from: str                 # 定点重跑起始节点
-    request_budget: RequestBudget   # 成本控制
-    stage_metrics: dict             # 各阶段价值追踪
+    # Control
+    rerun_from: str                 # Targeted rerun start node
+    rerun_refresh_research: bool    # Whether to also refresh Research on Strategy rerun
+    request_budget: RequestBudget   # Cost control
+    stage_metrics: dict             # Per-stage value tracking
 ```
 
-### 2.2 Agent拓扑图
+### 2.2 Parallelism and Synchronization
+
+Research Agent and Strategy Phase 1 launch simultaneously (fan-out). Strategy Phase 2 waits for both to complete (fan-in). In LangGraph, when multiple edges point to the same node, it automatically waits for all upstream nodes:
+
+```python
+# Fan-out: both start after brief confirmation
+graph.add_edge("brief_confirmed", "research_agent")
+graph.add_edge("brief_confirmed", "strategy_phase1")
+
+# Fan-in: strategy_phase2 waits for both
+graph.add_edge("research_agent", "strategy_phase2")
+graph.add_edge("strategy_phase1", "strategy_phase2")
+```
+
+### 2.3 Agent Topology
 
 ```
                     ┌─────────────────┐
@@ -142,262 +166,284 @@ class PipelineState(TypedDict, total=False):
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
-                    │  [节点1] 用户    │  ← Human-in-the-loop
-                    │  确认Brief解读   │    WebSocket推送，等待前端响应
+                    │  [Node 1] User   │  ← HITL
+                    │  Confirm brief   │    WebSocket push, await frontend response
                     └────────┬────────┘
                              │
               ┌──────────────┴──────────────┐
-              │          并行执行            │
+              │        Parallel              │
               ▼                             ▼
     ┌──────────────────┐         ┌──────────────────┐
-    │  Research Agent  │         │  Strategy Agent  │
-    │  - 网络搜索       │         │  - Big Idea      │
-    │  - 竞品分析       │         │  - 传播逻辑       │
-    │  - 历史库检索     │         │  - 渠道组合       │
+    │  Research Agent  │         │ Strategy Phase 1 │
+    │  - Web search    │         │  - Audience      │
+    │  - Competitor    │         │    insights      │
+    │    analysis      │         │  - Brand         │
+    │  - History       │         │    direction     │
+    │    retrieval     │         │  (no competitor  │
+    │                  │         │   dependency)    │
     └────────┬─────────┘         └────────┬─────────┘
               │                            │
               └──────────────┬─────────────┘
-                             │
+                             │ Fan-in sync point
                     ┌────────▼────────┐
-                    │  品牌一致性检查  │  ← RAG检索Brand Library
+                    │ Strategy Phase 2│  ← Integrates Research results
+                    │  - Big Idea     │    Generates full strategy
+                    │  - Comm logic   │
+                    │  - Channel mix  │
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
-                    │  [节点2] 用户    │  ← 最重要的节点
-                    │  确认策略方向   │    可要求重跑Strategy
+                    │  Brand check    │  ← RAG retrieves Brand Library
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
-                    │  Resource Agent │  ← 可选，按渠道类型触发
-                    │  (可插拔)        │
+                    │  [Node 2] User   │  ← Most critical checkpoint
+                    │  Confirm strategy│    Shows Research timestamp + [Refresh]
+                    │                  │    Rerun: strategy only / research+strategy
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
-                    │ Deck Orchestrator│  ← 三级结构优先级
+                    │  Resource Agent │  ← Optional, triggers by channel type
+                    │  (pluggable)    │
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
-                    │  [节点3] 用户    │
-                    │  确认页面结构   │
+                    │ Deck Orchestrator│  ← Three-tier structure priority
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
-                    │ Slide Content   │  ← 逐页生成，含文案
+                    │  [Node 3] User   │
+                    │  Confirm structure│
+                    └────────┬────────┘
+                             │
+                    ┌────────▼────────┐
+                    │ Slide Content   │  ← Per-slide generation with copy
                     │    Agent        │
                     └────────┬────────┘
                              │
-                    ┌────────▼────────┐
-                    │  [节点4] 用户    │
-                    │  逐页审阅       │  ← 单页重生成，不影响其他页
-                    └────────┬────────┘
+              ┌──────────────┴──────────────┐
+              │     After completion         │
+              ▼                             ▼
+    ┌──────────────────┐         ┌──────────────────┐
+    │  [Node 4] User    │         │ Narrative Agent  │
+    │  Gallery ready    │         │ Background check │
+    └────────┬─────────┘         └────────┬─────────┘
+              │                            │
+              │    Suggestions pushed       │
+              │◄───────────────────────────┘
+              │
+    ┌────────▼────────┐
+    │  [Node 4] User   │  ← Left: slide content
+    │  Gallery Review  │    Right: Narrative suggestions
+    └────────┬────────┘
+              │
+    ┌────────▼────────┐
+    │   PPT Builder   │  ← Deterministic, no business logic
+    └────────┬────────┘
                              │
                     ┌────────▼────────┐
-                    │ Narrative Agent  │  ← 叙事逻辑检查
-                    │                 │    最多循环2次
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │   PPT Builder   │  ← 纯技术执行
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  [节点5] 客户   │
-                    │  反馈录入       │  ← 沉淀Brand Library
-                    │                 │    触发定点重跑
+                    │  [Node 5] Client │
+                    │  Feedback entry  │  ← Persists to Brand Library
+                    │                  │    Triggers targeted rerun
                     └─────────────────┘
 ```
 
 ---
 
-## 3. RAG系统设计
+## 3. RAG System Design
 
-### 3.1 Pinecone namespace索引结构
+### 3.1 Pinecone Namespace Index Structure
 
-不同类型的文件和资源用独立namespace隔离，防止检索时跨库污染，也让每类检索能单独调整权重和策略。
+Different file types and resources use isolated namespaces to prevent cross-index contamination and allow per-type tuning of retrieval weights.
 
 ```
-Pinecone Index: mkt-agent
+Pinecone Index: pitchcraft
 │
-│  ── 品牌长期库（Brand Library）──────────────────────────────
+│  ── Brand Library (long-term) ───────────────────────────────
 ├── namespace: brand_spec_{client_id}
-│       品牌规范类文件
-│       VI指南、品牌手册、Tone of Voice、设计规范
-│       检索用途：品牌一致性检查（Strategy输出对比）
-│       chunk size：800字符 / 100重叠
-│       生命周期：长期，跨项目复用
+│       Brand spec files
+│       VI guide, brand book, Tone of Voice, design guidelines
+│       Retrieval purpose: brand consistency check (Strategy output comparison)
+│       Chunk size: 256 tokens (short chunks for higher precision on normative text)
+│       Lifecycle: persistent, reused across projects
 │
 ├── namespace: brand_history_{client_id}
-│       历史提案类 + 品牌内容类
-│       过往campaign deck、策略文档、历史文案、social内容
-│       检索用途：风格参照（Slide Content Agent生成文案时）
-│       chunk size：历史提案1200字符/200重叠，文案400字符/50重叠
-│       生命周期：长期，持续积累
+│       Historical proposals + brand content
+│       Past campaign decks, strategy docs, historical copy, social content
+│       Retrieval purpose: style reference (Slide Content Agent copy generation)
+│       Chunk size: proposals 512 tokens, copy 128 tokens (split on sentence boundaries)
+│       Lifecycle: persistent, accumulates over time
 │
-│  ── 项目临时库（Project Library）────────────────────────────
+│  ── Project Library (temporary) ─────────────────────────────
 ├── namespace: project_{project_id}
-│       项目级文件，项目结束后归档
-│       需求文档、客户brief、会议记录、竞品资料、竞品文案
-│       检索用途：Brief解析背景参考、Research Agent查历史竞品分析
-│       chunk size：需求文档600字符/100重叠，竞品资料800字符/150重叠
-│       生命周期：项目周期内，结束后标记archived
+│       Project-level files, archived after project ends
+│       Requirements docs, client brief, meeting notes, competitor materials
+│       Retrieval purpose: brief context, Research Agent past competitor lookup
+│       Chunk size: 384 tokens
+│       Lifecycle: project duration, marked archived on completion
 │
-│  ── 资源库（Resource Index）─────────────────────────────────
+│  ── Resource Index ──────────────────────────────────────────
 ├── namespace: resource_kol
-│       KOL/KOC档案描述文本（平台、内容方向、受众画像、风格描述）
-│       检索用途：Resource Agent按受众和风格向量匹配KOL
+│       KOL/KOC profile text (platform, content direction, audience, style)
+│       Retrieval purpose: audience + style vector matching
 │
 ├── namespace: resource_media
-│       媒体资源描述文本（媒体定位、覆盖领域、受众特征）
-│       检索用途：Resource Agent按行业和受众匹配媒体资源
+│       Media outlet descriptions (positioning, coverage, audience traits)
+│       Retrieval purpose: industry + audience vector matching
 │
 ├── namespace: resource_vendor
-│       供应商描述文本（服务类型、擅长行业、过往案例描述）
-│       检索用途：Resource Agent按活动类型匹配供应商
+│       Vendor descriptions (service types, specialties, past work)
+│       Retrieval purpose: event type + region vector matching
 │
 └── namespace: resource_placement
-        媒介资源描述文本（媒介类型、覆盖城市、受众场景）
-        检索用途：Resource Agent按地域和受众匹配媒介资源
+        Placement descriptions (type, cities, audience scenarios)
+        Retrieval purpose: region + audience vector matching
 ```
 
-### 3.2 各namespace检索用途对照
+### 3.2 Namespace Retrieval Reference
 
-| 检索场景       | Agent               | Namespace                 | 检索逻辑                         |
-| -------------- | ------------------- | ------------------------- | -------------------------------- |
-| 品牌一致性检查 | Strategy Agent后    | brand*spec*{client_id}    | 策略关键词 vs 品牌规范语义相似度 |
-| 文案风格参照   | Slide Content Agent | brand*history*{client_id} | 调性描述词检索历史文案风格       |
-| 历史竞品查重   | Research Agent      | project\_{project_id}     | 竞品名称检索是否有历史分析       |
-| KOL匹配        | Resource Agent      | resource_kol              | 受众画像+内容方向向量匹配        |
-| 媒体匹配       | Resource Agent      | resource_media            | 行业+受众特征向量匹配            |
-| 供应商匹配     | Resource Agent      | resource_vendor           | 活动类型+地域向量匹配            |
-| 媒介匹配       | Resource Agent      | resource_placement        | 受众场景+城市向量匹配            |
+| Scenario | Agent | Namespace | Retrieval logic |
+|----------|-------|-----------|----------------|
+| Brand consistency check | After Strategy Agent | brand_spec_{client_id} | Strategy keywords vs brand spec semantic similarity |
+| Copy style reference | Slide Content Agent | brand_history_{client_id} | Tone descriptors retrieve historical copy styles |
+| Past competitor lookup | Research Agent | project_{project_id} | Competitor name checks for existing analysis |
+| KOL matching | Resource Agent | resource_kol | Audience profile + content direction vectors |
+| Media matching | Resource Agent | resource_media | Industry + audience trait vectors |
+| Vendor matching | Resource Agent | resource_vendor | Event type + region vectors |
+| Placement matching | Resource Agent | resource_placement | Audience scenario + city vectors |
 
-### 3.3 文件处理pipeline
+### 3.3 File Processing Pipeline
 
 ```
-用户上传文件（PDF / PPTX / DOCX / 图片）
+User uploads file (PDF / PPTX / DOCX / image)
         ↓
-Celery异步任务接收
+Celery async task receives
         ↓
-文件归属判断
-├── 有project_id → Project Library
-└── 无project_id → Brand Library
+Determine file destination
+├── Has project_id → Project Library
+└── No project_id → Brand Library
         ↓
-文件类型识别（决定走哪个namespace和chunk策略）
+Identify file type (determines namespace and chunk strategy)
 ├── brand_spec    → brand_spec_{client_id}
 ├── brand_history → brand_history_{client_id}
 ├── project_doc   → project_{project_id}
 ├── competitor    → project_{project_id}
-└── visual_ref    → 暂存MongoDB，Phase 2接入多模态处理
+└── visual_ref    → store in MongoDB, Phase 2 multimodal processing
         ↓
-格式解析
+Format parsing
 ├── PDF  → PyPDF2
-├── PPTX → python-pptx提取文本+页面结构
+├── PPTX → python-pptx (extract text + page structure)
 └── DOCX → python-docx
         ↓
-按类型分块（chunk size见3.1）
+Semantic chunking
+├── Unit: tokens (BGE-M3 tokenizer)
+├── Strategy: semantic boundaries first (paragraph → sentence), no fixed-length hard cuts
+├── Overlap: sentence-level overlap, never splits mid-boundary
+├── Mixed Chinese/English: no special handling, BGE-M3 natively supports mixed input
+└── Max tokens per type: see 3.1
         ↓
-Embedding（text-embedding-3-small）
+Embedding (BGE-M3, self-hosted, max input 8192 tokens)
         ↓
-写入对应Pinecone namespace
+Write to corresponding Pinecone namespace
         ↓
-元数据写入MongoDB files collection
-（filename、file_category、file_type、namespace、processing_status）
+Write metadata to MongoDB files collection
+(filename, file_category, file_type, namespace, processing_status)
 ```
 
 ---
 
-## 4. 稳定性设计
+## 4. Stability Design
 
 ### 4.1 Request Budget
 
-每次pipeline执行设置资源上限，防止Agent循环或外部调用失控：
+Each pipeline execution has resource caps to prevent agent loops or runaway external calls:
 
 ```python
 @dataclass
 class RequestBudget:
-    max_llm_calls: int = 30        # 整个pipeline最多调用LLM次数
-    max_search_calls: int = 10     # Research Agent最多搜索次数
-    max_retry_per_agent: int = 2   # 单个Agent最多重试次数
-    max_total_seconds: int = 300   # 整个pipeline最长5分钟
+    max_llm_calls: int = 30        # Max LLM calls per pipeline
+    max_search_calls: int = 10     # Max searches for Research Agent
+    max_retry_per_agent: int = 2   # Max retries per individual agent
+    max_total_seconds: int = 300   # 5 minute pipeline timeout
     current_llm_calls: int = 0
     current_search_calls: int = 0
     start_time: float = field(default_factory=time.time)
 
     def check(self) -> None:
-        """预算超出时抛出异常，触发降级"""
         if self.current_llm_calls >= self.max_llm_calls:
             raise BudgetExceeded("LLM call limit reached")
         if time.time() - self.start_time > self.max_total_seconds:
             raise BudgetExceeded("Pipeline timeout")
 ```
 
-### 4.2 Deterministic Fallback降级链
+### 4.2 Deterministic Fallback Chains
 
-每个外部依赖都有有序降级方案，任何一个挂掉不影响整体流程：
+Every external dependency has an ordered degradation path. No single failure blocks the entire flow:
 
 ```
-Tavily搜索挂了
-    → 降级到DuckDuckGo
-    → 再降级到只用内部历史库
-    → 标记Research结果为"仅内部数据"
+Tavily search fails
+    → Fall back to DuckDuckGo
+    → Fall back to internal history only
+    → Mark Research result as "internal data only"
 
-Pinecone挂了
-    → 降级到MongoDB全文索引检索
-    → 标记RAG结果为"降级模式"
+Pinecone fails
+    → Fall back to MongoDB full-text search
+    → Mark RAG result as "degraded mode"
 
-LLM超时
-    → 重试一次
-    → 换备用模型
-    → 返回模板化内容 + 警告提示
+LLM timeout
+    → Retry once
+    → Switch to backup model
+    → Return template content + warning
 
-python-pptx生成失败
-    → 降级输出Markdown格式提案
-    → 通知用户PPT生成失败，提供文字版
+python-pptx generation fails
+    → Fall back to Markdown format proposal
+    → Notify user PPT generation failed, provide text version
 ```
 
 ### 4.3 Semantic Response Cache
 
-针对Research Agent的重复调研场景做缓存，避免相同客户重复搜索：
+Caches Research Agent results to avoid redundant searches for the same competitor:
 
 ```
-缓存Key：{client_id}:{competitor_name}:{date_bucket}
-date_bucket：按30天分桶（同一客户30天内竞品数据复用）
+Cache key: {client_id}:{competitor_name}:{date_bucket}
+date_bucket: 30-day buckets (reuse competitor data within 30 days)
 
-命中条件：
-- 同一client_id
-- 竞品名称完全匹配
-- 距上次搜索30天内
+Hit conditions:
+- Same client_id
+- Exact competitor name match
+- Within 30 days of last search
 
-命中后：直接返回缓存的Research结果
-        在结果中标注"数据来源：缓存（{date}）"
-        让用户决定是否强制刷新
+On hit: return cached Research result
+        Label result as "source: cache ({date})"
+        Let user decide whether to force refresh
 ```
 
-存储：Redis，TTL = 30天
+Storage: Redis, TTL = 30 days
 
 ---
 
-## 5. 可观测性设计
+## 5. Observability
 
 ### 5.1 Per-Stage Metrics
 
-追踪每个Agent节点的实际价值，数据存入MongoDB：
+Tracks actual value of each agent node. Stored in MongoDB:
 
 ```python
 stage_metrics = {
     "project_id": "...",
     "brief_analyzer": {
-        "clarification_triggered": True,    # 是否触发了追问
-        "missing_fields": ["kpi", "budget"] # 缺了哪些字段
+        "clarification_triggered": True,
+        "missing_fields": ["kpi", "budget"]
     },
     "brand_consistency_check": {
-        "triggered_revision": False,         # 是否打回修改
+        "triggered_revision": False,
         "issues_found": []
     },
     "narrative_agent": {
-        "issues_found": 2,                   # 发现几处逻辑断裂
-        "retry_count": 1,                    # 循环了几次
-        "issues_detail": ["洞察与策略不一致", "预算与渠道优先级矛盾"]
+        "suggestions_count": 2,
+        "suggestions_accepted": 1,
+        "suggestions_ignored": 1,
+        "suggestions_detail": ["insight-strategy mismatch", "budget-channel priority conflict"]
     },
     "resource_agent": {
         "triggered": True,
@@ -412,87 +458,104 @@ stage_metrics = {
 }
 ```
 
-### 5.2 Analytics Dashboard（前端页面）
+### 5.2 Analytics Dashboard (Frontend)
 
-基于stage_metrics数据展示：
+Based on stage_metrics data:
 
-- 各Agent触发率和拦截率
-- Brief Analyzer追问频率（说明哪类信息客户最常遗漏）
-- Narrative Agent发现逻辑断裂的分布（哪类问题最常见）
-- 平均pipeline执行时间
-- Request Budget使用分布（成本分析）
-- 缓存命中率
-
----
-
-## 6. 技术选型汇总
-
-### 6.1 后端
-
-| 组件      | 技术                            | 版本    | 说明                   |
-| --------- | ------------------------------- | ------- | ---------------------- |
-| API框架   | FastAPI                         | 0.115   | 异步REST + WebSocket   |
-| Agent编排 | LangGraph                       | 0.2     | 状态机 + HITL支持      |
-| LLM       | Claude claude-sonnet-4-20250514 | -       | 主力模型               |
-| Embedding | text-embedding-3-small          | -       | 文档向量化             |
-| 网络搜索  | Tavily                          | -       | Research Agent搜索工具 |
-| 任务队列  | Celery + Redis                  | 5.3 / 7 | 异步重任务             |
-| PPT生成   | python-pptx                     | -       | Deck输出               |
-| PDF解析   | PyPDF2                          | -       | 文件处理               |
-
-### 6.2 数据层
-
-| 组件       | 技术          | 用途                             |
-| ---------- | ------------- | -------------------------------- |
-| 主数据库   | MongoDB Atlas | 客户档案、项目、提案、反馈、指标 |
-| 向量数据库 | Pinecone      | RAG检索（namespace隔离）         |
-| 缓存       | Redis         | Celery broker + 语义缓存         |
-
-### 6.3 前端
-
-| 组件     | 技术          | 说明                             |
-| -------- | ------------- | -------------------------------- |
-| 框架     | Next.js 14    | App Router + SSR                 |
-| 语言     | TypeScript    | 类型安全                         |
-| 状态管理 | Redux Toolkit | 全局状态 + RTK Query             |
-| 实时通信 | WebSocket     | Agent执行流式输出 + HITL节点推送 |
-| 样式     | Tailwind CSS  | 工具类样式                       |
-
-### 6.4 基础设施
-
-| 组件     | 技术                    | 说明                  |
-| -------- | ----------------------- | --------------------- |
-| 容器化   | Docker + Docker Compose | 本地和部署            |
-| 反向代理 | Nginx                   | 路由 + SSL            |
-| CI/CD    | GitHub Actions          | 自动测试 + Docker构建 |
-| 代码质量 | Black + isort + flake8  | 格式化和lint          |
-| 测试     | pytest                  | 单元测试              |
+- Agent trigger rate and interception rate
+- Brief Analyzer clarification frequency (which fields clients most often omit)
+- Narrative Agent suggestion type distribution (which coherence issues are most common)
+- Average pipeline execution time
+- Request Budget usage distribution (cost analysis)
+- Cache hit rate
 
 ---
 
-## 7. MongoDB数据模型
+## 6. Tech Stack
+
+### 6.1 Backend
+
+| Component | Technology | Version | Notes |
+|-----------|-----------|---------|-------|
+| API framework | FastAPI | 0.115 | Async REST + WebSocket |
+| Agent orchestration | LangGraph | 0.2 | State machine + HITL support |
+| LLM | Claude Sonnet | - | Primary model |
+| Embedding | BGE-M3 (self-hosted) | - | Multilingual, strong Chinese PR/marketing terminology support |
+| Web search | Tavily | - | Research Agent search tool |
+| Task queue | Celery + Redis | 5.3 / 7 | Async heavy tasks |
+| PPT generation | python-pptx | - | Deck output |
+| PDF parsing | PyPDF2 | - | File processing |
+
+### 6.2 Data Layer
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| Primary database | MongoDB Atlas | Clients, projects, proposals, feedback, metrics |
+| Vector database | Pinecone | RAG retrieval (namespace isolated) |
+| Cache | Redis | Celery broker + semantic cache |
+
+### 6.3 Frontend
+
+| Component | Technology | Notes |
+|-----------|-----------|-------|
+| Framework | Next.js 14 | App Router + SSR |
+| Language | TypeScript | Type safety |
+| State management | Redux Toolkit | Global state + RTK Query |
+| Real-time | WebSocket | Agent streaming + HITL node push |
+| Styling | Tailwind CSS | Utility-first |
+
+### 6.4 Infrastructure
+
+| Component | Technology | Notes |
+|-----------|-----------|-------|
+| Containerization | Docker + Docker Compose | Local dev and deployment |
+| Reverse proxy | Nginx | Routing + SSL |
+| CI/CD | GitHub Actions | Auto test + Docker build |
+| Code quality | Black + isort + flake8 | Formatting and lint |
+| Testing | pytest | Unit tests |
+
+---
+
+## 7. MongoDB Data Model
 
 ```
 collections:
 │
-├── clients                         # 客户账户
+├── organizations                   # Agency company (top-level tenant)
 │   ├── _id
+│   ├── name
+│   └── created_at
+│
+├── users                           # Account users
+│   ├── _id
+│   ├── organization_id             # Which agency
+│   ├── name
+│   ├── email
+│   ├── role                        # account / lead_account / admin
+│   └── created_at
+│
+├── clients                         # Clients (shared across org)
+│   ├── _id
+│   ├── organization_id             # Which agency
+│   ├── lead_account_id             # Client owner
 │   ├── name
 │   ├── industry
-│   ├── default_deck_structure      # 客户级PPT默认结构
+│   ├── default_deck_structure      # Client-level default slide structure
 │   └── created_at
 │
-├── projects                        # 提案项目
+├── projects                        # Pitch projects
 │   ├── _id
 │   ├── client_id
+│   ├── assigned_accounts           # [user_id] accounts assigned to this project
 │   ├── name
 │   ├── status                      # draft / in_progress / completed / archived
-│   ├── custom_deck_structure       # 项目级PPT结构（最高优先级）
+│   ├── custom_deck_structure       # Project-level structure (highest priority)
 │   └── created_at
 │
-├── proposals                       # 提案版本
+├── proposals                       # Proposal versions
 │   ├── _id
 │   ├── project_id
+│   ├── created_by                  # user_id
 │   ├── version                     # v1, v2, v3...
 │   ├── structured_brief
 │   ├── strategy_result
@@ -502,69 +565,73 @@ collections:
 │   ├── stage_metrics
 │   └── created_at
 │
-│  ── 文件库 ────────────────────────────────────────────────────
+│  ── File Library ──────────────────────────────────────────────
 │
-├── files                           # 所有上传文件的元数据记录
+├── files                           # All uploaded file metadata
 │   ├── _id
 │   ├── client_id
-│   ├── project_id                  # null = Brand Library；有值 = Project Library
+│   ├── project_id                  # null = Brand Library; set = Project Library
+│   ├── uploaded_by                 # user_id
 │   ├── filename
 │   ├── file_category               # brand_library / project_library
 │   ├── file_type
-│   │     brand_library下：
-│   │       brand_spec              # VI、品牌手册、ToV
-│   │       brand_history_proposal  # 历史提案deck
-│   │       brand_history_copy      # 历史文案、social内容
-│   │     project_library下：
-│   │       project_brief           # 客户brief、会议记录
-│   │       competitor_copy         # 竞品文案、竞品资料
-│   │       visual_ref              # Moodboard、竞品截图（Phase 2处理）
-│   ├── pinecone_namespace           # 写入的namespace名称
-│   ├── chunk_count                 # 分块数量
+│   │     Under brand_library:
+│   │       brand_spec              # VI, brand book, ToV
+│   │       brand_history_proposal  # Historical pitch decks
+│   │       brand_history_copy      # Historical copy, social content
+│   │     Under project_library:
+│   │       project_brief           # Client brief, meeting notes
+│   │       competitor_copy         # Competitor copy, competitor materials
+│   │       visual_ref              # Moodboard, competitor screenshots (Phase 2)
+│   ├── pinecone_namespace          # Target namespace
+│   ├── chunk_count                 # Number of chunks produced
 │   ├── processing_status           # pending / processing / done / failed
-│   ├── processing_error            # 失败原因
+│   ├── processing_error            # Failure reason
+│   ├── deleted                     # Soft-delete flag (bool)
+│   ├── deleted_at
+│   ├── deleted_by                  # user_id
 │   └── uploaded_at
 │
-│  ── 资源库 ────────────────────────────────────────────────────
+│  ── Resource Library ──────────────────────────────────────────
 │
-├── resources                       # 统一资源库（四类共用collection，type区分）
+├── resources                       # Unified resource store (all 4 types in one collection)
 │   ├── _id
 │   ├── type                        # kol / media / vendor / placement
 │   ├── name
-│   ├── tags                        # 标签数组，各类型标签体系不同（见下）
+│   ├── tags                        # Tag array, schema varies by type
 │   ├── pricing                     # { min, max, unit, currency }
 │   ├── collaboration_history       # [{ client, project_type, date, performance }]
-│   ├── pinecone_namespace          # 对应resource_{type} namespace
-│   └── metadata                    # 类型特有字段（见下）
+│   ├── pinecone_namespace          # Maps to resource_{type} namespace
+│   └── metadata                    # Type-specific fields (see below)
 │
-│   KOL metadata示例：
+│   KOL metadata:
 │   { platform, followers, content_direction, audience_profile,
 │     mcn, contact, engagement_rate }
 │
-│   媒体 metadata示例：
+│   Media metadata:
 │   { media_name, media_type, coverage_domain, contact_name,
 │     contact_line, publish_types }
 │
-│   供应商 metadata示例：
+│   Vendor metadata:
 │   { service_types, regions, past_clients, quality_rating }
 │
-│   媒介 metadata示例：
+│   Placement metadata:
 │   { placement_type, cities, audience_size, available_periods }
 │
-│  ── 反馈与学习 ─────────────────────────────────────────────────
+│  ── Feedback & Learning ───────────────────────────────────────
 │
-├── feedback                        # 客户反馈
+├── feedback                        # Client feedback
 │   ├── _id
 │   ├── proposal_id
 │   ├── client_id
-│   ├── content                     # 反馈原文
-│   ├── approved_directions         # 认可的方向（写回Brand Library参考）
-│   ├── rejected_directions         # 否定的方向（后续生成自动规避）
+│   ├── content                     # Raw feedback text
+│   ├── approved_directions         # Approved directions (persist to Brand Library)
+│   ├── rejected_directions         # Rejected directions (auto-avoid in future)
 │   ├── rerun_triggered             # bool
 │   ├── rerun_from_node             # strategy / resource / deck_structure / slide / null
 │   └── created_at
 │
-└── stage_metrics                   # 各阶段执行指标（独立collection便于聚合分析）
+└── stage_metrics                   # Per-stage execution metrics (separate collection for aggregation)
     ├── _id
     ├── proposal_id
     ├── project_id
@@ -572,7 +639,7 @@ collections:
     ├── brief_analyzer              # { clarification_triggered, missing_fields }
     ├── brand_consistency_check     # { triggered_revision, issues_found }
     ├── research_agent              # { sources_used, cache_hit, search_count }
-    ├── narrative_agent             # { issues_found, retry_count, issues_detail }
+    ├── narrative_agent             # { suggestions_count, suggestions_accepted, suggestions_ignored }
     ├── resource_agent              # { triggered, resource_types, matched_count }
     ├── request_budget              # { llm_calls_used, search_calls_used, total_seconds }
     └── created_at
@@ -580,66 +647,71 @@ collections:
 
 ---
 
-## 8. API端点设计
+## 8. API Endpoints
 
 ```
-认证
+Auth
 POST   /api/v1/auth/login
 POST   /api/v1/auth/refresh
 
-客户管理
+Users
+GET    /api/v1/users                         # List users in current org
+POST   /api/v1/users/invite                  # Invite new Account (admin only)
+PATCH  /api/v1/users/{id}/role               # Change role (admin only)
+
+Clients (shared across org)
 GET    /api/v1/clients
 POST   /api/v1/clients
-PATCH  /api/v1/clients/{id}/deck-structure   # 设置客户级默认结构
+PATCH  /api/v1/clients/{id}/deck-structure   # Set client-level default (lead_account+)
 
-项目管理
+Projects
 GET    /api/v1/projects?client_id=...
 POST   /api/v1/projects
 PATCH  /api/v1/projects/{id}
 
-文件管理
-POST   /api/v1/files/upload                  # 上传（异步处理）
+Files
+POST   /api/v1/files/upload                  # Upload (async processing)
 GET    /api/v1/files?client_id=&project_id=
 DELETE /api/v1/files/{id}
 
-Pipeline执行
-POST   /api/v1/pipeline/start               # 启动pipeline
-POST   /api/v1/pipeline/{id}/confirm        # HITL节点用户确认
-POST   /api/v1/pipeline/{id}/rerun          # 指定节点重跑
-GET    /api/v1/pipeline/{id}/status         # 查询执行状态
+Pipeline
+POST   /api/v1/pipeline/start               # Start pipeline
+POST   /api/v1/pipeline/{id}/confirm        # HITL node user confirmation
+POST   /api/v1/pipeline/{id}/rerun          # Targeted rerun (body includes refresh_research option)
+GET    /api/v1/pipeline/{id}/status         # Query execution status
 
-提案管理
+Proposals
 GET    /api/v1/proposals?project_id=...
 GET    /api/v1/proposals/{id}
-GET    /api/v1/proposals/{id}/download      # 下载.pptx
-POST   /api/v1/proposals/{id}/feedback      # 录入客户反馈
+GET    /api/v1/proposals/{id}/download      # Download .pptx
+POST   /api/v1/proposals/{id}/feedback      # Record client feedback
 
-资源库
+Resources
 GET    /api/v1/resources?type=&tags=
 POST   /api/v1/resources
-POST   /api/v1/resources/import             # Excel批量导入
+POST   /api/v1/resources/import             # Excel bulk import
 
-分析
-GET    /api/v1/analytics/pipeline-metrics   # Stage metrics汇总
-GET    /api/v1/analytics/cache-stats        # 缓存命中率
+Analytics
+GET    /api/v1/analytics/pipeline-metrics   # Stage metrics summary
+GET    /api/v1/analytics/cache-stats        # Cache hit rate
 
-系统
+System
 GET    /health
-WS     /ws/pipeline/{pipeline_id}           # 实时推送Agent执行状态
+WS     /ws/pipeline/{pipeline_id}           # Real-time agent execution status
 ```
 
 ---
 
-## 9. WebSocket事件设计
+## 9. WebSocket Events
 
-前端通过WebSocket实时接收pipeline执行状态，实现流式展示和HITL节点交互：
+The frontend receives pipeline execution status in real time via WebSocket for streaming display and HITL interaction:
 
 ```
-Server → Client 事件：
+Server → Client:
 {
   "event": "agent_started",
   "agent": "research_agent",
-  "message": "正在搜索竞品信息..."
+  "message": "Searching competitor information..."
 }
 
 {
@@ -649,10 +721,25 @@ Server → Client 事件：
 }
 
 {
-  "event": "hitl_required",        ← 触发前端弹出确认界面
+  "event": "hitl_required",
   "node": "node_2_strategy",
   "data": { ...strategy_result },
-  "message": "请确认策略方向"
+  "message": "Please confirm strategy direction"
+}
+
+{
+  "event": "slide_generated",
+  "slide_index": 3,
+  "total_slides": 15,
+  "content": { ...slide_content }
+}
+
+{
+  "event": "narrative_suggestions",
+  "suggestions": [
+    { "page": 3, "issue": "Insight on page 3 conflicts with strategy on page 5" },
+    { "page": 7, "issue": "Budget allocation conflicts with channel priorities" }
+  ]
 }
 
 {
@@ -662,45 +749,52 @@ Server → Client 事件：
 
 {
   "event": "budget_warning",
-  "message": "LLM调用已达80%上限"
+  "message": "LLM calls at 80% of limit"
 }
 
 {
   "event": "fallback_triggered",
   "agent": "research_agent",
-  "reason": "Tavily不可用，已切换至内部历史库"
+  "reason": "Tavily unavailable, switched to internal history"
 }
 
-Client → Server 事件：
+Client → Server:
 {
   "event": "hitl_response",
   "node": "node_2_strategy",
-  "action": "confirm"             # confirm / revise
-  "feedback": "Big Idea方向偏了，希望更聚焦科技感"
+  "action": "confirm",
+  "feedback": "Big Idea direction is off, want more tech-focused",
+  "refresh_research": false
+}
+
+{
+  "event": "research_refresh",
+  "node": "node_2_strategy"
 }
 ```
 
 ---
 
-## 10. Docker Compose服务编排
+## 10. Docker Compose Services
 
 ```yaml
 services:
   frontend:        # Next.js,  Port 3000
   backend:         # FastAPI,  Port 8000
-  worker:          # Celery Worker（文件处理 + PPT生成）
-  redis:           # Port 6379（Celery broker + 语义缓存）
+  worker:          # Celery Worker (file processing + PPT generation)
+  embedding:       # BGE-M3 embedding service (Port 8001)
+  redis:           # Port 6379 (Celery broker + semantic cache)
   mongodb:         # Port 27017
-  nginx:           # Port 80/443（反向代理）
+  nginx:           # Port 80/443 (reverse proxy)
 
 networks:
-  mkt_agent_network
+  pitchcraft_network
 
 volumes:
   mongodb_data
   redis_data
-  pptx_output      # 生成的PPT文件
-  uploaded_files   # 用户上传的原始文件
+  pptx_output      # Generated PPT files
+  uploaded_files   # User-uploaded raw files
 ```
 
 ---
@@ -710,34 +804,35 @@ volumes:
 ```
 git push
     ↓
-GitHub Actions触发
+GitHub Actions triggers
     │
-    ├── 并行执行
-    │   ├── pytest（后端单元测试）
-    │   ├── lint（Black + flake8）
-    │   └── 前端build检查
+    ├── Parallel
+    │   ├── pytest (backend unit tests)
+    │   ├── lint (Black + flake8)
+    │   └── frontend build check
     │
-    └── 全部通过
+    └── All pass
             ↓
-        Build Docker Images
+        Build Docker images
             ↓
         Push to Docker Hub
             ↓
-        Ready to Deploy
+        Ready to deploy
 ```
 
 ---
 
-## 12. 项目目录结构
+## 12. Project Directory Structure
 
 ```
-mkt-agent/
+pitchcraft/
 ├── backend/
 │   ├── api/
 │   │   ├── main.py
 │   │   └── v1/
 │   │       ├── endpoints/
 │   │       │   ├── auth.py
+│   │       │   ├── users.py
 │   │       │   ├── clients.py
 │   │       │   ├── projects.py
 │   │       │   ├── files.py
@@ -745,6 +840,7 @@ mkt-agent/
 │   │       │   ├── proposals.py
 │   │       │   ├── resources.py
 │   │       │   └── analytics.py
+│   │       ├── permissions.py       # Role-based permission checks
 │   │       └── websocket.py
 │   ├── core/
 │   │   ├── agents/
@@ -757,20 +853,23 @@ mkt-agent/
 │   │   │   ├── narrative_agent.py
 │   │   │   └── ppt_builder.py
 │   │   ├── graph/
-│   │   │   ├── pipeline.py          # LangGraph主流程
-│   │   │   ├── state.py             # PipelineState定义
-│   │   │   └── nodes.py             # 各节点函数
+│   │   │   ├── pipeline.py          # LangGraph main flow
+│   │   │   ├── state.py             # PipelineState definition
+│   │   │   └── nodes.py             # Node functions
 │   │   ├── rag/
-│   │   │   ├── indexer.py           # 文件向量化
-│   │   │   ├── retriever.py         # 检索逻辑
-│   │   │   └── cache.py             # 语义缓存
+│   │   │   ├── indexer.py           # File vectorization
+│   │   │   ├── retriever.py         # Retrieval logic
+│   │   │   └── cache.py             # Semantic cache
+│   │   ├── language/
+│   │   │   ├── detector.py          # Language detection
+│   │   │   └── prompts.py           # Chinese/English prompt templates
 │   │   ├── stability/
 │   │   │   ├── budget.py            # Request Budget
-│   │   │   └── fallback.py          # 降级链
+│   │   │   └── fallback.py          # Fallback chains
 │   │   ├── database/
-│   │   │   └── repositories/        # MongoDB操作
+│   │   │   └── repositories/        # MongoDB operations
 │   │   ├── models/                  # Pydantic models
-│   │   ├── tasks.py                 # Celery任务
+│   │   ├── tasks.py                 # Celery tasks
 │   │   └── config.py
 │   ├── tests/
 │   │   └── unit/
@@ -778,9 +877,14 @@ mkt-agent/
 ├── frontend/
 │   ├── app/                         # Next.js App Router
 │   ├── components/
-│   │   ├── pipeline/                # Pipeline执行界面
-│   │   ├── hitl/                    # HITL确认组件
-│   │   ├── deck-preview/            # PPT预览
+│   │   ├── pipeline/                # Pipeline execution view
+│   │   ├── hitl/                    # HITL confirmation components
+│   │   ├── gallery/                 # Node 4 Gallery Review
+│   │   │   ├── GalleryView.tsx      # Main layout (thumbnails + preview + progress)
+│   │   │   ├── SlideThumbnail.tsx   # Thumbnail with status indicator
+│   │   │   ├── SlidePreview.tsx     # Current slide preview
+│   │   │   └── NarrativePanel.tsx   # Narrative suggestions panel
+│   │   ├── deck-preview/            # PPT preview
 │   │   └── analytics/               # Dashboard
 │   ├── store/                       # Redux
 │   ├── hooks/
@@ -794,7 +898,3 @@ mkt-agent/
 │       └── ci.yml
 └── README.md
 ```
-
----
-
-_本文档随开发推进持续更新_
