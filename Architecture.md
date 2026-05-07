@@ -55,7 +55,7 @@
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │              Language Router                              │   │
 │  │  - Language detection (langdetect)                       │   │
-│  │  - Prompt template selection (Chinese / English)         │   │
+│  │  - Prompt templates: Chinese and English                 │   │
 │  │  - Output language follows input, supports mixed         │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └──────────┬──────────────────────────────┬───────────────────────┘
@@ -478,9 +478,10 @@ Based on stage_metrics data:
 | Component | Technology | Version | Notes |
 |-----------|-----------|---------|-------|
 | API framework | FastAPI | 0.115 | Async REST + WebSocket |
+| Auth | Google OAuth + Microsoft OAuth + JWT | - | NextAuth on frontend, JWT tokens on backend |
 | Agent orchestration | LangGraph | 0.2 | State machine + HITL support |
 | LLM | Claude Sonnet | - | Primary model |
-| Embedding | BGE-M3 (self-hosted) | - | Multilingual, strong Chinese PR/marketing terminology support |
+| Embedding | BGE-M3 (self-hosted) | - | Multilingual (Chinese + English), strong marketing terminology support |
 | Web search | Tavily | - | Research Agent search tool |
 | Task queue | Celery + Redis | 5.3 / 7 | Async heavy tasks |
 | PPT generation | python-pptx | - | Deck output |
@@ -650,9 +651,13 @@ collections:
 ## 8. API Endpoints
 
 ```
-Auth
-POST   /api/v1/auth/login
+Auth (Google OAuth + Microsoft OAuth + email/password fallback)
+POST   /api/v1/auth/login              # Email/password
 POST   /api/v1/auth/refresh
+GET    /api/v1/auth/google             # Google OAuth redirect
+GET    /api/v1/auth/google/callback
+GET    /api/v1/auth/microsoft          # Microsoft OAuth redirect
+GET    /api/v1/auth/microsoft/callback
 
 Users
 GET    /api/v1/users                         # List users in current org

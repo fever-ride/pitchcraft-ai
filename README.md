@@ -35,9 +35,10 @@ Six agents run in a stateful LangGraph pipeline with five human-in-the-loop chec
 | Layer | Technology |
 |-------|-----------|
 | Agent orchestration | LangGraph (fan-out/fan-in, HITL pauses, conditional branches) |
+| Auth | Google OAuth + Microsoft OAuth + email/password |
 | Backend | FastAPI + Celery + Redis |
 | Frontend | Next.js 14 + TypeScript + WebSocket |
-| RAG | Pinecone (namespace-isolated) + BGE-M3 (self-hosted) |
+| RAG | Pinecone (namespace-isolated) + BGE-M3 (self-hosted, multilingual) |
 | Database | MongoDB Atlas (multi-tenant) |
 | LLM | Claude Sonnet |
 | PPT generation | python-pptx |
@@ -46,7 +47,7 @@ Six agents run in a stateful LangGraph pipeline with five human-in-the-loop chec
 
 | Decision | Rationale |
 |----------|-----------|
-| BGE-M3 over text-embedding-3-small | Better Chinese PR/marketing terminology support. Open-source, self-hosted, no API cost. |
+| BGE-M3 over text-embedding-3-small | Better multilingual (Chinese + English) marketing terminology support. Open-source, self-hosted, no API cost. |
 | Narrative Agent as non-blocking advisor | No flow control, no retry loops. Suggestions shown alongside content in Gallery view. |
 | Research and Strategy Phase 1 in parallel | Fan-out/fan-in via LangGraph. Phase 2 waits for research. Saves ~8 seconds per run. |
 | Token-based semantic chunking | Language-agnostic. Splits on paragraph/sentence boundaries, not character counts. |

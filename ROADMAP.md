@@ -8,7 +8,7 @@ End-to-end flow from brief input to PPT download with human oversight at every c
 
 - [ ] Docker Compose: FastAPI + Celery + Redis + MongoDB + Next.js + Nginx + BGE-M3
 - [ ] MongoDB schema: organizations, users, clients, projects, proposals, files, resources, feedback, stage_metrics
-- [ ] Auth: JWT login/refresh, role-based permission middleware (account / lead_account / admin)
+- [ ] Auth: Google OAuth + Microsoft OAuth + email/password fallback, JWT tokens, role-based permissions (account / lead_account / admin)
 - [ ] WebSocket: pipeline status streaming + HITL event push
 
 ### 1.2 File Management and RAG
@@ -68,7 +68,7 @@ End-to-end flow from brief input to PPT download with human oversight at every c
 - [ ] Request Budget: max 30 LLM calls, 10 search calls, 300s timeout per pipeline
 - [ ] Fallback chains for each external dependency
 - [ ] Per-stage metrics collection (stage_metrics MongoDB collection)
-- [ ] Language Router: detect brief language, select Chinese/English prompt templates
+- [ ] Language Router: detect brief language (Chinese / English), select matching prompt templates
 
 ### 1.9 Frontend (Core)
 
@@ -89,7 +89,7 @@ Deeper research, expanded resource types, client feedback loop.
 ### 2.1 Research Agent Enhancement
 
 - [ ] Multimodal competitor analysis (uploaded screenshots → visual style extraction)
-- [ ] Third-party social data APIs (Chanmama, Feigua) for KOL performance metrics
+- [ ] Third-party social data APIs (locale-specific: Chanmama/Feigua for China, CreatorIQ/Sprout Social for global)
 - [ ] Richer competitor reports: social performance, content style analysis
 
 ### 2.2 Resource Agent Expansion
@@ -174,7 +174,7 @@ Version control, analytics, deployment infrastructure.
 ## Open Questions
 
 - [ ] Visual reference file processing depth (Phase 2)
-- [ ] China social media data acquisition compliance
+- [ ] Social media data acquisition compliance (varies by locale)
 - [ ] Resource database cold-start strategy
 - [ ] Resource Agent trigger boundary: Strategy output sufficient, or user selects at Node 2?
 - [ ] Narrative Agent prompt design (specific, actionable, page-referenced)

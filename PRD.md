@@ -32,6 +32,7 @@ Account teams face four pain points during pitch season:
 - Expects deliverables that are usable immediately or with minimal edits
 - Manages multiple client accounts simultaneously
 - Multiple Accounts at the same agency may collaborate on one client
+- Works in Chinese or English (system supports both)
 
 ### 1.4 Multi-Tenancy and Collaboration
 
@@ -158,7 +159,7 @@ Research is the most time-consuming part of pitching and the highest-value autom
 
 **Phase 2**:
 
-- Third-party social data platforms (Chanmama, Feigua)
+- Third-party social data platforms (locale-specific: e.g. Chanmama/Feigua for China, Sprout Social/Brandwatch for global)
 - Multimodal visual style analysis
 
 **Output**: Structured competitor analysis report, insertable directly into the pitch deck.
@@ -223,7 +224,7 @@ Resource Agent determines which resource types are needed
 | Pricing reference | Historical price range |
 | Tags | Industry / content style / audience traits |
 
-Data source: manual entry or Excel bulk import initially; third-party APIs in Phase 2.
+Data source: manual entry or Excel bulk import initially; locale-specific third-party APIs in Phase 2 (e.g. Chanmama/Feigua for China market, CreatorIQ for global).
 
 ---
 
@@ -512,7 +513,7 @@ Brief Analyzer processes
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | Agent orchestration | LangGraph | State management, conditional branching, HITL |
-| RAG | Pinecone + BGE-M3 | Brand style retrieval, historical reference (BGE-M3 for Chinese marketing terminology) |
+| RAG | Pinecone + BGE-M3 | Brand style retrieval, historical reference (BGE-M3 for multilingual marketing terminology) |
 | File processing | PyPDF2, python-pptx | Document parsing and PPT generation |
 | Web search | Tavily | Research Agent real-time search |
 | Backend | FastAPI | API layer |
@@ -541,7 +542,7 @@ Brief Analyzer processes
 - Resource Agent expansion: media, vendor, and placement databases
 - Human-in-the-loop Node 5 (client feedback + targeted rerun)
 - Visual reference file processing (multimodal)
-- KOL database third-party API integration (Chanmama, Feigua)
+- KOL database third-party API integration (locale-specific: Chanmama/Feigua for China, CreatorIQ for global)
 
 ### Phase 3: Production Hardening
 
@@ -555,11 +556,11 @@ Brief Analyzer processes
 ## 6. Open Questions
 
 - [ ] Processing depth for visual reference files (moodboard, competitor screenshots)
-- [ ] Compliance and feasibility of China social media data acquisition
+- [ ] Compliance and feasibility of social media data acquisition (varies by locale)
 - [ ] Cold-start strategy for resource databases (where does initial data come from)
 - [ ] Resource Agent trigger boundary: is Strategy output sufficient to determine resource types, or should the user explicitly select at Node 2?
 - [ ] Narrative Agent prompt design: how to ensure suggestions are specific, actionable, and reference page numbers
 - [x] ~~Node 4 per-slide interaction model~~ → Gallery Review with batch mark and regenerate
 - [ ] Client feedback rerun: system auto-detects rerun node vs user manually selects
-- [x] ~~Multilingual support priority~~ → Language Router: language detection + prompt template switching. LLM stays Claude, embedding stays BGE-M3 (natively multilingual)
+- [x] ~~Multilingual support priority~~ → Language Router: language detection + prompt template switching (Chinese / English). LLM stays Claude, embedding stays BGE-M3 (natively multilingual)
 - [ ] Initial PPT template count and project type coverage
