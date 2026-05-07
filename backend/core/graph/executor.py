@@ -70,8 +70,8 @@ class PipelineExecutor:
             json.dumps(data),
         )
 
-    async def run(self, initial_state: dict):
-        """Execute the full pipeline with HITL checkpoints."""
+    async def run(self, initial_state: dict, start_from: str | None = None):
+        """Execute the full pipeline with HITL checkpoints. Optionally start from a specific node (rerun)."""
         from backend.core.graph.pipeline import (
             brand_check_node,
             brief_analyzer_node,
@@ -103,6 +103,13 @@ class PipelineExecutor:
             ("hitl_gallery", None),
             ("ppt_builder", ppt_builder_node),
         ]
+
+        # Skip nodes before start_from for rerun
+        if start_from:
+            node_names = [n[0] for n in node_sequence]
+            if start_from in node_names:
+                start_idx = node_names.index(start_from)
+                node_sequence = node_sequence[start_idx:]
 
         metrics = {}
 
@@ -154,6 +161,11 @@ class PipelineExecutor:
 
     def _apply_hitl_response(self, state: dict, node: str, response: dict) -> dict:
         action = response.get("action", "confirm")
+
+        if action == "rerun":
+            state["rerun_from"] = response.get("rerun_from", "")
+            return state
+
         if node == "hitl_brief":
             state["brief_confirmed"] = True
             if response.get("edits"):

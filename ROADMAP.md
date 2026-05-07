@@ -102,18 +102,23 @@ Deeper research, expanded resource types, client feedback loop.
 
 ### 2.2 Resource Agent Expansion
 
-- [ ] Media resource database (outlets, journalists, publish types, pricing)
-- [ ] Vendor database (event companies, photographers, venues)
-- [ ] Ad placement database (OOH, elevator, magazine, cinema)
-- [ ] Pinecone namespaces: resource_media, resource_vendor, resource_placement
-- [ ] Trigger logic expansion: PR → media, offline → vendor, ads → placement
+- [x] Media resource database (outlets, journalists, publish types, pricing)
+- [x] Vendor database (event companies, photographers, venues)
+- [x] Ad placement database (OOH, elevator, magazine, cinema)
+- [x] Pinecone namespaces: resource_media, resource_vendor, resource_placement
+- [x] Trigger logic expansion: PR → media, offline → vendor, ads → placement
+- [x] Multi-type parallel retrieval in resource agent
+- [x] Excel import supports all resource types with type-based namespace routing
+- [x] Resource model expanded with type-specific fields (outlet_type, beat, service_type, placement_type, etc.)
 
 ### 2.3 Client Feedback Loop (Node 5)
 
-- [ ] Feedback entry UI: free text + approved/rejected direction tagging
-- [ ] Feedback persistence to Brand Library (influences future projects)
-- [ ] Targeted rerun: system suggests rerun node based on feedback type, user confirms
-- [ ] Rerun matrix: strategy / slide / structure / resource level
+- [x] Feedback entry UI: free text + approved/rejected direction tagging
+- [x] Feedback persistence to Brand Library (approved directions embedded to brand_spec namespace)
+- [x] Targeted rerun: system suggests rerun node based on feedback target, user confirms
+- [x] Rerun matrix: strategy / slide / structure / resource level (RERUN_SUGGESTIONS mapping)
+- [x] Strategy Phase 2 reads rejected directions from history to avoid repeats
+- [x] Executor supports `start_from` parameter for partial pipeline re-execution
 
 ### 2.4 Visual Reference Processing
 

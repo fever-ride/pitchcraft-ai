@@ -122,6 +122,7 @@ async def strategy_phase2_node(state: PipelineState) -> dict:
         brief=brief,
         phase1_insight=state.get("strategy_insight", {}),
         research_result=state.get("research_result", {}),
+        client_id=state.get("client_id"),
         budget=budget,
     )
     return {"strategy_result": result}

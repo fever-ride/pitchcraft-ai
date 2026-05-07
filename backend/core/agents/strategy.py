@@ -1,9 +1,11 @@
-"""Strategy Agent: two-phase strategy generation."""
+"""Strategy Agent: two-phase strategy generation with feedback-aware constraints."""
 import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from backend.core.agents.llm import invoke_llm, strip_code_block
+from backend.core.database.connection import get_database
+from backend.core.database.repositories.feedback import FeedbackRepository
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import detect_language
 from backend.core.language.prompts import STRATEGY_PHASE1_PROMPTS, STRATEGY_PHASE2_PROMPTS
@@ -67,18 +69,33 @@ async def run_strategy_phase2(
     brief: dict,
     phase1_insight: dict,
     research_result: dict,
+    client_id: str | None = None,
     budget: RequestBudget | None = None,
 ) -> dict:
-    """Phase 2: Big Idea + full strategy (after Research completes)."""
+    """Phase 2: Big Idea + full strategy (after Research completes). Avoids rejected directions from history."""
     lang = phase1_insight.get("language", "en")
     insight = json.dumps(phase1_insight, ensure_ascii=False)
     research_summary = json.dumps(research_result, ensure_ascii=False)[:3000]
+
+    # Fetch previously rejected directions for this client
+    constraints = ""
+    if client_id:
+        db = await get_database()
+        repo = FeedbackRepository(db)
+        rejected = await repo.find_rejected_directions(client_id)
+        if rejected:
+            rejected_text = "\n".join(f"- {d}" for d in rejected[-10:])
+            constraints = (
+                f"\n\n⚠️ 以下方向曾被客户否决，请避免：\n{rejected_text}"
+                if lang == "zh"
+                else f"\n\n⚠️ The client has previously rejected these directions — avoid them:\n{rejected_text}"
+            )
 
     prompt = STRATEGY_PHASE2_PROMPTS[lang].format(
         insight=insight,
         research=research_summary,
         brief=json.dumps(brief, ensure_ascii=False),
-    )
+    ) + constraints
 
     text = await invoke_llm(
         [HumanMessage(content=prompt)],

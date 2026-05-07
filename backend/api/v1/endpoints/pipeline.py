@@ -93,7 +93,7 @@ async def rerun_from_node(
         state["strategy_feedback"] = request.feedback
 
     new_executor = PipelineExecutor(pipeline_id)
-    background_tasks.add_task(new_executor.run, state)
+    background_tasks.add_task(new_executor.run, state, request.rerun_from)
 
     return {"status": "rerun_started", "from_node": request.rerun_from}
 

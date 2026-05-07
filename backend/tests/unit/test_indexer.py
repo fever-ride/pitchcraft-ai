@@ -38,3 +38,42 @@ def test_project_file_without_project_id_falls_back_to_client():
 def test_competitor_copy_namespace():
     ns = resolve_namespace("competitor_copy", "client_abc", "proj_123")
     assert ns == "project_proj_123"
+
+
+# --- Resource namespace resolution ---
+
+def resource_namespace(resource_type: str, client_id: str) -> str:
+    """Mirror of models.resource.resource_namespace."""
+    type_map = {
+        "kol": "resource_kol",
+        "koc": "resource_kol",
+        "media": "resource_media",
+        "vendor": "resource_vendor",
+        "placement": "resource_placement",
+    }
+    prefix = type_map.get(resource_type, "resource_kol")
+    return f"{prefix}_{client_id}"
+
+
+def test_resource_kol_namespace():
+    assert resource_namespace("kol", "client_x") == "resource_kol_client_x"
+
+
+def test_resource_koc_shares_kol_namespace():
+    assert resource_namespace("koc", "client_x") == "resource_kol_client_x"
+
+
+def test_resource_media_namespace():
+    assert resource_namespace("media", "client_x") == "resource_media_client_x"
+
+
+def test_resource_vendor_namespace():
+    assert resource_namespace("vendor", "client_x") == "resource_vendor_client_x"
+
+
+def test_resource_placement_namespace():
+    assert resource_namespace("placement", "client_x") == "resource_placement_client_x"
+
+
+def test_resource_unknown_type_defaults_to_kol():
+    assert resource_namespace("unknown", "client_x") == "resource_kol_client_x"

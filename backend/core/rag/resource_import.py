@@ -1,14 +1,16 @@
 """Resource Excel import: parse .xlsx, create DB records, embed, upsert to Pinecone."""
 import io
 import json
+from collections import defaultdict
 
 from openpyxl import load_workbook
 
 from backend.core.database.connection import get_database
+from backend.core.models.resource import resource_namespace
 from backend.core.rag.embedder import embed_texts
 from backend.core.rag.indexer import upsert_vectors
 
-EXPECTED_COLUMNS = {"name", "type", "platform", "followers", "tags", "pricing", "notes"}
+VALID_TYPES = {"kol", "koc", "media", "vendor", "placement"}
 
 
 def parse_resource_excel(file_bytes: bytes) -> list[dict]:
@@ -46,8 +48,9 @@ def _resource_to_text(r: dict) -> str:
     parts = [
         f"Name: {r.get('name', '')}",
         f"Type: {r.get('type', '')}",
-        f"Platform: {r.get('platform', '')}",
     ]
+    if r.get("platform"):
+        parts.append(f"Platform: {r['platform']}")
     if r.get("followers"):
         parts.append(f"Followers: {r['followers']}")
     if r.get("tags"):
@@ -56,11 +59,28 @@ def _resource_to_text(r: dict) -> str:
         parts.append(f"Pricing: {r['pricing']}")
     if r.get("notes"):
         parts.append(f"Notes: {r['notes']}")
+    # Media-specific
+    if r.get("outlet_type"):
+        parts.append(f"Outlet: {r['outlet_type']}")
+    if r.get("beat"):
+        parts.append(f"Beat: {r['beat']}")
+    # Vendor-specific
+    if r.get("service_type"):
+        parts.append(f"Service: {r['service_type']}")
+    if r.get("region"):
+        parts.append(f"Region: {r['region']}")
+    # Placement-specific
+    if r.get("placement_type"):
+        parts.append(f"Placement: {r['placement_type']}")
+    if r.get("location"):
+        parts.append(f"Location: {r['location']}")
+    if r.get("audience_reach"):
+        parts.append(f"Reach: {r['audience_reach']}")
     return " | ".join(parts)
 
 
 async def import_resources(file_bytes: bytes, client_id: str) -> dict:
-    """Full import pipeline: parse → DB → embed → Pinecone."""
+    """Full import pipeline: parse → DB → embed → Pinecone (grouped by type)."""
     resources = parse_resource_excel(file_bytes)
     if not resources:
         return {"imported": 0, "error": "No valid rows found"}
@@ -68,22 +88,29 @@ async def import_resources(file_bytes: bytes, client_id: str) -> dict:
     db = await get_database()
     collection = db["resources"]
 
-    db_ids = []
     for r in resources:
         r["client_id"] = client_id
-        result = await collection.insert_one(r)
-        db_ids.append(str(result.inserted_id))
+        await collection.insert_one(r)
 
-    texts = [_resource_to_text(r) for r in resources]
-    embeddings = await embed_texts(texts)
+    # Group by type for namespace-specific upsert
+    by_type: dict[str, list[dict]] = defaultdict(list)
+    for r in resources:
+        rtype = r.get("type", "kol").lower()
+        if rtype not in VALID_TYPES:
+            rtype = "kol"
+        by_type[rtype].append(r)
 
-    namespace = f"resource_kol_{client_id}"
-    batch_id = f"import_{client_id}_{len(resources)}"
-    upsert_vectors(
-        namespace=namespace,
-        file_id=batch_id,
-        chunks=texts,
-        embeddings=embeddings,
-    )
+    namespaces_used = []
+    for rtype, group in by_type.items():
+        ns = resource_namespace(rtype, client_id)
+        texts = [_resource_to_text(r) for r in group]
+        embeddings = await embed_texts(texts)
+        batch_id = f"import_{client_id}_{rtype}_{len(group)}"
+        upsert_vectors(namespace=ns, file_id=batch_id, chunks=texts, embeddings=embeddings)
+        namespaces_used.append(ns)
 
-    return {"imported": len(resources), "namespace": namespace}
+    return {
+        "imported": len(resources),
+        "by_type": {k: len(v) for k, v in by_type.items()},
+        "namespaces": namespaces_used,
+    }
