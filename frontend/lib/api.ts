@@ -72,7 +72,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  startPipeline(data: { project_id: string; client_id: string; raw_brief: string }) {
+  startPipeline(data: { project_id: string; client_id: string; raw_brief: string; output_language?: string }) {
     return request<{ pipeline_id: string; status: string }>("/api/v1/pipeline/start", {
       method: "POST",
       body: JSON.stringify(data),

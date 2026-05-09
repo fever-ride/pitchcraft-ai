@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from backend.core.agents.llm import invoke_llm, strip_code_block
 from backend.core.config import settings
 from backend.core.graph.state import RequestBudget
-from backend.core.language.detector import detect_language
+from backend.core.language.detector import detect_language, resolve_output_language
 from backend.core.rag.retriever import retrieve_for_client
 from backend.core.database.connection import get_database
 
@@ -93,13 +93,14 @@ async def run_deck_orchestrator(
     client_id: str,
     project_id: str | None = None,
     budget: RequestBudget | None = None,
+    output_language: str = "auto",
 ) -> list[dict]:
     """Generate deck structure from strategy. Uses saved structure if available."""
     saved = await _lookup_deck_structure(client_id, project_id)
     if saved:
         return saved
 
-    lang = detect_language(json.dumps(strategy, ensure_ascii=False))
+    lang = resolve_output_language(output_language, json.dumps(strategy, ensure_ascii=False))
     strategy_text = json.dumps(strategy, ensure_ascii=False)[:3000]
 
     user_msg = f"Strategy:\n{strategy_text}\n\nBrief:\n{json.dumps(brief, ensure_ascii=False)}"
@@ -120,9 +121,10 @@ async def generate_slide_content(
     client_id: str,
     project_id: str | None = None,
     budget: RequestBudget | None = None,
+    output_language: str = "auto",
 ) -> dict:
     """Generate content for a single slide."""
-    lang = detect_language(json.dumps(strategy, ensure_ascii=False))
+    lang = resolve_output_language(output_language, json.dumps(strategy, ensure_ascii=False))
 
     brand_results = await retrieve_for_client(
         "brand tone voice style guidelines", client_id, project_id, top_k=3
@@ -149,9 +151,10 @@ async def generate_slide_content(
 async def run_narrative_check(
     slides: list[dict],
     budget: RequestBudget | None = None,
+    output_language: str = "auto",
 ) -> list[dict]:
     """Non-blocking narrative coherence check. Returns suggestion list."""
-    lang = detect_language(json.dumps(slides, ensure_ascii=False))
+    lang = resolve_output_language(output_language, json.dumps(slides, ensure_ascii=False))
     slides_text = json.dumps(slides, ensure_ascii=False)[:4000]
 
     prompt = NARRATIVE_PROMPT[lang].format(slides=slides_text)

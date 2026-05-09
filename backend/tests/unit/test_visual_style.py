@@ -25,7 +25,7 @@ def style_to_embedding_text(style: dict) -> str:
 
 def summary_to_embedding_text(summary: dict) -> str:
     parts = [
-        f"[Visual Identity Summary]",
+        "[Visual Identity Summary]",
         f"Style: {summary.get('style_description', '')}",
         f"Design language: {', '.join(summary.get('design_language', []))}",
         f"Layout: {summary.get('dominant_layout', '')}",

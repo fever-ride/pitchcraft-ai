@@ -15,6 +15,7 @@ class StartPipelineRequest(BaseModel):
     project_id: str
     client_id: str
     raw_brief: str
+    output_language: str = "auto"  # "zh" | "en" | "auto"
 
 
 class ConfirmRequest(BaseModel):
@@ -44,6 +45,7 @@ async def start_pipeline(
         "project_id": request.project_id,
         "proposal_id": pipeline_id,
         "raw_brief": request.raw_brief,
+        "output_language": request.output_language,
     }
 
     executor = PipelineExecutor(pipeline_id)

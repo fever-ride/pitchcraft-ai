@@ -9,6 +9,9 @@ class PipelineState(TypedDict, total=False):
     project_id: str
     proposal_id: str
 
+    # Language
+    output_language: str  # "zh" | "en" | "auto" — controls deck/slide output language
+
     # Brief
     raw_brief: str
     structured_brief: dict

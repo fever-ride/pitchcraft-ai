@@ -166,6 +166,7 @@ async def deck_orchestrator_node(state: PipelineState) -> dict:
         client_id=state["client_id"],
         project_id=state.get("project_id"),
         budget=budget,
+        output_language=state.get("output_language", "auto"),
     )
     return {"deck_structure": structure}
 
@@ -176,12 +177,12 @@ async def hitl_structure_node(state: PipelineState) -> dict:
 
 
 async def slide_content_node(state: PipelineState) -> dict:
-    # TODO: Phase 2 — change to asyncio.gather for parallel slide generation (need budget thread-safety)
     structure = state.get("deck_structure", [])
     strategy = state.get("strategy_result", {})
     client_id = state["client_id"]
     project_id = state.get("project_id")
     budget = state.get("request_budget")
+    output_language = state.get("output_language", "auto")
 
     slides = []
     for slide_info in structure:
@@ -191,6 +192,7 @@ async def slide_content_node(state: PipelineState) -> dict:
             client_id=client_id,
             project_id=project_id,
             budget=budget,
+            output_language=output_language,
         )
         slides.append({
             "index": slide_info.get("slide_index", len(slides)),
@@ -204,7 +206,8 @@ async def slide_content_node(state: PipelineState) -> dict:
 async def narrative_agent_node(state: PipelineState) -> dict:
     slides = state.get("slides", [])
     budget = state.get("request_budget")
-    suggestions = await run_narrative_check(slides, budget=budget)
+    output_language = state.get("output_language", "auto")
+    suggestions = await run_narrative_check(slides, budget=budget, output_language=output_language)
     return {"narrative_suggestions": suggestions}
 
 

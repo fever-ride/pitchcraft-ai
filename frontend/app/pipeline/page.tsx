@@ -21,13 +21,14 @@ export default function PipelinePage() {
   const { sendEvent } = usePipelineSocket(pipelineId);
   const [error, setError] = useState<string | null>(null);
 
-  const handleStart = async (brief: string, clientId: string, projectId: string) => {
+  const handleStart = async (brief: string, clientId: string, projectId: string, outputLanguage: string) => {
     try {
       setError(null);
       const result = await api.startPipeline({
         raw_brief: brief,
         client_id: clientId,
         project_id: projectId,
+        output_language: outputLanguage,
       });
       dispatch(setPipelineId(result.pipeline_id));
     } catch (err: unknown) {
