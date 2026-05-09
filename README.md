@@ -37,17 +37,17 @@ Brief Input
 ┌──────────────────────┐  ┌───────────────────────────────────────────┐
 │  Strategy Phase 2     │  │  Receives: research_result + phase1_insight│
 │  + Brand Check        │  │  Reads: rejected directions from feedback  │
-└──────────┬───────────┘  │  Outputs: structured JSON contract          │
-           │              │  → big_idea, channels[], resource_types[],  │
-           │  ← HITL Node 2  budget_allocation{}, kpis[], timeline[]   │
+└──────────┬───────────┘  │  Output: StrategyPhase2Result (Pydantic,    │
+           │              │  enforced via tool_use structured output)   │
+           │  ← HITL Node 2  → big_idea, channels[], resource_types[], │
+           │              │    budget_allocation{}, kpis[], timeline[]  │
            │              └───────────────────────────────────────────┘
            ▼
 ┌──────────────────────┐  ┌───────────────────────────────────────────┐
-│   Resource Agent      │  │  CONDITIONAL: checks strategy.resource_    │
-│                       │  │  types[] + channels[] to decide which      │
-│  (may skip entirely)  │  │  resource types to retrieve. If none       │
-└──────────┬───────────┘  │  needed → clean skip, zero LLM calls.      │
-           │              │  If multiple types → parallel Pinecone      │
+│   Resource Agent      │  │  CONDITIONAL: reads state["resource_types_ │
+│                       │  │  needed"] (typed list from Strategy P2).    │
+│  (may skip entirely)  │  │  If empty → clean skip, zero LLM calls.    │
+└──────────┬───────────┘  │  If multiple types → parallel Pinecone      │
            │              │  queries across namespaces.                  │
            │              └───────────────────────────────────────────┘
            ▼
@@ -99,9 +99,9 @@ Brief Input
 - Narrative Agent runs in parallel with Slide Content Agent but is purely advisory (no flow control)
 
 **2. Conditional Branching**
-- Resource Agent reads `strategy_result.resource_types[]` and `strategy_result.channels[]` to determine which resource types (if any) to retrieve
-- When strategy outputs `resource_types: ["kol", "media"]` → Resource Agent queries `resource_kol` and `resource_media` namespaces in parallel
-- When strategy outputs `resource_types: []` → Resource Agent skips entirely (zero latency, zero LLM cost)
+- Resource Agent reads `state["resource_types_needed"]` (typed `list[str]`, written by Strategy Phase 2 node) to determine which resource types to retrieve
+- When `resource_types_needed = ["kol", "media"]` → Resource Agent queries `resource_kol` and `resource_media` namespaces in parallel
+- When `resource_types_needed = []` → Resource Agent skips entirely (zero latency, zero LLM cost)
 - Deck Orchestrator uses three-tier template lookup: if project has a saved structure → use it; else if client has a default → use it; else generate via LLM
 
 **3. Stateful HITL Pause/Resume**
@@ -134,29 +134,40 @@ When client feedback triggers a rerun:
 
 This creates a **non-linear DAG** where the pipeline can jump back to any node while preserving partial results — not just a linear retry.
 
-**5. Inter-Agent Data Contracts (Structured JSON)**
+**5. Inter-Agent Communication: Tool-Use Structured Output + Typed State**
 
-Agents communicate via explicit JSON schemas, not free-text:
+Agents produce structured output via **Anthropic tool_use** (forced function calling), not prompt-based JSON extraction. Each agent's output is defined as a Pydantic schema and enforced at the LLM call level (~99% format compliance vs ~90% for prompt-instructed JSON).
+
+```python
+# Each agent has a Pydantic schema (backend/core/agents/schemas.py)
+class StrategyPhase2Result(BaseModel):
+    big_idea: str
+    channels: list[Channel]
+    resource_types: list[str]  # ["kol", "media", "vendor", "placement"]
+    budget_allocation: dict[str, str]
+    kpis: list[str]
+    timeline_phases: list[TimelinePhase]
+
+# LLM is invoked with schema enforcement (tool_use under the hood)
+result = await invoke_llm_structured(messages, output_schema=StrategyPhase2Result)
+```
+
+Pipeline nodes write **specific typed fields** to LangGraph state. Downstream agents read only the fields they need — no `json.dumps(full_upstream_dict)` passing:
 
 ```
-Strategy Phase 2 output:
-{
-  "big_idea": "...",
-  "communication_logic": "...",
-  "channels": ["xiaohongshu", "douyin", "offline_event"],
-  "resource_types": ["kol", "vendor"],
-  "budget_allocation": {"xiaohongshu": 40, "douyin": 35, "event": 25},
-  "kpis": [...],
-  "timeline_phases": [...]
-}
+State after Strategy Phase 2:
+  state["big_idea"] = "..."          ← Deck Orchestrator reads this
+  state["channels"] = [...]          ← Resource Agent + Deck reads this
+  state["resource_types_needed"] = ["kol", "media"]  ← Resource Agent reads this directly
+  state["kpis"] = [...]              ← Deck Orchestrator reads this
 ```
 
-- Resource Agent reads `resource_types` and `channels` to decide what to retrieve
-- Deck Orchestrator reads `channels` and `budget_allocation` to structure the deck
-- Slide Content Agent reads everything above to write per-slide content
-- Brand Check compares `big_idea` + `communication_logic` against brand_spec RAG embeddings
+- Resource Agent receives `big_idea`, `channels`, `resource_types_needed` as explicit parameters — zero re-detection logic
+- Deck Orchestrator receives `big_idea`, `channels`, `kpis` — not a full strategy blob
+- Slide Content Agent receives `big_idea` + `brand_direction` — only what it needs for copywriting
+- Brand Check receives strategy text for semantic comparison against brand_spec RAG
 
-This eliminates fragile keyword-matching (e.g., scanning for "KOL" in prose text) and makes the pipeline deterministic given the same strategy output.
+This eliminates: (1) fragile keyword-matching fallbacks, (2) JSON parse failures from malformed LLM output, (3) information over-sharing between agents.
 
 **6. Version Snapshots and Rollback**
 
@@ -174,7 +185,7 @@ Every pipeline completion (initial or rerun) triggers an automatic version save:
 | **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily → DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN → Chanmama/Feigua, Global → CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
 | **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
 | **Strategy P2** | `research_result` + `strategy_insight` + rejected directions | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. |
-| **Resource Agent** | `strategy_result.resource_types[]`, `strategy_result.channels[]` | `resource_result{}` | Multi-type parallel retrieval (KOL/KOC, media, vendor, placement). Auto-detects needed types. Conditional skip. |
+| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` | `ResourceResult` (Pydantic) | Reads typed fields directly from state — no re-detection. Multi-type parallel retrieval (KOL/KOC, media, vendor, placement). Conditional skip when `resource_types_needed` is empty. |
 | **Deck System** | `strategy_result`, `resource_result`, brand RAG | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup. Content Agent: per-slide generation with brand tone. Narrative Agent: non-blocking coherence check with page refs. |
 | **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
 
@@ -333,7 +344,7 @@ Typical scenario: Chinese brief → Chinese strategy (internal HITL review)
 
 | Decision | Rationale |
 |----------|-----------|
-| Structured JSON data contracts between agents | Downstream agents read explicit fields (`channels[]`, `resource_types[]`, `budget_allocation{}`) instead of keyword-guessing from prose text |
+| Tool-use structured output + typed LangGraph state | Agents produce Pydantic-validated output via `with_structured_output()` (tool_use); pipeline nodes write specific typed fields to state; downstream agents receive only the fields they need — no `json.dumps` blob passing or keyword-matching fallbacks |
 | Research ‖ Strategy Phase 1 parallelism | LangGraph fan-out/fan-in saves ~8s per run; Phase 2 waits for both to complete |
 | BGE-M3 over OpenAI text-embedding-3-small | Superior multilingual (CN+EN) marketing terminology; open-source, self-hosted, zero per-call cost |
 | Narrative Agent as non-blocking advisor | No flow control or retry loops — suggestions displayed alongside slides in Gallery Review |
@@ -370,8 +381,8 @@ pitchcraft/
 ├── backend/
 │   ├── api/v1/endpoints/         # REST endpoints (auth, files, pipeline, resources, research, proposals)
 │   ├── core/
-│   │   ├── agents/               # brief.py, research.py, strategy.py, resource.py, deck.py,
-│   │   │                         # social_data.py, visual_analysis.py
+│   │   ├── agents/               # brief_analyzer.py, research.py, strategy.py, resource.py, deck.py,
+│   │   │                         # schemas.py (Pydantic output models), social_data.py, visual_analysis.py
 │   │   ├── graph/                # pipeline.py (LangGraph nodes), executor.py (run/rerun),
 │   │   │                         # state.py (PipelineState)
 │   │   ├── rag/                  # indexer.py, retriever.py, cache.py, resource_import.py,

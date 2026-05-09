@@ -1,4 +1,3 @@
-import asyncio
 import json
 import time
 
@@ -43,11 +42,9 @@ def build_pipeline() -> StateGraph:
 
     graph.add_edge("brief_analyzer", "hitl_brief")
 
-    # Fan-out: research and strategy_phase1 run in parallel after brief confirmation
     graph.add_edge("hitl_brief", "research_agent")
     graph.add_edge("hitl_brief", "strategy_phase1")
 
-    # Fan-in: strategy_phase2 waits for both
     graph.add_edge("research_agent", "strategy_phase2")
     graph.add_edge("strategy_phase1", "strategy_phase2")
 
@@ -60,8 +57,6 @@ def build_pipeline() -> StateGraph:
 
     graph.add_edge("hitl_structure", "slide_content")
 
-    # NOTE: fan-in — hitl_gallery waits for both slide_content and narrative_agent
-    # Verify with integration test that LangGraph resolves this correctly
     graph.add_edge("slide_content", "narrative_agent")
     graph.add_edge("slide_content", "hitl_gallery")
     graph.add_edge("narrative_agent", "hitl_gallery")
@@ -76,13 +71,13 @@ async def brief_analyzer_node(state: PipelineState) -> dict:
     budget = state.get("request_budget")
     result = await analyze_brief(state["raw_brief"], budget=budget)
     return {
-        "structured_brief": result.get("structured_brief", {}),
+        "structured_brief": result.structured_brief.model_dump(),
+        "missing_fields": result.missing_fields,
+        "clarification_questions": result.clarification_questions,
     }
 
 
 async def hitl_brief_node(state: PipelineState) -> dict:
-    # HITL checkpoint: pipeline pauses here until user confirms via WebSocket
-    # The WebSocket handler sets brief_confirmed=True and resumes the graph
     return {}
 
 
@@ -100,6 +95,8 @@ async def research_agent_node(state: PipelineState) -> dict:
     return {
         "research_result": result,
         "research_fetched_at": result.get("fetched_at", time.time()),
+        "market_trends": result.get("market_trends", []),
+        "opportunities": result.get("opportunities", []),
     }
 
 
@@ -112,7 +109,12 @@ async def strategy_phase1_node(state: PipelineState) -> dict:
         project_id=state.get("project_id"),
         budget=budget,
     )
-    return {"strategy_insight": result}
+    result_dict = result.model_dump()
+    return {
+        "strategy_insight": result_dict,
+        "audience_insight": result.audience_insight,
+        "brand_direction": result.brand_direction,
+    }
 
 
 async def strategy_phase2_node(state: PipelineState) -> dict:
@@ -125,43 +127,55 @@ async def strategy_phase2_node(state: PipelineState) -> dict:
         client_id=state.get("client_id"),
         budget=budget,
     )
-    return {"strategy_result": result}
+    result_dict = result.model_dump()
+    return {
+        "strategy_result": result_dict,
+        "big_idea": result.big_idea,
+        "channels": [c.model_dump() for c in result.channels],
+        "resource_types_needed": result.resource_types,
+        "kpis": result.kpis,
+        "timeline_phases": [t.model_dump() for t in result.timeline_phases],
+        "budget_allocation": result.budget_allocation,
+    }
 
 
 async def brand_check_node(state: PipelineState) -> dict:
-    strategy = state.get("strategy_result", {})
-    strategy_text = json.dumps(strategy, ensure_ascii=False)
+    strategy_text = json.dumps(state.get("strategy_result", {}), ensure_ascii=False)
     budget = state.get("request_budget")
     result = await run_brand_check(
         strategy_text=strategy_text,
         client_id=state["client_id"],
         budget=budget,
     )
-    return {"brand_check_passed": result.get("passed", True)}
+    return {"brand_check_passed": result.passed}
 
 
 async def hitl_strategy_node(state: PipelineState) -> dict:
-    # HITL checkpoint: user reviews strategy + research, confirms or requests changes
     return {}
 
 
 async def resource_agent_node(state: PipelineState) -> dict:
-    strategy = state.get("strategy_result", {})
     budget = state.get("request_budget")
     result = await run_resource_agent(
-        strategy=strategy,
+        big_idea=state.get("big_idea", ""),
+        channels=state.get("channels", []),
+        resource_types_needed=state.get("resource_types_needed", []),
         client_id=state["client_id"],
         budget=budget,
+        output_language=state.get("output_language", "auto"),
     )
-    return {"resource_result": result}
+    if isinstance(result, dict):
+        return {"resource_result": result}
+    return {"resource_result": result.model_dump()}
 
 
 async def deck_orchestrator_node(state: PipelineState) -> dict:
-    strategy = state.get("strategy_result", {})
     brief = state.get("structured_brief", {})
     budget = state.get("request_budget")
     structure = await run_deck_orchestrator(
-        strategy=strategy,
+        big_idea=state.get("big_idea", ""),
+        channels=state.get("channels", []),
+        kpis=state.get("kpis", []),
         brief=brief,
         client_id=state["client_id"],
         project_id=state.get("project_id"),
@@ -172,13 +186,13 @@ async def deck_orchestrator_node(state: PipelineState) -> dict:
 
 
 async def hitl_structure_node(state: PipelineState) -> dict:
-    # HITL checkpoint: user reviews and edits deck structure
     return {}
 
 
 async def slide_content_node(state: PipelineState) -> dict:
     structure = state.get("deck_structure", [])
-    strategy = state.get("strategy_result", {})
+    big_idea = state.get("big_idea", "")
+    brand_direction = state.get("brand_direction", "")
     client_id = state["client_id"]
     project_id = state.get("project_id")
     budget = state.get("request_budget")
@@ -188,7 +202,8 @@ async def slide_content_node(state: PipelineState) -> dict:
     for slide_info in structure:
         content = await generate_slide_content(
             slide=slide_info,
-            strategy=strategy,
+            big_idea=big_idea,
+            brand_direction=brand_direction,
             client_id=client_id,
             project_id=project_id,
             budget=budget,
@@ -196,7 +211,7 @@ async def slide_content_node(state: PipelineState) -> dict:
         )
         slides.append({
             "index": slide_info.get("slide_index", len(slides)),
-            "content": content,
+            "content": content.model_dump(),
             "status": "pending",
         })
 
@@ -212,7 +227,6 @@ async def narrative_agent_node(state: PipelineState) -> dict:
 
 
 async def hitl_gallery_node(state: PipelineState) -> dict:
-    # HITL checkpoint: Gallery Review UI, user confirms/flags slides
     return {}
 
 

@@ -1,10 +1,5 @@
-"""Tests for language detection and prompt routing."""
+"""Tests for language detection and output language resolution."""
 from backend.core.language.detector import detect_language, resolve_output_language
-from backend.core.language.prompts import (
-    BRIEF_ANALYZER_PROMPTS,
-    STRATEGY_PHASE1_PROMPTS,
-    STRATEGY_PHASE2_PROMPTS,
-)
 
 
 def test_detect_chinese():
@@ -22,19 +17,6 @@ def test_detect_mixed_defaults_to_either():
 
 def test_detect_empty_defaults_to_english():
     assert detect_language("") == "en"
-
-
-def test_all_prompt_templates_have_both_languages():
-    for prompts in [BRIEF_ANALYZER_PROMPTS, STRATEGY_PHASE1_PROMPTS, STRATEGY_PHASE2_PROMPTS]:
-        assert "zh" in prompts
-        assert "en" in prompts
-        assert len(prompts["zh"]) > 0
-        assert len(prompts["en"]) > 0
-
-
-def test_brief_prompts_contain_placeholder():
-    assert "{brief}" in BRIEF_ANALYZER_PROMPTS["en"]
-    assert "{brief}" in BRIEF_ANALYZER_PROMPTS["zh"]
 
 
 # --- resolve_output_language tests ---

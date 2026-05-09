@@ -3,76 +3,31 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from backend.core.agents.llm import invoke_llm, strip_code_block
-from backend.core.config import settings
+from backend.core.agents.llm import invoke_llm_structured
+from backend.core.agents.schemas import DeckStructureResult, NarrativeResult, SlideContent
 from backend.core.graph.state import RequestBudget
-from backend.core.language.detector import detect_language, resolve_output_language
+from backend.core.language.detector import resolve_output_language
 from backend.core.rag.retriever import retrieve_for_client
 from backend.core.database.connection import get_database
 
-ORCHESTRATOR_PROMPT = {
-    "zh": """你是资深Proposal架构师。根据策略方向，设计PPT大纲结构。
-
-输出JSON数组，每个元素代表一个slide：
-[
-  {"slide_index": 0, "title": "标题", "type": "cover/overview/insight/strategy/channel/budget/timeline/kpi/appendix", "key_points": ["要点"]}
-]
-
-要求：逻辑清晰，层层递进，先insight后策略后落地。通常12-20页。""",
-
-    "en": """You are a senior proposal architect. Based on the strategy direction, design the PPT outline structure.
-
-Output a JSON array where each element represents a slide:
-[
-  {"slide_index": 0, "title": "title", "type": "cover/overview/insight/strategy/channel/budget/timeline/kpi/appendix", "key_points": ["key points"]}
-]
-
-Requirements: clear logic, progressive flow from insight to strategy to execution. Typically 12-20 slides.""",
+ORCHESTRATOR_SYSTEM = {
+    "zh": "你是资深Proposal架构师。根据策略方向设计PPT大纲结构。逻辑清晰，层层递进，先insight后策略后落地。通常12-20页。",
+    "en": "You are a senior proposal architect. Design PPT outline structure based on strategy. Clear logic, progressive flow from insight to strategy to execution. Typically 12-20 slides.",
 }
 
-SLIDE_CONTENT_PROMPT = {
-    "zh": """你是资深文案。为以下slide生成内容。保持品牌调性一致。
-
-Slide信息：{slide}
-策略方向：{strategy}
-品牌语气参考：{brand_tone}
-
-输出JSON：
-{{"title": "页面标题", "body": "正文（1-2句话的概括）", "bullets": ["要点1", "要点2", "要点3"]}}""",
-
-    "en": """You are a senior copywriter. Generate content for the following slide. Maintain consistent brand tone.
-
-Slide info: {slide}
-Strategy direction: {strategy}
-Brand tone reference: {brand_tone}
-
-Output JSON:
-{{"title": "slide title", "body": "body text (1-2 sentence summary)", "bullets": ["point 1", "point 2", "point 3"]}}""",
+SLIDE_CONTENT_SYSTEM = {
+    "zh": "你是资深文案。为指定slide生成内容，保持品牌调性一致。",
+    "en": "You are a senior copywriter. Generate content for the specified slide while maintaining consistent brand tone.",
 }
 
-NARRATIVE_PROMPT = {
-    "zh": """你是Proposal审稿人。检查以下slide序列的叙事连贯性。
-
-Slides：{slides}
-
-找出叙事不连贯、逻辑跳跃或重复冗余的地方。输出JSON数组：
-[{{"page": 页码索引, "issue": "问题描述"}}]
-
-如果没问题输出空数组 []""",
-
-    "en": """You are a proposal editor. Check the following slide sequence for narrative coherence.
-
-Slides: {slides}
-
-Identify narrative gaps, logic jumps, or redundancies. Output a JSON array:
-[{{"page": page_index, "issue": "issue description"}}]
-
-If no issues, output empty array []""",
+NARRATIVE_SYSTEM = {
+    "zh": "你是Proposal审稿人。检查slide序列的叙事连贯性，找出逻辑跳跃或重复冗余。",
+    "en": "You are a proposal editor. Check slide sequence for narrative coherence, identify logic jumps or redundancies.",
 }
 
 
 async def _lookup_deck_structure(client_id: str, project_id: str | None) -> list[dict] | None:
-    """Three-tier lookup: project → client → None (fall through to LLM generation)."""
+    """Three-tier lookup: project -> client -> None (fall through to LLM generation)."""
     db = await get_database()
 
     if project_id:
@@ -88,64 +43,71 @@ async def _lookup_deck_structure(client_id: str, project_id: str | None) -> list
 
 
 async def run_deck_orchestrator(
-    strategy: dict,
+    big_idea: str,
+    channels: list[dict],
+    kpis: list[str],
     brief: dict,
     client_id: str,
     project_id: str | None = None,
     budget: RequestBudget | None = None,
     output_language: str = "auto",
 ) -> list[dict]:
-    """Generate deck structure from strategy. Uses saved structure if available."""
+    """Generate deck structure from specific strategy fields. Uses saved structure if available."""
     saved = await _lookup_deck_structure(client_id, project_id)
     if saved:
         return saved
 
-    lang = resolve_output_language(output_language, json.dumps(strategy, ensure_ascii=False))
-    strategy_text = json.dumps(strategy, ensure_ascii=False)[:3000]
+    lang = resolve_output_language(output_language, big_idea)
 
-    user_msg = f"Strategy:\n{strategy_text}\n\nBrief:\n{json.dumps(brief, ensure_ascii=False)}"
+    channel_names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in channels]
+    user_msg = (
+        f"Big Idea: {big_idea}\n"
+        f"Channels: {', '.join(channel_names)}\n"
+        f"KPIs: {', '.join(kpis)}\n\n"
+        f"Brief:\n{json.dumps(brief, ensure_ascii=False)}"
+    )
     messages = [
-        SystemMessage(content=ORCHESTRATOR_PROMPT[lang]),
+        SystemMessage(content=ORCHESTRATOR_SYSTEM[lang]),
         HumanMessage(content=user_msg),
     ]
 
-    text = await invoke_llm(messages, budget=budget, temperature=0.3, max_tokens=3000)
-    text = strip_code_block(text)
-
-    return json.loads(text)
+    result = await invoke_llm_structured(
+        messages, output_schema=DeckStructureResult, budget=budget, temperature=0.3, max_tokens=3000
+    )
+    return [s.model_dump() for s in result.slides]
 
 
 async def generate_slide_content(
     slide: dict,
-    strategy: dict,
+    big_idea: str,
+    brand_direction: str,
     client_id: str,
     project_id: str | None = None,
     budget: RequestBudget | None = None,
     output_language: str = "auto",
-) -> dict:
-    """Generate content for a single slide."""
-    lang = resolve_output_language(output_language, json.dumps(strategy, ensure_ascii=False))
+) -> SlideContent:
+    """Generate content for a single slide using only the fields it needs."""
+    lang = resolve_output_language(output_language, big_idea)
 
     brand_results = await retrieve_for_client(
         "brand tone voice style guidelines", client_id, project_id, top_k=3
     )
     brand_tone = "\n".join([r.text for r in brand_results]) or "No brand tone reference available."
 
-    prompt = SLIDE_CONTENT_PROMPT[lang].format(
-        slide=json.dumps(slide, ensure_ascii=False),
-        strategy=json.dumps(strategy, ensure_ascii=False)[:1500],
-        brand_tone=brand_tone[:1000],
+    user_msg = (
+        f"Slide: {json.dumps(slide, ensure_ascii=False)}\n"
+        f"Big Idea: {big_idea}\n"
+        f"Brand Direction: {brand_direction}\n"
+        f"Brand Tone Reference:\n{brand_tone[:1000]}"
     )
+    messages = [
+        SystemMessage(content=SLIDE_CONTENT_SYSTEM[lang]),
+        HumanMessage(content=user_msg),
+    ]
 
-    text = await invoke_llm(
-        [HumanMessage(content=prompt)],
-        budget=budget,
-        temperature=0.4,
-        max_tokens=1024,
+    return await invoke_llm_structured(
+        messages, output_schema=SlideContent, budget=budget, temperature=0.4, max_tokens=1024
     )
-    text = strip_code_block(text)
-
-    return json.loads(text)
 
 
 async def run_narrative_check(
@@ -157,14 +119,13 @@ async def run_narrative_check(
     lang = resolve_output_language(output_language, json.dumps(slides, ensure_ascii=False))
     slides_text = json.dumps(slides, ensure_ascii=False)[:4000]
 
-    prompt = NARRATIVE_PROMPT[lang].format(slides=slides_text)
+    user_msg = f"Slides:\n{slides_text}"
+    messages = [
+        SystemMessage(content=NARRATIVE_SYSTEM[lang]),
+        HumanMessage(content=user_msg),
+    ]
 
-    text = await invoke_llm(
-        [HumanMessage(content=prompt)],
-        budget=budget,
-        temperature=0,
-        max_tokens=1024,
+    result = await invoke_llm_structured(
+        messages, output_schema=NarrativeResult, budget=budget, temperature=0, max_tokens=1024
     )
-    text = strip_code_block(text)
-
-    return json.loads(text)
+    return [issue.model_dump() for issue in result.issues]

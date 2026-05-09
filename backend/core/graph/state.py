@@ -14,14 +14,32 @@ class PipelineState(TypedDict, total=False):
 
     # Brief
     raw_brief: str
-    structured_brief: dict
+    structured_brief: dict  # StructuredBrief fields as dict
+    missing_fields: list[str]
+    clarification_questions: list[str]
     brief_confirmed: bool
 
-    # Research + Strategy
-    research_result: dict
+    # Research
+    research_result: dict  # Full ResearchResult as dict
     research_fetched_at: float
-    strategy_insight: dict
-    strategy_result: dict
+    market_trends: list[str]
+    opportunities: list[str]
+
+    # Strategy Phase 1
+    strategy_insight: dict  # Full StrategyPhase1Result as dict
+    audience_insight: str
+    brand_direction: str
+
+    # Strategy Phase 2
+    strategy_result: dict  # Full StrategyPhase2Result as dict
+    big_idea: str
+    channels: list[dict]  # list of Channel dicts
+    resource_types_needed: list[str]  # Typed: ["kol", "media", "vendor", "placement"]
+    kpis: list[str]
+    timeline_phases: list[dict]
+    budget_allocation: dict
+
+    # Brand check
     brand_check_passed: bool
 
     # Strategy confirmation
@@ -29,15 +47,14 @@ class PipelineState(TypedDict, total=False):
     strategy_feedback: str
 
     # Resources
-    resource_result: dict
-    resource_types_needed: list
+    resource_result: dict  # Full ResourceResult as dict
 
     # Deck
-    deck_structure: list
+    deck_structure: list[dict]  # list of SlideStructure dicts
     structure_confirmed: bool
-    slides: list
+    slides: list[dict]
     slides_confirmed: bool
-    narrative_suggestions: list
+    narrative_suggestions: list[dict]
 
     # Output
     pptx_path: str

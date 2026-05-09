@@ -4,7 +4,8 @@ import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from backend.core.agents.llm import invoke_llm, strip_code_block
+from backend.core.agents.llm import invoke_llm_structured
+from backend.core.agents.schemas import ResearchResult
 from backend.core.agents.social_data import SocialDataResult, fetch_social_data
 from backend.core.config import settings
 from backend.core.graph.state import RequestBudget
@@ -14,59 +15,8 @@ from backend.core.rag.retriever import retrieve_for_client
 from backend.core.stability.fallback import FallbackChain
 
 SYSTEM_PROMPT = {
-    "zh": """你是资深市场研究员。基于brief信息、网络调研、社交数据和内部资料，整合出有用的竞品和市场洞察。
-
-输出严格JSON格式：
-{{
-  "competitors": [
-    {{
-      "name": "竞品名",
-      "positioning": "定位",
-      "recent_activity": "近期动向",
-      "social_presence": {{
-        "platforms": ["活跃平台"],
-        "content_style": "内容风格描述",
-        "engagement_level": "high/medium/low",
-        "notable_campaigns": ["近期campaign"]
-      }}
-    }}
-  ],
-  "market_trends": ["趋势描述"],
-  "content_trends": [
-    {{"trend": "趋势名", "platforms": ["平台"], "relevance": "与brief的关联"}}
-  ],
-  "opportunities": ["机会点"],
-  "risks": ["需注意的风险"],
-  "internal_references": ["相关历史项目摘要"],
-  "recommended_approach": "基于以上分析的策略建议（1-2句）"
-}}""",
-
-    "en": """You are a senior market researcher. Based on the brief, web research, social data, and internal materials, synthesize competitor and market insights.
-
-Output strictly in JSON format:
-{{
-  "competitors": [
-    {{
-      "name": "competitor",
-      "positioning": "positioning",
-      "recent_activity": "recent moves",
-      "social_presence": {{
-        "platforms": ["active platforms"],
-        "content_style": "content style description",
-        "engagement_level": "high/medium/low",
-        "notable_campaigns": ["recent campaigns"]
-      }}
-    }}
-  ],
-  "market_trends": ["trend descriptions"],
-  "content_trends": [
-    {{"trend": "trend name", "platforms": ["platforms"], "relevance": "relevance to brief"}}
-  ],
-  "opportunities": ["opportunity areas"],
-  "risks": ["risks to be aware of"],
-  "internal_references": ["relevant past project summaries"],
-  "recommended_approach": "strategic recommendation based on above (1-2 sentences)"
-}}""",
+    "zh": "你是资深市场研究员。基于brief信息、网络调研、社交数据和内部资料，整合出有用的竞品和市场洞察。",
+    "en": "You are a senior market researcher. Based on the brief, web research, social data, and internal materials, synthesize competitor and market insights.",
 }
 
 cache = SemanticCache()
@@ -178,10 +128,11 @@ Internal project history:
         HumanMessage(content=user_msg),
     ]
 
-    text = await invoke_llm(messages, budget=budget, temperature=0, max_tokens=4000)
-    text = strip_code_block(text)
+    structured = await invoke_llm_structured(
+        messages, output_schema=ResearchResult, budget=budget, temperature=0, max_tokens=4000
+    )
 
-    result = json.loads(text)
+    result = structured.model_dump()
     result["fetched_at"] = time.time()
     result["from_cache"] = False
     result["social_data_source"] = locale

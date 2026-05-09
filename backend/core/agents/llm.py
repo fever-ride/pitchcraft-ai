@@ -1,9 +1,14 @@
 """Shared LLM invocation with budget tracking."""
+from typing import TypeVar
+
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import BaseMessage
+from pydantic import BaseModel
 
 from backend.core.config import settings
 from backend.core.graph.state import RequestBudget
+
+T = TypeVar("T", bound=BaseModel)
 
 
 def get_llm(temperature: float = 0, max_tokens: int = 2048) -> ChatAnthropic:
@@ -33,6 +38,27 @@ async def invoke_llm(
         text = text[0].get("text", "") if text else ""
 
     return text.strip()
+
+
+async def invoke_llm_structured(
+    messages: list[BaseMessage],
+    output_schema: type[T],
+    budget: RequestBudget | None = None,
+    temperature: float = 0,
+    max_tokens: int = 2048,
+) -> T:
+    """Invoke LLM with tool_use-based structured output. Returns a validated Pydantic model instance.
+
+    Uses LangChain's with_structured_output() which forces the LLM to respond via
+    tool_use with the given schema — achieving ~99% format compliance vs ~90% for
+    prompt-based JSON extraction.
+    """
+    if budget:
+        budget.use_llm_call()
+
+    llm = get_llm(temperature=temperature, max_tokens=max_tokens)
+    structured_llm = llm.with_structured_output(output_schema)
+    return await structured_llm.ainvoke(messages)
 
 
 def strip_code_block(text: str) -> str:
