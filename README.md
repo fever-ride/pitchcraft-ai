@@ -223,9 +223,41 @@ Over multiple proposals for the same client, the system accumulates brand knowle
 
 ### Multilingual Support
 
-- Auto-detects brief language (Chinese / English) and selects matching prompt templates
-- Locale-aware research: CN briefs trigger Chanmama (Douyin) + Feigua (Xiaohongshu); global briefs use CreatorIQ
-- BGE-M3 handles mixed-language embeddings natively
+The pipeline separates "comprehension language" from "output language" as two independent dimensions:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  input_language (auto-detected)                             │
+│  Used by: Brief Analyzer, Strategy P1/P2                    │
+│  Source: detect_language(brief) → "zh" or "en"             │
+│  Purpose: select the prompt template that best understands  │
+│           the user's input                                  │
+├─────────────────────────────────────────────────────────────┤
+│  output_language (user-specified, default: auto)            │
+│  Used by: Deck Orchestrator, Slide Content, Narrative Agent │
+│  Source: user selects at pipeline start (zh / en / auto)    │
+│  Purpose: control the language of the final deliverable     │
+└─────────────────────────────────────────────────────────────┘
+
+Typical scenario: Chinese brief → Chinese strategy (internal HITL review)
+               → English PPT (client deliverable)
+```
+
+**Technology choices:**
+
+| Layer | Choice | Rationale |
+|-------|--------|-----------|
+| Embedding | BGE-M3 (self-hosted) | Best-in-class for mixed CN/EN marketing terminology retrieval; open-source, zero API cost; outputs dense + sparse vectors simultaneously |
+| LLM | Claude (Anthropic) | Strong bilingual (CN+EN) capability; reliable JSON structured output; Vision support for competitor screenshot analysis |
+| Language detection | langdetect | Lightweight, pure Python, sufficient accuracy for paragraph-level text |
+| Prompt templates | Dual CN/EN per agent | Same JSON schema for both languages — only instruction language differs, downstream parsing unaffected |
+
+**Implementation details:**
+
+- Mixed-language briefs (Chinese text with English brand names, channel names, KPI terms) are handled naturally — `detect_language` picks the dominant language for prompt selection, the LLM understands mixed input regardless
+- Locale-aware data sources: CN briefs trigger Chanmama (Douyin) + Feigua (Xiaohongshu); EN briefs trigger CreatorIQ (global)
+- BGE-M3 natively handles cross-lingual embeddings — Chinese and English documents in the same Pinecone namespace are retrievable by queries in either language
+- Semantic chunking splits on token count + punctuation boundaries, independent of language-specific tokenizers
 
 ### Stability & Guardrails
 
