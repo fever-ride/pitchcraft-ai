@@ -1,4 +1,4 @@
-"""Resource Agent: multi-type resource matching based on typed strategy fields from state."""
+"""Resource Agent: multi-type resource matching with Pinecone metadata filtering."""
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from backend.core.agents.llm import invoke_llm_structured
@@ -6,13 +6,58 @@ from backend.core.agents.schemas import ResourceResult
 from backend.core.database.connection import get_database
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import resolve_output_language
-from backend.core.models.resource import FRESHNESS_THRESHOLD_DAYS, ResourceStatus, resource_namespace
+from backend.core.models.resource import ResourceStatus, resource_namespace
 from backend.core.rag.retriever import retrieve
 
 SYSTEM_PROMPT = {
     "zh": "你是资深媒介策划。基于策略方向和资源库检索结果，推荐最适合的资源组合。只推荐资源库中实际存在的资源，不要编造。可用类型：KOL/KOC、Media、Vendor、Placement。",
     "en": "You are a senior media planner. Based on the strategy direction and resource database results, recommend the most suitable resource mix. Only recommend resources that exist in the provided database results — do not invent names. Available types: KOL/KOC, Media, Vendor, Placement.",
 }
+
+CHANNEL_TO_PLATFORM = {
+    "抖音": "douyin",
+    "tiktok": "douyin",
+    "douyin": "douyin",
+    "小红书": "xiaohongshu",
+    "red": "xiaohongshu",
+    "xiaohongshu": "xiaohongshu",
+    "微博": "weibo",
+    "weibo": "weibo",
+    "微信": "wechat",
+    "wechat": "wechat",
+    "b站": "bilibili",
+    "bilibili": "bilibili",
+    "快手": "kuaishou",
+    "kuaishou": "kuaishou",
+    "instagram": "instagram",
+    "youtube": "youtube",
+    "twitter": "twitter",
+    "x": "twitter",
+    "linkedin": "linkedin",
+    "facebook": "facebook",
+}
+
+
+def _build_metadata_filter(
+    resource_type: str,
+    channels: list[dict],
+) -> dict:
+    """Build Pinecone metadata filter dict for a resource type query.
+
+    Always filters active-only. For KOL/KOC, adds platform filter from channels.
+    """
+    filters: dict = {"status": {"$eq": "active"}}
+
+    if resource_type in ("kol", "koc"):
+        platforms = set()
+        for ch in channels:
+            name = (ch.get("name", "") if isinstance(ch, dict) else str(ch)).lower()
+            if name in CHANNEL_TO_PLATFORM:
+                platforms.add(CHANNEL_TO_PLATFORM[name])
+        if platforms:
+            filters["platform"] = {"$in": sorted(platforms)}
+
+    return filters
 
 
 async def _validate_recommendations(result: ResourceResult, client_id: str) -> ResourceResult:
@@ -65,11 +110,13 @@ async def run_resource_agent(
     all_results = []
     for rtype in resource_types_needed:
         ns = resource_namespace(rtype, client_id)
+        meta_filter = _build_metadata_filter(rtype, channels)
         results = await retrieve(
             query=search_query,
             namespaces=[ns],
             top_k=8,
             score_threshold=0.3,
+            metadata_filter=meta_filter,
         )
         if results:
             all_results.extend(results)

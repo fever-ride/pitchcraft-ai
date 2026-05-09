@@ -27,18 +27,22 @@ def upsert_vectors(
     file_id: str,
     chunks: list[str],
     embeddings: list[list[float]],
+    extra_metadata: list[dict] | None = None,
 ):
     index = _get_index()
     vectors = []
     for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        meta = {
+            "file_id": file_id,
+            "chunk_index": i,
+            "text": chunk[:1000],
+        }
+        if extra_metadata and i < len(extra_metadata):
+            meta.update(extra_metadata[i])
         vectors.append({
             "id": f"{file_id}_{i}",
             "values": emb,
-            "metadata": {
-                "file_id": file_id,
-                "chunk_index": i,
-                "text": chunk[:1000],
-            },
+            "metadata": meta,
         })
 
     for i in range(0, len(vectors), UPSERT_BATCH):

@@ -109,7 +109,26 @@ async def import_resources(file_bytes: bytes, client_id: str) -> dict:
         texts = [_resource_to_text(r) for r in group]
         embeddings = await embed_texts(texts)
         batch_id = f"import_{client_id}_{rtype}_{len(group)}"
-        upsert_vectors(namespace=ns, file_id=batch_id, chunks=texts, embeddings=embeddings)
+
+        extra_metadata = []
+        for r in group:
+            meta = {
+                "name": r.get("name", ""),
+                "type": r.get("type", rtype),
+                "platform": r.get("platform", ""),
+                "status": r.get("status", ResourceStatus.ACTIVE.value),
+                "followers_count": r.get("followers_count") or 0,
+                "tags": r.get("tags", ""),
+            }
+            extra_metadata.append(meta)
+
+        upsert_vectors(
+            namespace=ns,
+            file_id=batch_id,
+            chunks=texts,
+            embeddings=embeddings,
+            extra_metadata=extra_metadata,
+        )
         namespaces_used.append(ns)
 
     return {

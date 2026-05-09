@@ -34,20 +34,29 @@ async def retrieve(
     namespaces: list[str],
     top_k: int = 5,
     score_threshold: float = 0.5,
+    metadata_filter: dict | None = None,
 ) -> list[RAGResult]:
-    """Retrieve relevant chunks from one or more Pinecone namespaces."""
+    """Retrieve relevant chunks from one or more Pinecone namespaces.
+
+    metadata_filter: optional Pinecone filter dict, e.g.
+      {"platform": {"$in": ["douyin"]}, "followers_count": {"$gte": 500000}}
+    """
     query_embedding = await embed_query(query)
     index = _get_index()
 
     results: list[RAGResult] = []
 
     for ns in namespaces:
-        resp = index.query(
-            vector=query_embedding,
-            namespace=ns,
-            top_k=top_k,
-            include_metadata=True,
-        )
+        query_params = {
+            "vector": query_embedding,
+            "namespace": ns,
+            "top_k": top_k,
+            "include_metadata": True,
+        }
+        if metadata_filter:
+            query_params["filter"] = metadata_filter
+
+        resp = index.query(**query_params)
         for match in resp.matches:
             if match.score >= score_threshold:
                 results.append(RAGResult(
