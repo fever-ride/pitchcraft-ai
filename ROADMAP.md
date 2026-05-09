@@ -236,11 +236,14 @@ Richer resource profiles, knowledge accumulation from completed projects.
 
 ### 4.1 Resource Profile Enrichment
 
-- [ ] Excel import template expansion: `categories`, `content_style`, `audience_tags`, `past_cpe`
-- [ ] Tags are free-text (semantic search, no standardization needed)
-- [ ] New fields stored as Pinecone metadata + MongoDB
-- [ ] Strategy output adds `target_audience`, `content_tone`, `campaign_category` for precision matching
-- [ ] Resource agent query incorporates these for higher-quality semantic retrieval
+- [ ] New resource fields: `categories`, `content_style`, `audience_tags`, `past_cpe`
+- [ ] Free-text, no standardization needed (semantic matching handles "彩妆"≈"美妆")
+- [ ] Supported in both Excel bulk import AND manual single-entry API (`POST /resources`)
+- [ ] New fields concatenated into embedding text for semantic similarity — NOT metadata filter
+- [ ] Metadata filter remains for discrete enums only: status, platform, type
+- [ ] Brief Analyzer adds `category` field (project classification, e.g. "美妆新品上市")
+- [ ] Strategy P2 adds `content_tone` field (e.g. "playful", "professional")
+- [ ] Resource Agent query construction: `big_idea + content_tone + audience_insight + category` → semantic query; `status + platform` → metadata filter
 
 ### 4.2 Project Archive Pipeline
 
