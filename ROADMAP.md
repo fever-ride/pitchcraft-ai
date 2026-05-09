@@ -260,14 +260,14 @@ Richer resource profiles, knowledge accumulation from completed projects.
 ### 4.1 Resource Profile Enrichment
 
 - [x] New resource fields: `categories`, `content_style`, `audience_tags`, `past_cpe`
-- [x] Free-text, no standardization needed (semantic matching handles "彩妆"≈"美妆")
+- [x] Free-text, no standardization needed (semantic matching handles synonyms like "cosmetics" ≈ "beauty")
 - [x] Supported in both Excel bulk import AND manual single-entry API (`POST /resources`)
 - [x] New fields concatenated into embedding text for semantic similarity — NOT metadata filter
 - [x] Metadata filter remains for discrete enums only: status, platform, type
-- [x] Brief Analyzer adds `category` field (project classification, e.g. "美妆新品上市")
+- [x] Brief Analyzer adds `category` field (project classification, e.g. "beauty new product launch")
 - [x] Strategy P2 adds `content_tone` field (e.g. "playful", "professional")
 - [x] Resource Agent query construction: `big_idea + content_tone + audience_insight + category` → semantic query; `status + platform` → metadata filter
-- [x] Chinese header alias mapping for Excel import (姓名→name, 粉丝数→followers, 品类→categories, etc.)
+- [x] Chinese header alias mapping for Excel import (25+ CN-to-EN column mappings)
 - [x] Import result feedback: recognized_columns + ignored_columns returned to user
 - [x] Manual resource creation also upserts to Pinecone (searchable immediately)
 
@@ -295,30 +295,103 @@ Richer resource profiles, knowledge accumulation from completed projects.
 - [ ] Abstract base: `backend/core/integrations/social_data.py`
 - [ ] Adapter interface: `fetch_profile(platform, handle) -> dict`
 - [ ] Suitable for: periodic followers_count / engagement_rate refresh
-- [ ] Candidate providers: 新榜, 蝉妈妈, 灰豚 (evaluate on demand)
+- [ ] Candidate providers: Xinbang, Chanmama, Huitun (evaluate on demand)
 - [ ] Not a core dependency — data supplement only
 
 ---
 
-## Phase 5: Multi-Channel Access & Conversational UI
+## Phase 5: Media Planning Intelligence
+
+Upgrade the Resource Agent from a retrieval tool into a media planning system. Currently the pipeline skips three layers that experienced media planners perform: strategy interpretation, resource matrix design, and budget allocation by tier.
+
+### 5.1 Media Planning Agent (new agent)
+
+Sits between Strategy P2 and Resource Agent. Transforms strategy output into a structured media plan.
+
+- [ ] Strategy interpretation: convert strategy language into media requirements (e.g. "tech + emotional resonance + Gen-Z" becomes "relatable creator style, life-integrated tech narrative, audience-matching voice")
+- [ ] Resource matrix design: define tier structure (top-tier for awareness, mid-tier for amplification, KOC for UGC, media for credibility) with quantity and role per tier
+- [ ] Per-tier budget allocation: split the media budget (from Strategy P2's `budget_allocation`) across tiers with rationale
+- [ ] Output schema: `MediaPlan` (Pydantic) with `tiers[]`, each tier containing `role`, `count`, `budget_share`, `selection_criteria`, `rationale`
+- [ ] HITL checkpoint: user confirms/edits matrix before Resource Agent executes retrieval
+
+**Knowledge sources for matrix design:**
+
+| Source | What it provides | Implementation |
+|--------|-----------------|----------------|
+| Industry reference frameworks | Default tier ratios by campaign type (e.g. beauty launch: 30% top + 40% mid + 20% KOC + 10% media) | Prompt-embedded few-shot examples initially. Later: dedicated `industry_knowledge` Pinecone namespace maintained by admin. |
+| Historical campaign RAG | "We ran a similar campaign before, here's how it was structured and what worked" | Requires structured archive storage (see 5.2). Retrieved from `brand_history` with campaign-level metadata filtering. |
+| Current campaign context | Budget, objectives, timeline constraints | From Strategy P2 output (big_idea, channels, budget_allocation, kpis) |
+
+### 5.2 Historical Campaign Structured Storage
+
+Current archive pipeline stores text chunks. Media Planning needs structured, queryable campaign records.
+
+- [ ] Design `campaign_record` schema: campaign type, total budget, tier breakdown, resource list per tier, performance metrics, key learnings
+- [ ] Extend archive extraction to produce `campaign_record` in addition to current text chunks
+- [ ] Store in MongoDB `campaign_records` collection (queryable by type, budget range, client)
+- [ ] Embed campaign summary text into `brand_history` namespace with structured metadata (campaign_type, budget_range, outcome_rating)
+- [ ] Retrieval: Media Planning Agent queries by campaign similarity (type + budget + objective), receives structured records as context
+
+### 5.3 Resource Data Model Enhancement
+
+Tiered retrieval requires richer resource profiles.
+
+- [ ] `tier` field: explicit tier label per resource (top/mid/tail/koc). Definitions vary by platform; cannot rely solely on follower count.
+- [ ] `content_style` restructured into dimensions:
+  - `production_level`: high / medium / low (distinguishes polished from raw/authentic)
+  - `persona_type`: expert / relatable / aspirational / entertaining
+  - `voice_style`: educational / conversational / emotional / humorous
+- [ ] `audience_demographics`: structured object (age_range, gender_skew, city_tier, interest_tags) replacing flat `audience_tags` list
+- [ ] Decide: which new dimensions become metadata filters (discrete, exact match) vs remain in embedding text (semantic, fuzzy match)
+- [ ] Migration path for existing resources: backfill strategy for new structured fields from existing freeform data
+
+### 5.4 Tiered Retrieval Strategy
+
+Resource Agent executes separate retrieval per tier with tier-appropriate parameters.
+
+- [ ] Per-tier query construction: different weight on followers_count, content_style dimensions, audience match
+- [ ] Top-tier: high followers + high relevance + verified recently
+- [ ] Mid-tier: moderate followers + high category match + good past performance
+- [ ] KOC: low followers + high authenticity (production_level=low) + audience demographic match
+- [ ] Media: beat match + outlet credibility + publish frequency
+- [ ] Results grouped by tier in output, matching the matrix structure from Media Planning Agent
+
+### 5.5 Budget Integration
+
+- [ ] Strategy P2 outputs channel-level budget split (social 60%, PR 25%, event 15%)
+- [ ] Media Planning Agent further splits per-channel budget into tier allocations
+- [ ] User override: HITL allows manual budget adjustment at both levels
+- [ ] If user specifies budget split in brief, Brief Analyzer extracts it; Strategy P2 respects it
+
+### Design Decisions (to be discussed)
+
+- Industry knowledge: prompt-embedded few-shot vs dedicated RAG namespace? Start with prompt, migrate to RAG when content volume justifies.
+- Historical data cold-start: first few campaigns have no history. Fallback to industry frameworks only. System improves after 5-10 archived campaigns per client.
+- `content_style` dimensions: how many are enough without creating data entry burden? Current thinking: 3 dimensions (production_level, persona_type, voice_style) cover 80% of media planning decisions.
+- Tier definitions: platform-specific thresholds (Xiaohongshu 100k+ = top, Bilibili 100k+ = mid). Store as configurable rules or let LLM infer from follower_count + engagement_rate?
+- Embedding architecture: when content_style becomes multi-dimensional, do we keep one embedding per resource or create multiple embeddings per resource (one per dimension)?
+
+---
+
+## Phase 6: Multi-Channel Access & Conversational UI
 
 Lower usage barrier through chat interfaces; PPT stays in web dashboard.
 
-### 5.1 Chat Bot Integration
+### 6.1 Chat Bot Integration
 
-- [ ] Webhook adapter layer for 飞书 / 企微 / Slack
+- [ ] Webhook adapter layer for Feishu / WeCom / Slack
 - [ ] User @ bot in group → triggers pipeline subset
 - [ ] Suitable outputs: strategy direction, resource recommendations, copywriting, talking points, social copy
 - [ ] NOT suitable: PPT generation (stays in web dashboard)
 - [ ] Results rendered as structured cards (not raw text dumps)
 
-### 5.2 Client Communication as Input
+### 6.2 Client Communication as Input
 
 - [ ] Users paste/forward client chat logs as brief supplement
 - [ ] Feeds into brief_analyzer as unstructured context
 - [ ] Extracts: client needs, KPI targets, brand preferences, tone expectations
 
-### 5.3 UI Architecture
+### 6.3 UI Architecture
 
 - [ ] **Web Dashboard**: full pipeline, PPT generation/preview/edit, version management, analytics
 - [ ] **Chat Bot**: quick Q&A, strategy/copy/resource queries, card-based results
@@ -335,6 +408,6 @@ Lower usage barrier through chat interfaces; PPT stays in web dashboard.
 - [x] ~~Narrative Agent prompt design~~ → Implemented with page-referenced JSON output
 - [x] ~~Client feedback rerun~~ → Auto-suggest via RERUN_SUGGESTIONS mapping, user confirms with checkbox
 - [x] ~~Initial PPT template count~~ → 5 templates created (social, PR, integrated, brand_refresh, default)
-- [ ] Chat bot: message length limits per platform (飞书 ~30KB, 企微 ~2048 chars)
+- [ ] Chat bot: message length limits per platform (Feishu ~30KB, WeCom ~2048 chars)
 - [ ] Chat bot: auth model (how to map bot user → system user/client context)
 
