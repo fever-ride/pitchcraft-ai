@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 
@@ -203,8 +204,7 @@ async def slide_content_node(state: PipelineState) -> dict:
     budget = state.get("request_budget")
     output_language = state.get("output_language", "auto")
 
-    slides = []
-    for slide_info in structure:
+    async def _generate_one(slide_info: dict, idx: int):
         content = await generate_slide_content(
             slide=slide_info,
             big_idea=big_idea,
@@ -214,13 +214,16 @@ async def slide_content_node(state: PipelineState) -> dict:
             budget=budget,
             output_language=output_language,
         )
-        slides.append({
-            "index": slide_info.get("slide_index", len(slides)),
+        return {
+            "index": slide_info.get("slide_index", idx),
             "content": content.model_dump(),
             "status": "pending",
-        })
+        }
 
-    return {"slides": slides}
+    tasks = [_generate_one(s, i) for i, s in enumerate(structure)]
+    slides = await asyncio.gather(*tasks)
+
+    return {"slides": list(slides)}
 
 
 async def narrative_agent_node(state: PipelineState) -> dict:

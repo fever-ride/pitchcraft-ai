@@ -311,3 +311,29 @@ process_file_task.delay(
 | 大文件传 task queue | 持久化到磁盘/对象存储，只传 path/key |
 | 面向查询 vs 面向显示 | 同一信息存两份：原始字符串(display) + 解析后数值(query) |
 | 数据新鲜度 | `last_verified_at` + `status` + API 层 freshness label |
+
+---
+
+## #18. Slide Content 并行化 + Prompt Caching 可行性
+
+**背景**：Slide Content Agent 当前串行生成 15 页 deck（~45s）。所有 slide 调用共享相同前缀：system prompt + big_idea + brand_direction + brand RAG context（~5000 tokens），只有 per-slide instruction 不同（~200 tokens）。
+
+**已做**：纯并行化（`asyncio.gather`）— 延迟从 ~45s 降到 ~3s，token 总量不变。
+
+**待验证：Prompt Caching 在并行场景下的有效性**
+
+核心不确定性：15 个并行请求几乎同时发出，第一个请求的 cache entry 是否在后续请求到达时已经建立？
+
+- 如果 cache 建立需要第一个请求完成 → 并行请求全部 cache miss → 收益为 0
+- 如果 API 层面对相同前缀做了请求合并/即时缓存 → 收益接近理论值（90%）
+
+**备选方案：先1后N模式**
+
+```python
+first = await generate_slide_content(structure[0], ...)  # cache 建立
+rest = await asyncio.gather(*[generate_slide_content(s, ...) for s in structure[1:]])  # 命中 cache
+```
+
+代价：增加一个 round-trip（~3s），总时间 ~6s。仍远优于串行 45s。
+
+**结论**：先做纯并行拿到延迟收益，Prompt Caching 作为后续 cost optimization 单独验证 API 行为后再加。需要实测确认 Anthropic cache 建立时机。
