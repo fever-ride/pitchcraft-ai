@@ -185,7 +185,7 @@ Every pipeline completion (initial or rerun) triggers an automatic version save:
 | **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily → DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN → Chanmama/Feigua, Global → CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
 | **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
 | **Strategy P2** | `research_result` + `strategy_insight` + rejected directions | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. |
-| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` | `ResourceResult` (Pydantic) | Reads typed fields directly from state — no re-detection. Multi-type parallel retrieval (KOL/KOC, media, vendor, placement). Conditional skip when empty. **Post-validation**: verifies every LLM recommendation exists in MongoDB; filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). |
+| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` | `ResourceResult` (Pydantic) | Reads typed fields directly from state — no re-detection. **Hybrid retrieval**: Pinecone metadata filter (status=active, platform from channels) + vector similarity in one query. Multi-type parallel retrieval across namespaces. Conditional skip when empty. **Post-validation**: verifies every LLM recommendation exists in MongoDB; filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). |
 | **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project → client → LLM generation). Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
 | **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
 
@@ -249,11 +249,19 @@ Path 2: Resource Excel import
   → BGE-M3 embed → Pinecone upsert (namespace by resource_type + client_id)
 ```
 
-**Retrieval** (semantic similarity):
+**Retrieval** (hybrid: metadata filter + semantic similarity):
 
 ```
-Agent constructs query string → BGE-M3 embeds query → Pinecone cosine similarity
-  → filter by score threshold (0.3–0.5) → return top_k text chunks as context
+Agent constructs query + metadata filter
+  → BGE-M3 embeds query
+  → Pinecone: apply metadata filter FIRST (status, platform, type, followers_count)
+    THEN cosine similarity on filtered subset
+  → score threshold (0.3–0.5) → return top_k text chunks as context
+
+Resource Agent example:
+  query: "新品上市 小红书 抖音 kol"
+  filter: {"status": {"$eq": "active"}, "platform": {"$in": ["xiaohongshu", "douyin"]}}
+  → only active KOLs on matching platforms enter similarity ranking
 ```
 
 - **Visual Reference Processing**: PPTX/PDF → page-level PNG rendering (LibreOffice headless) → Claude Vision style extraction (colors, layout, typography, density) → text description → BGE-M3 embedding → RAG-retrievable visual identity
@@ -317,17 +325,17 @@ LLM recommends: ["李佳琦", "骆王宇", "FakeKOL123"]
                               ▼
 Post-validation (MongoDB lookup per name, case-insensitive):
   ├── "李佳琦"      → found, status=active     ✓ keep
-  ├── "骆王宇"      → found, status=booked     ✓ keep + tag "currently booked"
-  └── "FakeKOL123"  → not found                ✗ remove → add to missing_resources[]
+  ├── "骆王宇"      → found, status=inactive   ✗ remove → add to missing_resources[] (inactive)
+  └── "FakeKOL123"  → not found                ✗ remove → add to missing_resources[] (hallucinated)
 ```
 
-- Only resources that **exist in the client's database** pass through to the final recommendation
+- Only resources that **exist in the client's database and are active** pass through to the final recommendation
 - Prompt-level guardrail: system prompt explicitly instructs "only recommend from provided database results"
 - Schema-level guardrail: tool_use structured output forces the LLM to fill typed fields, reducing free-form hallucination
 
 **Resource Freshness Tracking**
 
-Every resource record carries `last_verified_at` and `status` (active / inactive / booked):
+Every resource record carries `last_verified_at` and `status` (active / inactive):
 
 - Import sets `last_verified_at = now` and `status = active`
 - API responses include freshness labels: "recent" / "verified N days ago" / "data may be outdated (M months)"
@@ -430,6 +438,7 @@ Upload (streaming) → /data/uploads/{client_id}/{uuid}.ext (persistent)
 | Token-based semantic chunking | Language-agnostic paragraph/sentence boundary splitting; handles mixed CN/EN documents |
 | Soft-delete for files | Running pipelines unaffected when teammates modify shared Brand Library |
 | Visual style → text embedding | Claude Vision extracts style JSON → text description → BGE-M3 embedding; enables RAG retrieval of visual identity |
+| Pinecone hybrid retrieval (metadata filter + vector) | Pure vector search can't do exact/numeric constraints; metadata filter handles structured criteria (status, platform, followers) in one Pinecone call, then vector similarity ranks the filtered set — no separate DB query for filtering |
 | Resource freshness tracking | `last_verified_at` + `status` fields prevent recommending outdated or unavailable resources; API responses carry freshness labels so users know data age |
 
 ---

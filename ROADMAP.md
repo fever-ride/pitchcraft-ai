@@ -230,13 +230,80 @@ Version control, analytics, deployment infrastructure.
 
 ---
 
+## Phase 4: Resource Intelligence & Project Archive
+
+Richer resource profiles, knowledge accumulation from completed projects.
+
+### 4.1 Resource Profile Enrichment
+
+- [ ] Excel import template expansion: `categories`, `content_style`, `audience_tags`, `past_cpe`
+- [ ] Tags are free-text (semantic search, no standardization needed)
+- [ ] New fields stored as Pinecone metadata + MongoDB
+- [ ] Strategy output adds `target_audience`, `content_tone`, `campaign_category` for precision matching
+- [ ] Resource agent query incorporates these for higher-quality semantic retrieval
+
+### 4.2 Project Archive Pipeline
+
+- [ ] New API: `POST /api/v1/projects/{id}/archive` (upload recap/case study)
+- [ ] LLM structured extraction from one report → multi-destination:
+  - Resource performance data → update `collaboration_history`, refresh resource embedding
+  - Strategy learnings → `brand_history_{client_id}` namespace
+  - Industry insights → client knowledge base
+  - Audience feedback/sentiment → audience insight pool
+- [ ] Built on existing file upload + RAG pipeline, extended with extraction + routing
+
+### 4.3 Progressive Resource Accumulation
+
+- [ ] Post-pipeline: auto-record which resources were selected + project category
+- [ ] Reverse-tag resources with confirmed categories from actual usage
+- [ ] Resource profiles improve over time without manual maintenance
+
+### 4.4 External Data API (Interface Only)
+
+- [ ] Config: `social_data_provider` field reserved
+- [ ] Abstract base: `backend/core/integrations/social_data.py`
+- [ ] Adapter interface: `fetch_profile(platform, handle) -> dict`
+- [ ] Suitable for: periodic followers_count / engagement_rate refresh
+- [ ] Candidate providers: 新榜, 蝉妈妈, 灰豚 (evaluate on demand)
+- [ ] Not a core dependency — data supplement only
+
+---
+
+## Phase 5: Multi-Channel Access & Conversational UI
+
+Lower usage barrier through chat interfaces; PPT stays in web dashboard.
+
+### 5.1 Chat Bot Integration
+
+- [ ] Webhook adapter layer for 飞书 / 企微 / Slack
+- [ ] User @ bot in group → triggers pipeline subset
+- [ ] Suitable outputs: strategy direction, resource recommendations, copywriting, talking points, social copy
+- [ ] NOT suitable: PPT generation (stays in web dashboard)
+- [ ] Results rendered as structured cards (not raw text dumps)
+
+### 5.2 Client Communication as Input
+
+- [ ] Users paste/forward client chat logs as brief supplement
+- [ ] Feeds into brief_analyzer as unstructured context
+- [ ] Extracts: client needs, KPI targets, brand preferences, tone expectations
+
+### 5.3 UI Architecture
+
+- [ ] **Web Dashboard**: full pipeline, PPT generation/preview/edit, version management, analytics
+- [ ] **Chat Bot**: quick Q&A, strategy/copy/resource queries, card-based results
+- [ ] Both share the same backend API — no logic duplication
+
+---
+
 ## Open Questions
 
 - [x] ~~Visual reference file processing depth~~ → Phase 2.4 Claude Vision pipeline
 - [ ] Social media data acquisition compliance (varies by locale)
-- [ ] Resource database cold-start strategy
+- [x] ~~Resource database cold-start strategy~~ → Phase 4 (Excel enrichment + archive pipeline + progressive accumulation)
 - [x] ~~Resource Agent trigger boundary~~ → Strategy output determines resource types automatically
 - [x] ~~Narrative Agent prompt design~~ → Implemented with page-referenced JSON output
 - [x] ~~Client feedback rerun~~ → Auto-suggest via RERUN_SUGGESTIONS mapping, user confirms with checkbox
 - [x] ~~Initial PPT template count~~ → 5 templates created (social, PR, integrated, brand_refresh, default)
+- [ ] Chat bot: message length limits per platform (飞书 ~30KB, 企微 ~2048 chars)
+- [ ] Chat bot: auth model (how to map bot user → system user/client context)
 
