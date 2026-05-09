@@ -39,7 +39,7 @@ services:
     build:
       context: ../../backend
       dockerfile: Dockerfile
-    command: celery -A backend.core.tasks worker --loglevel=info
+    command: celery -A backend.core.tasks worker --loglevel=info --concurrency=4
     environment:
       - MONGODB_URL=mongodb://mongodb:27017
       - MONGODB_DB_NAME=pitchcraft
@@ -49,6 +49,8 @@ services:
       - EMBEDDING_SERVICE_URL=http://embedding:8001
     env_file:
       - ../../.env
+    volumes:
+      - thumbnails_data:/data/thumbnails
     depends_on:
       - mongodb
       - redis
@@ -104,3 +106,4 @@ volumes:
   redis_data:
   pptx_output:
   uploaded_files:
+  thumbnails_data:

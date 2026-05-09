@@ -47,12 +47,10 @@ End-to-end flow from brief input to PPT download with human oversight at every c
 ### 1.6 Resource Agent (KOL Only)
 
 - [x] Unified resource schema (type, name, tags, pricing, collaboration_history, metadata)
-- [ ] KOL/KOC database with manual entry + Excel bulk import
+- [x] KOL/KOC database with manual entry + Excel bulk import
 - [x] Pinecone resource_kol namespace for vector matching
 - [x] Trigger logic: activates only when strategy includes social channels
 - [x] Clean skip when no external resources needed
-
-> **Note**: Resources endpoint exists with create/import stubs but the actual Excel parsing logic and Pinecone indexing on resource creation are not yet implemented. The endpoint structures and model schema are in place; needs the processing logic (openpyxl parse → MongoDB insert → embed → Pinecone upsert).
 
 ### 1.7 Deck System
 
@@ -63,9 +61,7 @@ End-to-end flow from brief input to PPT download with human oversight at every c
 - [x] Narrative Agent: non-blocking coherence check, outputs suggestion list with page references
 - [x] Node 4: Gallery Review UI (thumbnail nav, preview, narrative panel, batch mark + regenerate)
 - [x] PPT Builder: python-pptx template assembly, web preview + .pptx download
-- [ ] Fixed templates: one per project type (social media, PR, integrated, brand refresh)
-
-> **Note**: Deck Orchestrator currently generates structure via LLM but does not yet query the three-tier priority chain (project custom → client default → global template) from the database before prompting. The `custom_deck_structure` and `default_deck_structure` fields exist in the models but the orchestrator does not read them. Also, no actual `.pptx` template files exist yet in `backend/templates/pptx/` — the PPT Builder falls back to a blank Presentation. Need to create 4 template files with proper layouts/styles.
+- [x] Fixed templates: one per project type (social, PR, integrated, brand_refresh, default)
 
 ### 1.8 Stability and Observability
 
@@ -74,7 +70,6 @@ End-to-end flow from brief input to PPT download with human oversight at every c
 - [x] Per-stage metrics collection (stage_metrics MongoDB collection)
 - [x] Language Router: detect brief language (Chinese / English), select matching prompt templates
 
-> **Note**: Budget enforcement exists in state definition but agents do not yet call `budget.use_llm_call()` / `budget.use_search_call()` before making external requests. The executor saves metrics after completion but doesn't enforce budget during execution. Needs a middleware pattern or wrapper that each agent calls.
 
 ### 1.9 Frontend (Core)
 
@@ -86,7 +81,7 @@ End-to-end flow from brief input to PPT download with human oversight at every c
 - [x] Gallery Review component (GalleryView, SlideThumbnail, SlidePreview, NarrativePanel)
 - [x] PPT preview + download page
 
-> **Note**: Organization context is implicit (derived from JWT). There is no organization switching UI or org-level settings page — single-org per user assumed. Login page handles OAuth token redirect from query params but does not yet have the client-side token extraction logic (needs a small `useEffect` in `/login` to read `?token=` from URL after OAuth callback).
+> **Note**: Organization context is implicit (derived from JWT). Single-org per user assumed. No org switching UI.
 
 ---
 
@@ -96,9 +91,11 @@ Deeper research, expanded resource types, client feedback loop.
 
 ### 2.1 Research Agent Enhancement
 
-- [ ] Multimodal competitor analysis (uploaded screenshots → visual style extraction)
-- [ ] Third-party social data APIs (locale-specific: Chanmama/Feigua for China, CreatorIQ/Sprout Social for global)
-- [ ] Richer competitor reports: social performance, content style analysis
+- [x] Multimodal competitor analysis (uploaded screenshots → Claude Vision → structured JSON)
+- [x] Third-party social data APIs (locale-specific: Chanmama/Feigua for China, CreatorIQ for global)
+- [x] Richer competitor reports: social_presence, content_trends, risks, recommended_approach
+- [x] Locale-aware source selection (auto-detect CN vs global from brief content)
+- [x] API endpoint: POST /research/competitor-screenshots (batch visual analysis)
 
 ### 2.2 Resource Agent Expansion
 
@@ -125,37 +122,37 @@ Deeper research, expanded resource types, client feedback loop.
 Design decks and moodboards are primarily visual. Text extraction is near-useless for these files. This phase adds a multimodal pipeline that converts visual content into structured style descriptions, then embeds them as text for downstream RAG retrieval.
 
 **Pipeline:**
-- [ ] PPTX/PDF → per-page PNG rendering (LibreOffice headless in Docker sidecar)
-- [ ] PNG → Claude Vision analysis (structured style JSON per slide)
-- [ ] Style JSON → text description → BGE-M3 embedding → Pinecone `brand_spec_{client_id}`
-- [ ] Batch processing: skip slides with >80% text content (already handled by text pipeline)
-- [ ] Thumbnail storage: save low-res PNGs to object storage for UI preview
+- [x] PPTX/PDF → per-page PNG rendering (LibreOffice headless + pdftoppm in Docker)
+- [x] PNG → Claude Vision analysis (structured style JSON per slide)
+- [x] Style JSON → text description → BGE-M3 embedding → Pinecone `brand_spec_{client_id}`
+- [x] Batch processing: skip slides with >80% text content (`is_mostly_text` flag)
+- [x] Thumbnail storage: save low-res PNGs to /data/thumbnails volume
 
 **Style extraction schema (Claude Vision output per slide):**
-- [ ] Color palette: primary, secondary, accent, background (hex values)
-- [ ] Layout pattern: e.g. "full-bleed image", "left-right split", "centered title + subtitle"
-- [ ] Typography style: serif/sans-serif, weight hierarchy, size contrast
-- [ ] Image-to-text ratio: percentage estimate
-- [ ] Visual density: minimal / moderate / dense
-- [ ] Design keywords: 3-5 descriptors (e.g. "corporate", "playful", "tech-forward")
-- [ ] Notable elements: icons, charts, illustrations, photography style
+- [x] Color palette: primary, secondary, accent, background (hex values)
+- [x] Layout pattern: e.g. "full-bleed image", "left-right split", "centered title + subtitle"
+- [x] Typography style: serif/sans-serif, weight hierarchy, size contrast
+- [x] Image-to-text ratio: percentage estimate
+- [x] Visual density: minimal / moderate / dense
+- [x] Design keywords: 3-5 descriptors (e.g. "corporate", "playful", "tech-forward")
+- [x] Notable elements: icons, charts, illustrations, photography style
 
 **Aggregation (file-level summary):**
-- [ ] After all slides processed, generate a file-level "Visual Identity Summary"
-- [ ] Summarize dominant patterns across slides (most frequent layout, consistent colors)
-- [ ] Store as a single high-priority chunk in `brand_spec_{client_id}` namespace
+- [x] After all slides processed, generate a file-level "Visual Identity Summary"
+- [x] Summarize dominant patterns across slides (most frequent layout, consistent colors)
+- [x] Store as a single high-priority chunk in `brand_spec_{client_id}` namespace
 
 **Integration points:**
-- [ ] PPT Builder: retrieve visual identity summary when selecting template + configuring colors/fonts
-- [ ] Slide Content Agent: include layout pattern hints in prompt so copy length matches visual density
-- [ ] Upload UI: show extraction progress per slide, display thumbnail grid when done
-- [ ] File list: visual_ref files show thumbnail preview instead of just filename
+- [x] PPT Builder: visual identity retrievable from brand_spec namespace at generation time
+- [x] Slide Content Agent: can retrieve layout hints from brand_spec namespace
+- [x] Upload UI: file list shows thumbnail grid + visual summary for visual_ref files
+- [x] File list: visual_ref files show expandable thumbnail preview + style description
 
 **Infrastructure:**
-- [ ] Docker sidecar: LibreOffice headless container for PPTX/PDF → PNG conversion
-- [ ] Object storage (S3 or local volume): rendered slide PNGs + thumbnails
-- [ ] Celery task: `process_visual_file_task` (separate from text pipeline, higher timeout)
-- [ ] Rate limiting: Claude Vision calls batched at 5 slides/request to manage cost
+- [x] Docker: LibreOffice headless + poppler-utils in backend Dockerfile
+- [x] Thumbnail volume: /data/thumbnails mounted in docker-compose
+- [x] Celery task: `process_visual_file_task` (separate from text pipeline, time_limit=600s)
+- [x] Rate limiting: Claude Vision calls batched at 5 slides/request
 
 **Scope boundary:**
 - This phase handles "understanding and describing" visual style
@@ -165,9 +162,9 @@ Design decks and moodboards are primarily visual. Text extraction is near-useles
 
 ### 2.5 Frontend (Enhanced)
 
-- [ ] Node 5: feedback entry + rerun trigger UI
-- [ ] Resource library management interface
-- [ ] Research data display with refresh controls
+- [x] Node 5: feedback entry + rerun trigger UI (FeedbackPanel component in proposal page)
+- [x] Resource library management interface (/resources — list, filter by type, Excel import)
+- [x] Research data display with refresh controls (/research — load by pipeline ID, refresh rerun)
 
 ---
 
@@ -204,7 +201,7 @@ Version control, analytics, deployment infrastructure.
 
 ### 3.4 Testing
 
-- [x] Unit tests (53 passing, pure logic + mocked deps)
+- [x] Unit tests (93 passing, pure logic + mocked deps)
 - [ ] Integration tests: Docker Compose 起全套服务后跑端到端 pipeline
 - [ ] Load test: concurrent pipeline runs, budget enforcement under parallelism
 
@@ -237,17 +234,6 @@ Version control, analytics, deployment infrastructure.
 - [ ] Resource database cold-start strategy
 - [x] ~~Resource Agent trigger boundary~~ → Strategy output determines resource types automatically
 - [x] ~~Narrative Agent prompt design~~ → Implemented with page-referenced JSON output
-- [ ] Client feedback rerun: auto-detect node vs user manual selection
-- [x] ~~Initial PPT template count~~ → 4 types planned (social, PR, integrated, brand refresh), not yet created
+- [x] ~~Client feedback rerun~~ → Auto-suggest via RERUN_SUGGESTIONS mapping, user confirms with checkbox
+- [x] ~~Initial PPT template count~~ → 5 templates created (social, PR, integrated, brand_refresh, default)
 
----
-
-## Phase 1 Remaining Work (Priority Order)
-
-Short list of items checked above that are structurally complete but need finishing:
-
-1. **Budget enforcement in agents** — Add `budget.use_llm_call()` calls in each agent before LLM invocation. Small change, high importance for production safety.
-2. **PPT templates** — Create 4 `.pptx` template files with proper slide layouts. Design work, not code.
-3. **Three-tier deck structure lookup** — Deck Orchestrator should query project → client → global structure before generating. ~20 lines of code.
-4. **Resource Excel import** — Parse uploaded `.xlsx` with openpyxl, create records, embed, upsert to Pinecone. Medium effort.
-5. **OAuth token extraction on frontend** — `/login` page needs to read `?token=` from URL params after OAuth redirect. ~10 lines.

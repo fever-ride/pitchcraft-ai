@@ -6,6 +6,7 @@ from backend.api.v1.endpoints import (
     pipeline,
     projects,
     proposals,
+    research,
     resources,
     users,
 )

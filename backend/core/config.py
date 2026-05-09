@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # BGE-M3 embedding service
     embedding_service_url: str = "http://embedding:8001"
 
+    # Social data APIs
+    chanmama_api_key: str = ""
+    feigua_api_key: str = ""
+    creatoriq_api_key: str = ""
+
     # Celery
     celery_broker_url: str = "redis://redis:6379/1"
     celery_result_backend: str = "redis://redis:6379/2"

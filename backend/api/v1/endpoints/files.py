@@ -7,6 +7,7 @@ from backend.core.database.connection import get_database
 from backend.core.database.repositories.files import FileRepository
 from backend.core.models.file import FileCategory, FileType, ProcessingStatus
 from backend.core.rag.process import process_file_task
+from backend.core.rag.visual_process import process_visual_file_task
 
 router = APIRouter()
 
@@ -61,14 +62,22 @@ async def upload_file(
 
     file_id = await repo.create(record)
 
-    process_file_task.delay(
-        file_id=file_id,
-        file_bytes_hex=content.hex(),
-        filename=file.filename,
-        file_type=ft.value,
-        client_id=client_id,
-        project_id=project_id,
-    )
+    if ft == FileType.VISUAL_REF:
+        process_visual_file_task.delay(
+            file_id=file_id,
+            file_bytes_hex=content.hex(),
+            filename=file.filename,
+            client_id=client_id,
+        )
+    else:
+        process_file_task.delay(
+            file_id=file_id,
+            file_bytes_hex=content.hex(),
+            filename=file.filename,
+            file_type=ft.value,
+            client_id=client_id,
+            project_id=project_id,
+        )
 
     return {"status": "processing", "file_id": file_id}
 

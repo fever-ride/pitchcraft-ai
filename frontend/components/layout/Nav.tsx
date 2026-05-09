@@ -8,6 +8,8 @@ const links = [
   { href: "/clients", label: "Clients" },
   { href: "/pipeline", label: "New Proposal" },
   { href: "/files", label: "Files" },
+  { href: "/resources", label: "Resources" },
+  { href: "/research", label: "Research" },
 ];
 
 export function Nav() {

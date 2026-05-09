@@ -9,6 +9,7 @@ from backend.api.v1.endpoints import (
     pipeline,
     projects,
     proposals,
+    research,
     resources,
     users,
 )
@@ -33,6 +34,7 @@ app.include_router(files.router, prefix="/api/v1/files", tags=["files"])
 app.include_router(pipeline.router, prefix="/api/v1/pipeline", tags=["pipeline"])
 app.include_router(proposals.router, prefix="/api/v1/proposals", tags=["proposals"])
 app.include_router(resources.router, prefix="/api/v1/resources", tags=["resources"])
+app.include_router(research.router, prefix="/api/v1/research", tags=["research"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
 app.include_router(ws_router)
 
