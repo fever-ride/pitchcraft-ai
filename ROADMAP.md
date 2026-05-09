@@ -300,11 +300,191 @@ Richer resource profiles, knowledge accumulation from completed projects.
 
 ---
 
-## Phase 5: Media Planning Intelligence
+## Phase 5: Campaign Knowledge Base
 
-Upgrade the Resource Agent from a retrieval tool into a media planning system. Currently the pipeline skips three layers that experienced media planners perform: strategy interpretation, resource matrix design, and budget allocation by tier.
+Upgrade archive pipeline from fragmented text chunks into a structured, multi-layered knowledge system. Every agent in the pipeline benefits from historical campaign data. This phase establishes the data foundation that Phase 6 (Media Planning Intelligence) depends on.
 
-### 5.1 Media Planning Agent (new agent)
+### Why this matters
+
+Most RAG systems store raw text chunks and retrieve by semantic similarity. This returns "similar words" but not "decision logic from similar situations." A structured campaign knowledge base enables agents to reference how similar campaigns were planned, what resource allocation was used, and what worked.
+
+### 5.1 Knowledge Architecture (three layers)
+
+```
+Layer 1: Raw text chunks (existing)
+  brand_history namespace in Pinecone
+  Used for: style reference, tone matching, copywriting context
+  Status: already implemented in Phase 4
+
+Layer 2: Structured campaign records (this phase)
+  MongoDB campaign_records collection + embedded summary in Pinecone
+  Used for: finding similar past campaigns, referencing specific decisions and outcomes
+  Consumers: all pipeline agents (each reads different fields)
+
+Layer 3: Distilled industry insights (future, Phase 5.5)
+  MongoDB media_insights collection
+  Used for: cross-campaign patterns, industry benchmarks
+  Initially: hand-written in prompts. Auto-distillation when case volume justifies.
+```
+
+### 5.2 CampaignRecord Schema Design
+
+Each archived project produces one structured record. Fields organized by consuming agent:
+
+```
+CampaignRecord:
+  meta:                              ← used for retrieval matching
+    campaign_type                      (launch / branding / conversion / event / crisis)
+    industry                           (beauty, automotive, tech, F&B, fashion, ...)
+    budget_tier                        (under_100k / 100k_500k / 500k_2m / 2m_5m / above_5m)
+    target_audience_summary            (one-line description)
+    duration_days                      (campaign length)
+    channels_used[]                    (xiaohongshu, douyin, weibo, pr, event, ...)
+    client_id                          (tenant isolation)
+
+  strategy_decisions:                ← Strategy P2 references
+    big_idea
+    positioning
+    communication_logic
+    rejected_directions[]              (what was tried and didn't work)
+    client_feedback_summary            (what the client said about the strategy)
+
+  media_plan:                        ← Media Planning Agent references
+    total_media_budget
+    channel_budget_split{}             (channel -> amount or percentage)
+    tier_breakdown[]:
+      tier                             (top / mid / tail / koc / media)
+      count
+      budget_allocated
+      role                             (awareness / amplification / ugc / credibility)
+      platform
+      selection_criteria               (why this tier got this allocation)
+    rationale                          (overall media plan reasoning)
+
+  execution:                         ← Resource Agent references
+    resources_used[]:
+      name
+      type                             (kol / koc / media / vendor)
+      tier
+      platform
+      cost
+      deliverables                     (post count, content type)
+    content_formats[]                  (video, carousel, article, live stream)
+
+  deck_info:                         ← Deck Orchestrator references
+    slide_count
+    chapter_structure[]                (section titles in order)
+    presentation_style                 (data-heavy, visual, storytelling)
+
+  outcome:                           ← all agents reference
+    kpi_results{}                      (metric -> actual value)
+    best_performing_tier
+    best_performing_channel
+    underperforming_areas[]
+    lessons_learned[]
+    reusable_insights[]                (transferable takeaways)
+    overall_rating                     (1-5 scale, set during human confirmation)
+
+  metadata:
+    created_at
+    confirmed_by                       (user who reviewed and confirmed)
+    confidence                         (high / partial / low, based on source data completeness)
+    source_archive_id                  (link back to raw archive upload)
+```
+
+Most fields are optional. LLM extracts what it can. User confirms and fills gaps.
+
+### 5.3 Extraction Pipeline (extends existing archive)
+
+```
+Current flow (unchanged):
+  upload → parse → extract_archive() → ArchiveExtraction
+    → _distribute_to_brand_history() (text chunks → Pinecone)
+    → _distribute_to_resources() (collaboration_history updates)
+
+New addition:
+  extract_archive() → also produces CampaignRecord (new schema fields)
+    → _distribute_to_campaign_records():
+        1. Store full record in MongoDB campaign_records collection
+        2. Embed summary text into brand_history namespace with structured metadata
+           (campaign_type, industry, budget_tier as Pinecone metadata filters)
+    → Mark status as "pending_confirmation"
+```
+
+**LLM extraction prompt design:**
+- Single extraction call produces both ArchiveExtraction (existing) and CampaignRecord (new)
+- Prompt includes schema definition with field descriptions
+- LLM marks each section's confidence (high if numbers are explicit in report, low if inferred)
+- Fields not found in source are left null, not hallucinated
+
+### 5.4 Human Confirmation Step
+
+Extracted CampaignRecord is not immediately available for retrieval. Requires user review.
+
+- [ ] `GET /api/v1/campaigns/{id}/review`: returns extracted record for confirmation UI
+- [ ] `PUT /api/v1/campaigns/{id}/confirm`: user submits corrections, sets overall_rating, confirms
+- [ ] Status flow: `pending_confirmation` → `confirmed` (only confirmed records are retrievable)
+- [ ] UI: form pre-filled with LLM extraction, user edits fields, adds missing data (especially budget numbers and outcome metrics that may not be in the report)
+- [ ] Low-confidence fields highlighted in UI for user attention
+
+### 5.5 Retrieval Design
+
+**How agents find relevant campaigns:**
+
+Step 1: Metadata filter (narrow candidates)
+```
+campaign_type = "launch"
+industry = "beauty"
+budget_tier = "500k_2m"
+status = "confirmed"
+```
+
+Step 2: Semantic similarity on summary embedding
+```
+query: "Gen-Z skincare launch, social-first, authentic tone"
+→ cosine similarity against campaign summary embeddings
+→ top 3-5 matches
+```
+
+Step 3: Return full structured records to requesting agent. Agent reads only its relevant module.
+
+**Per-agent retrieval patterns:**
+
+| Agent | Retrieves | Uses fields |
+|-------|-----------|-------------|
+| Strategy P2 | Similar campaigns by type + industry | strategy_decisions, outcome.lessons_learned |
+| Media Planning | Similar campaigns by type + budget_tier | media_plan (full), outcome.best_performing_tier |
+| Resource Agent | Similar campaigns by channels + industry | execution.resources_used, outcome.best_performing_channel |
+| Deck Orchestrator | Similar campaigns by type | deck_info.chapter_structure, deck_info.slide_count |
+
+### 5.6 Distilled Insights (deferred, manual first)
+
+When a client accumulates 10+ confirmed campaign records:
+- [ ] Auto-trigger insight distillation (batch LLM call across records)
+- [ ] Output: industry-level patterns (e.g. "beauty launch campaigns: KOC tier consistently outperforms mid-tier on ROI")
+- [ ] Store in `media_insights` collection, tagged by industry + campaign_type
+- [ ] Media Planning Agent prompt includes relevant distilled insights as background context
+
+**Initial approach (before auto-distillation):**
+- Industry frameworks written directly in Media Planning Agent's system prompt as few-shot references
+- Updated manually as team accumulates experience
+- Migrated to RAG-retrievable format once content volume justifies the infrastructure
+
+### Design Decisions (to be discussed)
+
+- Extraction reliability: single LLM call for full CampaignRecord, or split into multiple focused calls (meta + media_plan + outcome separately)? Single call is cheaper but may lose precision on numeric fields.
+- Confirmation UX: full form or guided wizard (step through meta → strategy → media → outcome)? Wizard reduces cognitive load but takes more clicks.
+- Retrieval ranking: when multiple campaigns match, how to rank? By recency? By outcome rating? By budget similarity? Likely a weighted combination.
+- Cross-client learning: should distilled insights be per-client or shared across the org? Per-client is safer (data isolation) but org-level learns faster.
+- Cold start: first campaign archived has no similar records. System should gracefully fall back to prompt-embedded industry knowledge without degrading output quality.
+
+---
+
+## Phase 6: Media Planning Intelligence
+
+Upgrade the Resource Agent from a retrieval tool into a media planning system. Currently the pipeline skips three layers that experienced media planners perform: strategy interpretation, resource matrix design, and budget allocation by tier. Depends on Phase 5 (Campaign Knowledge Base) for historical reference data.
+
+### 6.1 Media Planning Agent (new agent)
 
 Sits between Strategy P2 and Resource Agent. Transforms strategy output into a structured media plan.
 
@@ -313,26 +493,18 @@ Sits between Strategy P2 and Resource Agent. Transforms strategy output into a s
 - [ ] Per-tier budget allocation: split the media budget (from Strategy P2's `budget_allocation`) across tiers with rationale
 - [ ] Output schema: `MediaPlan` (Pydantic) with `tiers[]`, each tier containing `role`, `count`, `budget_share`, `selection_criteria`, `rationale`
 - [ ] HITL checkpoint: user confirms/edits matrix before Resource Agent executes retrieval
+- [ ] RAG context: retrieves top 3 similar CampaignRecords from Phase 5 knowledge base, includes their media_plan and outcome sections in prompt
 
 **Knowledge sources for matrix design:**
 
 | Source | What it provides | Implementation |
 |--------|-----------------|----------------|
 | Industry reference frameworks | Default tier ratios by campaign type (e.g. beauty launch: 30% top + 40% mid + 20% KOC + 10% media) | Prompt-embedded few-shot examples initially. Later: dedicated `industry_knowledge` Pinecone namespace maintained by admin. |
-| Historical campaign RAG | "We ran a similar campaign before, here's how it was structured and what worked" | Requires structured archive storage (see 5.2). Retrieved from `brand_history` with campaign-level metadata filtering. |
+| Historical campaign records (Phase 5) | "We ran a similar campaign before, here is how it was structured and what worked" | Retrieved from `campaign_records` via metadata filter + semantic similarity. Returns structured media_plan + outcome data. |
+| Distilled insights (Phase 5.6) | "Across 10 beauty campaigns, KOC tier consistently delivers highest ROI" | From `media_insights` collection, matched by industry + campaign_type. |
 | Current campaign context | Budget, objectives, timeline constraints | From Strategy P2 output (big_idea, channels, budget_allocation, kpis) |
 
-### 5.2 Historical Campaign Structured Storage
-
-Current archive pipeline stores text chunks. Media Planning needs structured, queryable campaign records.
-
-- [ ] Design `campaign_record` schema: campaign type, total budget, tier breakdown, resource list per tier, performance metrics, key learnings
-- [ ] Extend archive extraction to produce `campaign_record` in addition to current text chunks
-- [ ] Store in MongoDB `campaign_records` collection (queryable by type, budget range, client)
-- [ ] Embed campaign summary text into `brand_history` namespace with structured metadata (campaign_type, budget_range, outcome_rating)
-- [ ] Retrieval: Media Planning Agent queries by campaign similarity (type + budget + objective), receives structured records as context
-
-### 5.3 Resource Data Model Enhancement
+### 6.2 Resource Data Model Enhancement
 
 Tiered retrieval requires richer resource profiles.
 
@@ -345,7 +517,7 @@ Tiered retrieval requires richer resource profiles.
 - [ ] Decide: which new dimensions become metadata filters (discrete, exact match) vs remain in embedding text (semantic, fuzzy match)
 - [ ] Migration path for existing resources: backfill strategy for new structured fields from existing freeform data
 
-### 5.4 Tiered Retrieval Strategy
+### 6.3 Tiered Retrieval Strategy
 
 Resource Agent executes separate retrieval per tier with tier-appropriate parameters.
 
@@ -356,7 +528,7 @@ Resource Agent executes separate retrieval per tier with tier-appropriate parame
 - [ ] Media: beat match + outlet credibility + publish frequency
 - [ ] Results grouped by tier in output, matching the matrix structure from Media Planning Agent
 
-### 5.5 Budget Integration
+### 6.4 Budget Integration
 
 - [ ] Strategy P2 outputs channel-level budget split (social 60%, PR 25%, event 15%)
 - [ ] Media Planning Agent further splits per-channel budget into tier allocations
@@ -365,19 +537,17 @@ Resource Agent executes separate retrieval per tier with tier-appropriate parame
 
 ### Design Decisions (to be discussed)
 
-- Industry knowledge: prompt-embedded few-shot vs dedicated RAG namespace? Start with prompt, migrate to RAG when content volume justifies.
-- Historical data cold-start: first few campaigns have no history. Fallback to industry frameworks only. System improves after 5-10 archived campaigns per client.
 - `content_style` dimensions: how many are enough without creating data entry burden? Current thinking: 3 dimensions (production_level, persona_type, voice_style) cover 80% of media planning decisions.
 - Tier definitions: platform-specific thresholds (Xiaohongshu 100k+ = top, Bilibili 100k+ = mid). Store as configurable rules or let LLM infer from follower_count + engagement_rate?
 - Embedding architecture: when content_style becomes multi-dimensional, do we keep one embedding per resource or create multiple embeddings per resource (one per dimension)?
 
 ---
 
-## Phase 6: Multi-Channel Access & Conversational UI
+## Phase 7: Multi-Channel Access & Conversational UI
 
 Lower usage barrier through chat interfaces; PPT stays in web dashboard.
 
-### 6.1 Chat Bot Integration
+### 7.1 Chat Bot Integration
 
 - [ ] Webhook adapter layer for Feishu / WeCom / Slack
 - [ ] User @ bot in group → triggers pipeline subset
@@ -385,13 +555,13 @@ Lower usage barrier through chat interfaces; PPT stays in web dashboard.
 - [ ] NOT suitable: PPT generation (stays in web dashboard)
 - [ ] Results rendered as structured cards (not raw text dumps)
 
-### 6.2 Client Communication as Input
+### 7.2 Client Communication as Input
 
 - [ ] Users paste/forward client chat logs as brief supplement
 - [ ] Feeds into brief_analyzer as unstructured context
 - [ ] Extracts: client needs, KPI targets, brand preferences, tone expectations
 
-### 6.3 UI Architecture
+### 7.3 UI Architecture
 
 - [ ] **Web Dashboard**: full pipeline, PPT generation/preview/edit, version management, analytics
 - [ ] **Chat Bot**: quick Q&A, strategy/copy/resource queries, card-based results
