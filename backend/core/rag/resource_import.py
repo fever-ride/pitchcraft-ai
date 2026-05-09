@@ -6,7 +6,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 
 from backend.core.database.connection import get_database
-from backend.core.models.resource import ResourceStatus, parse_follower_count, resource_namespace
+from backend.core.models.resource import ResourceStatus, normalize_platform, parse_follower_count, resource_namespace
 from backend.core.rag.embedder import embed_texts
 from backend.core.rag.indexer import upsert_vectors
 
@@ -107,6 +107,7 @@ def parse_resource_excel(file_bytes: bytes) -> ImportParseResult:
             record.setdefault("audience_tags", "")
             record.setdefault("past_cpe", "")
             record["followers_count"] = parse_follower_count(record.get("followers"))
+            record["platform_normalized"] = normalize_platform(record.get("platform", ""))
             record["status"] = ResourceStatus.ACTIVE.value
             record["last_verified_at"] = datetime.utcnow()
             for list_field in ("categories", "audience_tags", "tags"):
@@ -166,6 +167,26 @@ def _resource_to_text(r: dict) -> str:
     return " | ".join(parts)
 
 
+async def refresh_resource_embedding(doc: dict, client_id: str):
+    """Re-embed a single resource and upsert to Pinecone. Used after any field update."""
+    rtype = doc.get("type", "kol").lower()
+    if rtype not in VALID_TYPES:
+        rtype = "kol"
+    ns = resource_namespace(rtype, client_id)
+    text = _resource_to_text(doc)
+    embeddings = await embed_texts([text])
+    resource_id = str(doc.get("_id", ""))
+    extra_meta = {
+        "name": doc.get("name", ""),
+        "type": doc.get("type", rtype),
+        "platform": normalize_platform(doc.get("platform", "")),
+        "status": doc.get("status", ResourceStatus.ACTIVE.value),
+        "followers_count": doc.get("followers_count") or 0,
+        "tags": ", ".join(doc.get("tags", [])) if isinstance(doc.get("tags"), list) else doc.get("tags", ""),
+    }
+    upsert_vectors(ns, resource_id, [text], embeddings, extra_metadata=[extra_meta])
+
+
 async def import_resources(file_bytes: bytes, client_id: str) -> dict:
     """Full import pipeline: parse → DB → embed → Pinecone (grouped by type)."""
     parse_result = parse_resource_excel(file_bytes)
@@ -205,7 +226,7 @@ async def import_resources(file_bytes: bytes, client_id: str) -> dict:
             meta = {
                 "name": r.get("name", ""),
                 "type": r.get("type", rtype),
-                "platform": r.get("platform", ""),
+                "platform": r.get("platform_normalized", normalize_platform(r.get("platform", ""))),
                 "status": r.get("status", ResourceStatus.ACTIVE.value),
                 "followers_count": r.get("followers_count") or 0,
                 "tags": r.get("tags", ""),

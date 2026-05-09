@@ -1,10 +1,10 @@
 # Pitchcraft
 
-AI-powered proposal automation platform for PR/marketing agency Account teams. From a client brief to a presentation-ready PowerPoint deck in under 30 minutes — with human oversight at every critical decision.
+AI-powered proposal automation platform for PR/marketing agency Account teams. Converts a client brief into a presentation-ready PowerPoint deck in under 30 minutes, with human oversight at every critical decision.
 
 ## Why Pitchcraft
 
-Account teams at agencies spend 3–5 days per pitch doing work that is largely repeatable: competitor research, strategy frameworks, deck structuring, KOL matching, content writing. Pitchcraft compresses this to under 30 minutes by automating the repeatable parts while keeping humans in the loop for judgment calls and client relationship decisions.
+Account teams at agencies spend 3 to 5 days per pitch doing largely repeatable work: competitor research, strategy frameworks, deck structuring, KOL matching, content writing. Pitchcraft compresses this to under 30 minutes by automating the repeatable parts while keeping humans in the loop for judgment calls and client relationship decisions.
 
 **Target users:** Account / Lead Account / Admin roles at PR, advertising, and integrated marketing agencies.
 
@@ -94,22 +94,22 @@ Brief Input
 ### Pipeline Orchestration Details
 
 **1. Parallel Execution with Data Dependencies**
-- Research Agent and Strategy Phase 1 run concurrently (`asyncio.gather`) — neither depends on the other
-- Strategy Phase 2 **cannot start** until both complete (fan-in barrier)
-- Narrative Agent runs in parallel with Slide Content Agent but is purely advisory (no flow control)
+- Research Agent and Strategy Phase 1 run concurrently via `asyncio.gather`. Neither depends on the other.
+- Strategy Phase 2 cannot start until both complete (fan-in barrier).
+- Narrative Agent runs in parallel with Slide Content Agent. It is purely advisory with no flow control.
 
 **2. Conditional Branching**
-- Resource Agent reads `state["resource_types_needed"]` (typed `list[str]`, written by Strategy Phase 2 node) to determine which resource types to retrieve
-- When `resource_types_needed = ["kol", "media"]` → Resource Agent queries `resource_kol` and `resource_media` namespaces in parallel
-- When `resource_types_needed = []` → Resource Agent skips entirely (zero latency, zero LLM cost)
-- Deck Orchestrator uses three-tier template lookup: if project has a saved structure → use it; else if client has a default → use it; else generate via LLM
+- Resource Agent reads `state["resource_types_needed"]` (typed `list[str]`, written by Strategy Phase 2) to determine which resource types to retrieve
+- When `resource_types_needed = ["kol", "media"]`, the Resource Agent queries `resource_kol` and `resource_media` namespaces in parallel
+- When `resource_types_needed = []`, the Resource Agent skips entirely (zero latency, zero LLM cost)
+- Deck Orchestrator uses three-tier template lookup: project-saved structure > client default > LLM generation
 
 **3. Stateful HITL Pause/Resume**
-- Pipeline state is checkpointed to **Redis** before every node and at every HITL pause
+- Pipeline state is checkpointed to Redis before every node and at every HITL pause
 - On HITL pause, the executor publishes a WebSocket event and blocks on Redis pub/sub (`wait_for_resume`)
-- Frontend receives the event, renders the confirmation UI, user responds → Redis publish → executor unblocks
-- If the user takes 3 hours to respond, the state survives (24h TTL)
-- The pipeline is a **Celery task** — the WebSocket server and the executor are different processes communicating via Redis
+- Frontend receives the event, renders the confirmation UI. When the user responds, a Redis publish unblocks the executor.
+- State survives up to 24 hours. Users can take hours to respond without losing progress.
+- The pipeline is a Celery task. The WebSocket server and the executor are separate processes communicating via Redis.
 
 **4. Feedback-Driven Partial Rerun (Non-Linear Control Flow)**
 
@@ -129,14 +129,14 @@ When client feedback triggers a rerun:
 - Executor skips all nodes before `start_from` in the `node_sequence`
 - Upstream state (brief, research, etc.) is preserved from Redis
 - Only downstream nodes re-execute
-- **Rejected directions** from feedback are injected as constraints into Strategy Phase 2's prompt, preventing the system from repeating mistakes
-- **Approved directions** are embedded into the brand_spec Pinecone namespace, improving future runs for this client
+- Rejected directions from feedback are injected as constraints into Strategy Phase 2's prompt. This prevents the system from repeating mistakes.
+- Approved directions are embedded into the brand_spec Pinecone namespace, improving future runs for this client.
 
-This creates a **non-linear DAG** where the pipeline can jump back to any node while preserving partial results — not just a linear retry.
+This creates a non-linear DAG where the pipeline can jump back to any node while preserving partial results, not just a linear retry.
 
 **5. Inter-Agent Communication: Tool-Use Structured Output + Typed State**
 
-Agents produce structured output via **Anthropic tool_use** (forced function calling), not prompt-based JSON extraction. Each agent's output is defined as a Pydantic schema and enforced at the LLM call level (~99% format compliance vs ~90% for prompt-instructed JSON).
+Agents produce structured output via Anthropic tool_use (forced function calling), not prompt-based JSON extraction. Each agent's output is defined as a Pydantic schema and enforced at the LLM call level. This achieves ~99% format compliance compared to ~90% for prompt-instructed JSON.
 
 ```python
 # Each agent has a Pydantic schema (backend/core/agents/schemas.py)
@@ -152,7 +152,7 @@ class StrategyPhase2Result(BaseModel):
 result = await invoke_llm_structured(messages, output_schema=StrategyPhase2Result)
 ```
 
-Pipeline nodes write **specific typed fields** to LangGraph state. Downstream agents read only the fields they need — no `json.dumps(full_upstream_dict)` passing:
+Pipeline nodes write specific typed fields to LangGraph state. Downstream agents read only the fields they need. No `json.dumps(full_upstream_dict)` passing:
 
 ```
 State after Strategy Phase 2:
@@ -162,10 +162,10 @@ State after Strategy Phase 2:
   state["kpis"] = [...]              ← Deck Orchestrator reads this
 ```
 
-- Resource Agent receives `big_idea`, `channels`, `resource_types_needed` as explicit parameters — zero re-detection logic
-- Deck Orchestrator receives `big_idea`, `channels`, `kpis` — not a full strategy blob
-- Slide Content Agent receives `big_idea` + `brand_direction` — only what it needs for copywriting
-- Brand Check receives strategy text for semantic comparison against brand_spec RAG
+- Resource Agent receives `big_idea`, `channels`, `resource_types_needed` as explicit parameters. Zero re-detection logic.
+- Deck Orchestrator receives `big_idea`, `channels`, `kpis`. Not a full strategy blob.
+- Slide Content Agent receives `big_idea` + `brand_direction`. Only what it needs for copywriting.
+- Brand Check receives strategy text for semantic comparison against brand_spec RAG.
 
 This eliminates: (1) fragile keyword-matching fallbacks, (2) JSON parse failures from malformed LLM output, (3) information over-sharing between agents.
 
@@ -173,25 +173,25 @@ This eliminates: (1) fragile keyword-matching fallbacks, (2) JSON parse failures
 
 Every pipeline completion (initial or rerun) triggers an automatic version save:
 - Full state snapshot stored in MongoDB `proposal_versions` collection
-- Versions are immutable — rollback creates a **new** version from an old snapshot
-- Diff API compares any two versions field-by-field
-- Frontend shows version timeline with trigger labels (Initial / Rerun / Rollback)
+- Versions are immutable. Rollback creates a new version from an old snapshot.
+- Diff API compares any two versions field-by-field.
+- Frontend shows version timeline with trigger labels (Initial / Rerun / Rollback).
 
 ### Agent Capabilities
 
 | Agent | Inputs | Outputs | Key Behaviors |
 |-------|--------|---------|---------------|
 | **Brief Analyzer** | Raw text brief | `structured_brief{}` | Extracts fields (client, theme, audience, channels, budget, timeline, objective). Detects missing fields → generates clarification questions. |
-| **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily → DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN → Chanmama/Feigua, Global → CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
+| **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily > DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN uses Chanmama/Feigua, Global uses CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
 | **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
 | **Strategy P2** | `research_result` + `strategy_insight` + rejected directions | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. |
-| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` | `ResourceResult` (Pydantic) | Reads typed fields directly from state — no re-detection. **Hybrid retrieval**: Pinecone metadata filter (status=active, platform from channels) + vector similarity in one query. Multi-type parallel retrieval across namespaces. Conditional skip when empty. **Post-validation**: verifies every LLM recommendation exists in MongoDB; filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). |
-| **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project → client → LLM generation). Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
+| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` | `ResourceResult` (Pydantic) | Reads typed fields directly from state. No re-detection. Hybrid retrieval: Pinecone metadata filter (status=active, platform from channels) + vector similarity in one query. Multi-type parallel retrieval across namespaces. Conditional skip when empty. Post-validation: verifies every LLM recommendation exists in MongoDB, filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). |
+| **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project > client > LLM generation). Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
 | **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
 
 ### Human-in-the-Loop (HITL)
 
-Five pause points. Each one: executor checkpoints state → publishes WebSocket event → blocks on Redis pub/sub → user responds → executor resumes.
+Five pause points. At each one the executor checkpoints state, publishes a WebSocket event, blocks on Redis pub/sub, and resumes when the user responds.
 
 | Node | What the User Sees | What They Can Do | What Happens Next |
 |------|-------------------|------------------|-------------------|
@@ -203,7 +203,7 @@ Five pause points. Each one: executor checkpoints state → publishes WebSocket 
 
 ### Client Feedback Loop (Learning System)
 
-Not just a one-shot rerun — the system **learns** from client feedback:
+Not just a one-shot rerun. The system learns from client feedback:
 
 ```
 Feedback submitted
@@ -253,20 +253,20 @@ Path 2: Resource Excel import
 
 ```
 Agent constructs query + metadata filter
-  → BGE-M3 embeds query
-  → Pinecone: apply metadata filter FIRST (status, platform, type, followers_count)
+  > BGE-M3 embeds query
+  > Pinecone: apply metadata filter FIRST (status, platform, type, followers_count)
     THEN cosine similarity on filtered subset
-  → score threshold (0.3–0.5) → return top_k text chunks as context
+  > score threshold (0.3-0.5) > return top_k text chunks as context
 
 Resource Agent example:
-  query: "新品上市 小红书 抖音 kol"
+  query: "new product launch xiaohongshu douyin kol"
   filter: {"status": {"$eq": "active"}, "platform": {"$in": ["xiaohongshu", "douyin"]}}
-  → only active KOLs on matching platforms enter similarity ranking
+  > only active KOLs on matching platforms enter similarity ranking
 ```
 
-- **Visual Reference Processing**: PPTX/PDF → page-level PNG rendering (LibreOffice headless) → Claude Vision style extraction (colors, layout, typography, density) → text description → BGE-M3 embedding → RAG-retrievable visual identity
-- **Semantic chunking**: token-based splitting on paragraph/sentence boundaries, language-agnostic
-- **BGE-M3 embedding**: self-hosted, multilingual (Chinese + English), zero API cost, cross-lingual retrieval (Chinese query matches English documents and vice versa)
+- **Visual Reference Processing**: PPTX/PDF rendered to page-level PNGs (LibreOffice headless). Claude Vision extracts style attributes (colors, layout, typography, density). Output converted to text description, embedded via BGE-M3, and stored for RAG retrieval.
+- **Semantic chunking**: token-based splitting on paragraph/sentence boundaries. Language-agnostic.
+- **BGE-M3 embedding**: self-hosted, multilingual (Chinese + English), zero API cost. Cross-lingual retrieval works bidirectionally between Chinese and English.
 
 ### Multilingual Support
 
@@ -297,19 +297,69 @@ Typical scenario: Chinese brief → Chinese strategy (internal HITL review)
 | Embedding | BGE-M3 (self-hosted) | Best-in-class for mixed CN/EN marketing terminology retrieval; open-source, zero API cost; outputs dense + sparse vectors simultaneously |
 | LLM | Claude (Anthropic) | Strong bilingual (CN+EN) capability; reliable JSON structured output; Vision support for competitor screenshot analysis |
 | Language detection | langdetect | Lightweight, pure Python, sufficient accuracy for paragraph-level text |
-| Prompt templates | Dual CN/EN per agent | Same JSON schema for both languages — only instruction language differs, downstream parsing unaffected |
+| Prompt templates | Dual CN/EN per agent | Same JSON schema for both languages. Only instruction language differs. Downstream parsing unaffected. |
 
 **Implementation details:**
 
-- Mixed-language briefs (Chinese text with English brand names, channel names, KPI terms) are handled naturally — `detect_language` picks the dominant language for prompt selection, the LLM understands mixed input regardless
-- Locale-aware data sources: CN briefs trigger Chanmama (Douyin) + Feigua (Xiaohongshu); EN briefs trigger CreatorIQ (global)
-- BGE-M3 natively handles cross-lingual embeddings — Chinese and English documents in the same Pinecone namespace are retrievable by queries in either language
-- Semantic chunking splits on token count + punctuation boundaries, independent of language-specific tokenizers
+- Mixed-language briefs (Chinese text with English brand names, channel names, KPI terms) are handled naturally. `detect_language` picks the dominant language for prompt selection. The LLM understands mixed input regardless.
+- Locale-aware data sources: CN briefs trigger Chanmama (Douyin) + Feigua (Xiaohongshu). EN briefs trigger CreatorIQ (global).
+- BGE-M3 natively handles cross-lingual embeddings. Chinese and English documents in the same Pinecone namespace are retrievable by queries in either language.
+- Semantic chunking splits on token count + punctuation boundaries, independent of language-specific tokenizers.
+
+### Resource Matching: Strategy → Profile Similarity
+
+The Resource Agent connects LLM-generated strategy fields to human-curated resource profiles via embedding cosine similarity. The two sides are independently produced and matched at retrieval time:
+
+**Strategy side (LLM-generated, per pipeline run):**
+
+| Field | Generated by | Input | Nature |
+|-------|-------------|-------|--------|
+| `category` | Brief Analyzer | User's natural-language brief | Inferred classification (e.g. "beauty new product launch", "brand refresh") |
+| `audience_insight` | Strategy P1 | brief + brand_spec RAG | Inferred audience profile from brand context |
+| `content_tone` | Strategy P2 | P1 insight + research + brief | Inferred communication tone from strategy direction |
+| `big_idea` | Strategy P2 | Same as above | Core creative concept |
+| `channels[]` | Strategy P2 | Same as above | Platform selection (used for metadata filter, not embedding) |
+
+These are concatenated into a semantic query: `big_idea + content_tone + audience_insight + category`
+
+**Resource side (human-curated + system-accumulated, stored in Pinecone):**
+
+| Field | Source | Nature |
+|-------|--------|--------|
+| `name`, `type`, `platform`, `tags`, `pricing` | Excel import / manual input | User-provided structured data |
+| `categories`, `content_style`, `audience_tags`, `past_cpe` | Excel import / manual input / progressive accumulation | User seeds initial values. System appends categories from completed projects. |
+| `followers`, `followers_count` | Excel import / manual input | User-provided. `parse_follower_count` normalizes formats like "5M", "12.5k", "500000" into integers. |
+| `collaboration_history` | Archive pipeline (LLM extraction from recap reports) | System-generated from uploaded project reports |
+| `last_verified_at`, `status` | System + manual API refresh | Freshness tracking |
+
+These fields are rendered into an embedding text: `"Name: X | Type: Y | Categories: A, B | Content Style: Z | Audience: ..."` and stored as vectors in Pinecone.
+
+**Matching mechanism:**
+
+```
+Strategy LLM output                    Resource profile (human-curated)
+─────────────────                      ────────────────────────────────
+"youthful brand refresh,               "Name: Alice Wang | Categories: beauty, fashion |
+ energetic, Gen-Z female,               Content Style: fresh natural | Audience: Gen-Z, female"
+ beauty"
+        │                                           │
+        ▼                                           ▼
+   BGE-M3 embed                                BGE-M3 embed
+        │                                           │
+        └──────── cosine similarity ────────────────┘
+                         0.82 ✓
+```
+
+Key design choices:
+- Semantic fields (categories, content_style, audience_tags) use embedding similarity. "cosmetics" matches "beauty" via vector proximity.
+- Discrete fields (status, platform) use Pinecone metadata filter for exact match. Pre-filters before similarity ranking.
+- Progressive enrichment: each completed project adds its category to matched resources via `$addToSet`. Improves future matching accuracy without manual curation.
+- Embedding refresh: any write (archive extraction, accumulation, manual update) triggers re-embed + Pinecone upsert to keep vectors consistent with MongoDB state.
 
 ### Stability & Guardrails
 
 - **Request Budget**: max 30 LLM calls, 10 search calls, 300s timeout per pipeline run
-- **Fallback Chains**: Tavily → DuckDuckGo → internal-only; each external dependency has deterministic fallback
+- **Fallback Chains**: Tavily > DuckDuckGo > internal-only. Each external dependency has a deterministic fallback.
 - **Semantic Cache**: Redis-backed, 30-day TTL, keyed by `client_id:competitor:date_bucket`
 - **Per-stage metrics**: timing, token usage, success/failure tracked in MongoDB `stage_metrics` collection
 
@@ -320,18 +370,18 @@ Typical scenario: Chinese brief → Chinese strategy (internal HITL review)
 LLMs can hallucinate plausible-sounding resource names. The Resource Agent applies a post-validation layer:
 
 ```
-LLM recommends: ["李佳琦", "骆王宇", "FakeKOL123"]
+LLM recommends: ["Alice Wang", "Bob Chen", "FakeKOL123"]
                               │
                               ▼
 Post-validation (MongoDB lookup per name, case-insensitive):
-  ├── "李佳琦"      → found, status=active     ✓ keep
-  ├── "骆王宇"      → found, status=inactive   ✗ remove → add to missing_resources[] (inactive)
-  └── "FakeKOL123"  → not found                ✗ remove → add to missing_resources[] (hallucinated)
+  Alice Wang    > found, status=active     ✓ keep
+  Bob Chen      > found, status=inactive   ✗ remove, add to missing_resources[] (inactive)
+  FakeKOL123   > not found                ✗ remove, add to missing_resources[] (hallucinated)
 ```
 
-- Only resources that **exist in the client's database and are active** pass through to the final recommendation
-- Prompt-level guardrail: system prompt explicitly instructs "only recommend from provided database results"
-- Schema-level guardrail: tool_use structured output forces the LLM to fill typed fields, reducing free-form hallucination
+- Only resources that exist in the client's database and are active pass through to the final recommendation.
+- Prompt-level guardrail: system prompt explicitly instructs "only recommend from provided database results".
+- Schema-level guardrail: tool_use structured output forces the LLM to fill typed fields, reducing free-form hallucination.
 
 **Resource Freshness Tracking**
 
@@ -340,13 +390,13 @@ Every resource record carries `last_verified_at` and `status` (active / inactive
 - Import sets `last_verified_at = now` and `status = active`
 - API responses include freshness labels: "recent" / "verified N days ago" / "data may be outdated (M months)"
 - Resources older than 6 months are flagged `is_stale = true` in API responses
-- Pricing shown as "reference price — confirm with resource before committing"
+- Pricing shown as "reference price, confirm with resource before committing"
 - `PATCH /resources/{id}/verify` endpoint for manual refresh
 - `PATCH /resources/{id}/status` endpoint for availability updates
 
 **File Processing Integrity**
 
-File upload uses streaming write (64KB chunks) to persistent disk storage — never loads entire file into API process memory:
+File upload uses streaming write (64KB chunks) to persistent disk storage. It never loads the entire file into API process memory:
 
 ```
 Upload (streaming) → /data/uploads/{client_id}/{uuid}.ext (persistent)
@@ -355,10 +405,10 @@ Upload (streaming) → /data/uploads/{client_id}/{uuid}.ext (persistent)
                    Read from disk → parse → chunk → embed → Pinecone
 ```
 
-- API memory usage bounded regardless of file size (up to 50MB limit)
-- Files persist across worker crashes — Celery retry reads from disk
+- API memory usage is bounded regardless of file size (up to 50MB limit)
+- Files persist across worker crashes. Celery retry reads from disk.
 - `storage_path` stored in MongoDB FileRecord for future re-processing or download
-- Processing is idempotent: re-running the Celery task with the same path overwrites existing vectors
+- Processing is idempotent. Re-running the Celery task with the same path overwrites existing vectors.
 
 ### Performance & Cost Optimization
 
@@ -366,7 +416,7 @@ Three complementary strategies minimize redundant work across the pipeline:
 
 **1. Incremental State Updates (data minimization per LLM call)**
 
-Each pipeline node writes only its own output to LangGraph state; downstream nodes read only the specific fields they need. No node receives the full upstream blob.
+Each pipeline node writes only its own output to LangGraph state. Downstream nodes read only the specific fields they need. No node receives the full upstream blob.
 
 ```
 Strategy Phase 2 writes:  big_idea, content_tone, channels[], resource_types[]
@@ -375,7 +425,7 @@ Deck Orchestrator reads:  big_idea, channels[], kpis[]
 Slide Content reads:      big_idea, brand_direction
 ```
 
-This eliminates information over-sharing: Resource Agent never sees deck structure, Slide Content never sees research details. Each LLM call receives only task-relevant context, reducing prompt size and improving output focus.
+This eliminates information over-sharing. Resource Agent never sees deck structure. Slide Content never sees research details. Each LLM call receives only task-relevant context, reducing prompt size and improving output focus.
 
 **2. State Caching (avoid re-executing expensive operations)**
 
@@ -387,7 +437,7 @@ Three layers of caching prevent repeated computation:
 | Semantic research cache | Web search + social data results | 30 days | `force_refresh=True` when user clicks "refresh research" |
 | Rerun state preservation | Upstream node outputs during partial rerun | Session | `start_from="strategy_phase2"` skips earlier nodes, preserves their results |
 
-Concrete example — user reruns strategy after feedback:
+Example: user reruns strategy after feedback:
 ```
 start_from="strategy_phase2"
   ├── brief_analyzer: SKIPPED (result in state)
@@ -397,13 +447,13 @@ start_from="strategy_phase2"
        └── downstream: re-executed with new strategy
 ```
 
-**3. Prompt Caching & Fork-Mode Parallelism (planned — Phase 3.6)**
+**3. Prompt Caching & Fork-Mode Parallelism (planned, Phase 3.6)**
 
 Two complementary approaches to token cost reduction:
 
-*Rerun caching:* Brand specs, system prompts, and RAG context are identical between original run and rerun. Marking these with `cache_control: ephemeral` lets Anthropic cache the prefix — ~90% cost reduction on stable portion for Strategy P2, Brand Check, and Slide Content reruns.
+*Rerun caching:* Brand specs, system prompts, and RAG context are identical between original run and rerun. Marking these with `cache_control: ephemeral` lets Anthropic cache the prefix. This yields ~90% cost reduction on the stable portion for Strategy P2, Brand Check, and Slide Content reruns.
 
-*Fork-mode slide generation:* Currently slides are generated sequentially. All 15 calls share an identical prefix (~5000 tokens: system prompt + big_idea + brand_direction + brand RAG). Only the per-slide instruction differs (~200 tokens). Parallelizing with shared-prefix caching:
+*Fork-mode slide generation:* All 15 slide generation calls share an identical prefix (~5000 tokens: system prompt + big_idea + brand_direction + brand RAG). Only the per-slide instruction differs (~200 tokens). Parallelizing with shared-prefix caching:
 
 ```
 Current:  15 slides × 5000 tokens input = 75,000 tokens
@@ -411,7 +461,7 @@ With Fork: 5000 (first, full price) + 14 × 200 (delta, cache-read price) ≈ 7,
 Savings:  ~90% on slide generation phase
 ```
 
-Requirement: messages prefix must be byte-identical across parallel calls for cache hit. Architecture already supports this — `big_idea`, `brand_direction`, and brand RAG results are frozen in state before slide generation begins.
+Requirement: messages prefix must be byte-identical across parallel calls for cache hit. The architecture already supports this because `big_idea`, `brand_direction`, and brand RAG results are frozen in state before slide generation begins.
 
 **Architectural separation that enables all three:**
 
@@ -420,7 +470,7 @@ LangGraph (flow control)  →  decides WHICH nodes run and in WHAT order
 Typed state fields        →  decides WHAT data each node receives
 Redis/Pinecone caching    →  decides WHETHER to re-compute or reuse
 
-LLM is never responsible for flow decisions — only for the task within its node.
+LLM is never responsible for flow decisions. It only handles the task within its node.
 ```
 
 ---
@@ -490,19 +540,19 @@ LLM is never responsible for flow decisions — only for the task within its nod
 
 | Decision | Rationale |
 |----------|-----------|
-| Tool-use structured output + typed LangGraph state | Agents produce Pydantic-validated output via `with_structured_output()` (tool_use); pipeline nodes write specific typed fields to state; downstream agents receive only the fields they need — no `json.dumps` blob passing or keyword-matching fallbacks |
-| Post-validation against ground truth DB | LLMs hallucinate plausible names; every resource recommendation is verified against MongoDB before reaching the user — eliminates phantom resources |
-| Streaming file upload to disk | Never buffer entire file in API memory; Celery receives a path, not content — bounded memory, crash-resilient, supports retry without re-upload |
-| Research ‖ Strategy Phase 1 parallelism | LangGraph fan-out/fan-in saves ~8s per run; Phase 2 waits for both to complete |
-| BGE-M3 over OpenAI text-embedding-3-small | Superior multilingual (CN+EN) marketing terminology; open-source, self-hosted, zero per-call cost |
-| Narrative Agent as non-blocking advisor | No flow control or retry loops — suggestions displayed alongside slides in Gallery Review |
-| Namespace-isolated Pinecone | Client/project/resource data never leaks across tenants; enables per-client brand learning |
-| Feedback embeds to brand namespace | System learns approved directions over time, improving strategy quality per-client |
-| Token-based semantic chunking | Language-agnostic paragraph/sentence boundary splitting; handles mixed CN/EN documents |
-| Soft-delete for files | Running pipelines unaffected when teammates modify shared Brand Library |
-| Visual style → text embedding | Claude Vision extracts style JSON → text description → BGE-M3 embedding; enables RAG retrieval of visual identity |
-| Pinecone hybrid retrieval (metadata filter + vector) | Pure vector search can't do exact/numeric constraints; metadata filter handles structured criteria (status, platform, followers) in one Pinecone call, then vector similarity ranks the filtered set — no separate DB query for filtering |
-| Resource freshness tracking | `last_verified_at` + `status` fields prevent recommending outdated or unavailable resources; API responses carry freshness labels so users know data age |
+| Tool-use structured output + typed LangGraph state | Agents produce Pydantic-validated output via `with_structured_output()` (tool_use). Pipeline nodes write specific typed fields to state. Downstream agents receive only the fields they need. No `json.dumps` blob passing or keyword-matching fallbacks. |
+| Post-validation against ground truth DB | LLMs hallucinate plausible names. Every resource recommendation is verified against MongoDB before reaching the user. Eliminates phantom resources. |
+| Streaming file upload to disk | Never buffer entire file in API memory. Celery receives a path, not content. Bounded memory, crash-resilient, supports retry without re-upload. |
+| Research + Strategy Phase 1 parallelism | LangGraph fan-out/fan-in saves ~8s per run. Phase 2 waits for both to complete. |
+| BGE-M3 over OpenAI text-embedding-3-small | Superior multilingual (CN+EN) marketing terminology. Open-source, self-hosted, zero per-call cost. |
+| Narrative Agent as non-blocking advisor | No flow control or retry loops. Suggestions displayed alongside slides in Gallery Review. |
+| Namespace-isolated Pinecone | Client/project/resource data never leaks across tenants. Enables per-client brand learning. |
+| Feedback embeds to brand namespace | System learns approved directions over time, improving strategy quality per-client. |
+| Token-based semantic chunking | Language-agnostic paragraph/sentence boundary splitting. Handles mixed CN/EN documents. |
+| Soft-delete for files | Running pipelines unaffected when teammates modify shared Brand Library. |
+| Visual style to text embedding | Claude Vision extracts style JSON, converts to text description, embeds via BGE-M3. Enables RAG retrieval of visual identity. |
+| Pinecone hybrid retrieval (metadata filter + vector) | Pure vector search cannot do exact/numeric constraints. Metadata filter handles structured criteria (status, platform, followers) in one Pinecone call, then vector similarity ranks the filtered set. No separate DB query for filtering. |
+| Resource freshness tracking | `last_verified_at` + `status` fields prevent recommending outdated or unavailable resources. API responses carry freshness labels so users know data age. |
 
 ---
 
@@ -518,9 +568,9 @@ Organization (Agency)
                  └── Proposals (pipeline runs, versions, feedback)
 ```
 
-- Organization context derived from JWT (no org-switching UI needed)
-- Role-based permissions: account (own projects), lead_account (team projects), admin (org-wide)
-- Brand Library shared at client level; all accounts in the org contribute and benefit
+- Organization context derived from JWT. No org-switching UI needed.
+- Role-based permissions: account (own projects), lead_account (team projects), admin (org-wide).
+- Brand Library shared at client level. All accounts in the org contribute and benefit.
 
 ---
 
@@ -630,11 +680,11 @@ cd backend && pytest tests/ -v
 
 ## Current Status
 
-**Phase 1 (Core Pipeline)** — Complete. End-to-end flow from brief to PPT download with all 5 HITL checkpoints.
+**Phase 1 (Core Pipeline)**: Complete. End-to-end flow from brief to PPT download with all 5 HITL checkpoints.
 
-**Phase 2 (Research & Resource Enhancement)** — Complete. Multimodal research, multi-type resources, client feedback loop, visual reference processing.
+**Phase 2 (Research & Resource Enhancement)**: Complete. Multimodal research, multi-type resources, client feedback loop, visual reference processing.
 
-**Phase 3 (Production Hardening)** — Mostly complete. Version management, analytics dashboard, Terraform deployment, health checks, integration/load tests done. Remaining: Pinecone/MongoDB backup strategy, PPT template expansion, PDF export.
+**Phase 3 (Production Hardening)**: Mostly complete. Version management, analytics dashboard, Terraform deployment, health checks, integration/load tests done. Remaining: Pinecone/MongoDB backup strategy, PPT template expansion, PDF export.
 
 See [ROADMAP.md](./ROADMAP.md) for detailed progress.
 
@@ -642,10 +692,10 @@ See [ROADMAP.md](./ROADMAP.md) for detailed progress.
 
 ## Documentation
 
-- [PRD](./PRD.md) — Product requirements, user journey, feature specs
-- [Architecture](./Architecture.md) — Technical design, data models, API specs
-- [Roadmap](./ROADMAP.md) — Phased development plan
-- [Dev Notes](./docs/dev-notes/) — Development issues and solutions
+- [PRD](./PRD.md): Product requirements, user journey, feature specs
+- [Architecture](./Architecture.md): Technical design, data models, API specs
+- [Roadmap](./ROADMAP.md): Phased development plan
+- [Dev Notes](./docs/dev-notes/): Development issues and solutions
 
 ## License
 

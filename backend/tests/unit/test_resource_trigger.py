@@ -1,18 +1,20 @@
 """Tests for resource agent contract — validates that typed strategy fields flow correctly."""
 from backend.core.agents.schemas import StrategyPhase2Result, Channel
 
-# Inlined from backend.core.agents.resource to avoid langchain import chain
-CHANNEL_TO_PLATFORM = {
-    "抖音": "douyin", "tiktok": "douyin", "douyin": "douyin",
-    "小红书": "xiaohongshu", "red": "xiaohongshu", "xiaohongshu": "xiaohongshu",
-    "微博": "weibo", "weibo": "weibo",
-    "微信": "wechat", "wechat": "wechat",
-    "b站": "bilibili", "bilibili": "bilibili",
-    "快手": "kuaishou", "kuaishou": "kuaishou",
-    "instagram": "instagram", "youtube": "youtube",
-    "twitter": "twitter", "x": "twitter",
-    "linkedin": "linkedin", "facebook": "facebook",
-}
+# Inlined from backend.core.models.resource and backend.core.agents.resource
+from backend.core.models.resource import PLATFORM_ALIASES
+
+
+def _resolve_channel_platform(channel_name: str) -> str | None:
+    if not channel_name:
+        return None
+    key = channel_name.strip().lower()
+    if key in PLATFORM_ALIASES:
+        return PLATFORM_ALIASES[key]
+    canonical_values = set(PLATFORM_ALIASES.values())
+    if key in canonical_values:
+        return key
+    return None
 
 
 def _build_metadata_filter(resource_type: str, channels: list[dict]) -> dict:
@@ -21,8 +23,9 @@ def _build_metadata_filter(resource_type: str, channels: list[dict]) -> dict:
         platforms = set()
         for ch in channels:
             name = (ch.get("name", "") if isinstance(ch, dict) else str(ch)).lower()
-            if name in CHANNEL_TO_PLATFORM:
-                platforms.add(CHANNEL_TO_PLATFORM[name])
+            resolved = _resolve_channel_platform(name)
+            if resolved:
+                platforms.add(resolved)
         if platforms:
             filters["platform"] = {"$in": sorted(platforms)}
     return filters

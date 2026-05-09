@@ -5,10 +5,10 @@ from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
 from backend.core.database.connection import get_database
-from backend.core.models.resource import FRESHNESS_THRESHOLD_DAYS, ResourceStatus, parse_follower_count, resource_namespace
+from backend.core.models.resource import FRESHNESS_THRESHOLD_DAYS, ResourceStatus, normalize_platform, parse_follower_count, resource_namespace
 from backend.core.rag.embedder import embed_texts
 from backend.core.rag.indexer import upsert_vectors
-from backend.core.rag.resource_import import import_resources as do_import
+from backend.core.rag.resource_import import import_resources as do_import, refresh_resource_embedding
 
 router = APIRouter()
 
@@ -126,7 +126,7 @@ async def create_resource(
     extra_meta = {
         "name": doc.get("name", ""),
         "type": doc.get("type", "kol"),
-        "platform": doc.get("platform", ""),
+        "platform": normalize_platform(doc.get("platform", "")),
         "status": doc.get("status", "active"),
         "followers_count": doc.get("followers_count") or 0,
         "tags": ", ".join(doc.get("tags", [])),
@@ -171,6 +171,51 @@ async def update_resource_status(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Resource not found")
     return {"status": "updated", "new_status": new_status}
+
+
+class UpdateResourceRequest(BaseModel):
+    name: str | None = None
+    platform: str | None = None
+    tags: list[str] | None = None
+    categories: list[str] | None = None
+    content_style: str | None = None
+    audience_tags: list[str] | None = None
+    past_cpe: str | None = None
+    followers: str | None = None
+    pricing: dict | None = None
+    metadata: dict | None = None
+    notes: str | None = None
+
+
+@router.patch("/{resource_id}")
+async def update_resource(
+    resource_id: str,
+    request: UpdateResourceRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Update resource fields and refresh Pinecone embedding."""
+    from bson import ObjectId
+    db = await get_database()
+    collection = db["resources"]
+
+    doc = await collection.find_one({"_id": ObjectId(resource_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+    updates = {k: v for k, v in request.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    if "followers" in updates:
+        updates["followers_count"] = parse_follower_count(updates["followers"])
+
+    await collection.update_one({"_id": ObjectId(resource_id)}, {"$set": updates})
+
+    updated_doc = await collection.find_one({"_id": ObjectId(resource_id)})
+    client_id = updated_doc["client_id"]
+    await refresh_resource_embedding(updated_doc, client_id)
+
+    return {"status": "updated", "id": resource_id}
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)

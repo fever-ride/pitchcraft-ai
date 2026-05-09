@@ -112,6 +112,31 @@ def resource_namespace(resource_type: str, client_id: str) -> str:
     return f"{prefix}_{client_id}"
 
 
+PLATFORM_ALIASES = {
+    "小红书": "xiaohongshu",
+    "red": "xiaohongshu",
+    "抖音": "douyin",
+    "tiktok": "douyin",
+    "微博": "weibo",
+    "微信": "wechat",
+    "b站": "bilibili",
+    "快手": "kuaishou",
+    "instagram": "instagram",
+    "youtube": "youtube",
+    "twitter": "twitter",
+    "x": "twitter",
+    "linkedin": "linkedin",
+    "facebook": "facebook",
+}
+
+
+def normalize_platform(raw: str) -> str:
+    """Normalize platform name to canonical form for consistent Pinecone metadata filtering."""
+    if not raw:
+        return ""
+    return PLATFORM_ALIASES.get(raw.strip().lower(), raw.strip().lower())
+
+
 def parse_follower_count(raw: str | None) -> int | None:
     """Parse follower string like '500万', '12.5k', '3000' into integer."""
     if not raw:

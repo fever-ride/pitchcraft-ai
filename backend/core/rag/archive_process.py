@@ -9,6 +9,7 @@ from backend.core.rag.chunker import semantic_chunk
 from backend.core.rag.embedder import embed_texts
 from backend.core.rag.indexer import upsert_vectors
 from backend.core.rag.parser import parse_file
+from backend.core.rag.resource_import import refresh_resource_embedding
 from backend.core.tasks import celery_app
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,9 @@ async def _distribute_to_resources(extraction, client_id: str):
             {"_id": doc["_id"]},
             {"$push": {"collaboration_history": collab_record}},
         )
+
+        updated_doc = await collection.find_one({"_id": doc["_id"]})
+        await refresh_resource_embedding(updated_doc, client_id)
 
 
 async def _mark_status(archive_id: str, status: str, error: str = ""):

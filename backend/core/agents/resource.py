@@ -6,7 +6,7 @@ from backend.core.agents.schemas import ResourceResult
 from backend.core.database.connection import get_database
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import resolve_output_language
-from backend.core.models.resource import ResourceStatus, resource_namespace
+from backend.core.models.resource import PLATFORM_ALIASES, ResourceStatus, normalize_platform, resource_namespace
 from backend.core.rag.retriever import retrieve
 
 SYSTEM_PROMPT = {
@@ -14,28 +14,18 @@ SYSTEM_PROMPT = {
     "en": "You are a senior media planner. Based on the strategy direction and resource database results, recommend the most suitable resource mix. Only recommend resources that exist in the provided database results — do not invent names. Available types: KOL/KOC, Media, Vendor, Placement.",
 }
 
-CHANNEL_TO_PLATFORM = {
-    "抖音": "douyin",
-    "tiktok": "douyin",
-    "douyin": "douyin",
-    "小红书": "xiaohongshu",
-    "red": "xiaohongshu",
-    "xiaohongshu": "xiaohongshu",
-    "微博": "weibo",
-    "weibo": "weibo",
-    "微信": "wechat",
-    "wechat": "wechat",
-    "b站": "bilibili",
-    "bilibili": "bilibili",
-    "快手": "kuaishou",
-    "kuaishou": "kuaishou",
-    "instagram": "instagram",
-    "youtube": "youtube",
-    "twitter": "twitter",
-    "x": "twitter",
-    "linkedin": "linkedin",
-    "facebook": "facebook",
-}
+
+def _resolve_channel_platform(channel_name: str) -> str | None:
+    """Resolve a channel name to canonical platform. Returns None for non-platform channels (e.g. SEM, PR)."""
+    if not channel_name:
+        return None
+    key = channel_name.strip().lower()
+    if key in PLATFORM_ALIASES:
+        return PLATFORM_ALIASES[key]
+    canonical_values = set(PLATFORM_ALIASES.values())
+    if key in canonical_values:
+        return key
+    return None
 
 
 def _build_metadata_filter(
@@ -52,8 +42,9 @@ def _build_metadata_filter(
         platforms = set()
         for ch in channels:
             name = (ch.get("name", "") if isinstance(ch, dict) else str(ch)).lower()
-            if name in CHANNEL_TO_PLATFORM:
-                platforms.add(CHANNEL_TO_PLATFORM[name])
+            resolved = _resolve_channel_platform(name)
+            if resolved:
+                platforms.add(resolved)
         if platforms:
             filters["platform"] = {"$in": sorted(platforms)}
 

@@ -272,6 +272,7 @@ class PipelineExecutor:
             return
 
         try:
+            from backend.core.rag.resource_import import refresh_resource_embedding
             db = await get_database()
             collection = db["resources"]
 
@@ -286,5 +287,11 @@ class PipelineExecutor:
                     },
                     {"$addToSet": {"categories": category}},
                 )
+                updated_doc = await collection.find_one({
+                    "client_id": client_id,
+                    "name": {"$regex": f"^{name}$", "$options": "i"},
+                })
+                if updated_doc:
+                    await refresh_resource_embedding(updated_doc, client_id)
         except Exception as e:
             logger.warning(f"Resource accumulation failed: {e}")
