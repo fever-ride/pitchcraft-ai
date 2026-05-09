@@ -1,4 +1,4 @@
-# Phase 1 开发问题记录
+# 开发问题记录
 
 ## 1. 测试环境依赖链爆炸
 
@@ -80,3 +80,64 @@ def use_llm_call(self):
 | 前后端参数对接 | 写完一端后立即对照另一端代码 |
 | off-by-one 边界 | 先读实现再写测试，不要凭直觉 |
 | 模板/静态资源 | 用脚本生成 placeholder，git track 产物 |
+
+---
+
+## Phase 3 问题
+
+---
+
+## 7. Version 快照字段泄漏内部状态
+
+**问题**：Executor 完成后调用 `_save_version(state)` 保存版本快照，但 `state` 中包含 `request_budget`（RequestBudget 对象）、`rerun_from`、`brief_confirmed` 等运行时控制字段。如果直接 `json.dumps(state)` 存入 MongoDB，一来这些字段对用户无意义，二来 RequestBudget 不可 JSON 序列化。
+
+**解决**：`ProposalVersionRepository.save_version()` 中显式列出要保存的快照字段（structured_brief、research_result、strategy_result、deck_structure、slides、pptx_path、resource_result、narrative_suggestions），从 state 中只提取这 8 个。内部控制字段不进入快照。
+
+**教训**：pipeline state 既是"运行时状态"又是"产出物"的混合体。做持久化时必须区分哪些是产出、哪些是控制信号，不能无脑存全量。
+
+---
+
+## 8. Rollback 时 Redis state 与 MongoDB 版本不一致
+
+**问题**：Rollback endpoint 从 MongoDB 读旧版本快照写入 Redis，但 Redis 中的 state 还包含 `proposal_id`、`client_id`、`project_id` 等 identity 字段。如果只把 snapshot 覆盖进去而不保留这些字段，后续调用 `PipelineExecutor` 会丢失上下文。
+
+**解决**：Rollback 逻辑先 `load_state()` 读取当前 Redis state（保留 identity 和 budget 字段），然后 `current_state.update(snapshot)` 只覆盖产出字段。因为 snapshot 的 key 集合和 identity 字段不重叠，所以不会误覆盖。
+
+---
+
+## 9. Analytics 聚合查询中 stage_metrics 文档结构不统一
+
+**问题**：`stage_metrics` 集合中，不同 pipeline run 可能缺少某些 stage 字段（比如 Resource Agent 被 skip 时不会有 `resource_agent.duration_s`）。直接用 `$avg: "$resource_agent.duration_s"` 聚合时，缺失文档被 MongoDB 忽略，不会报错但 `count` 和 `avg` 的分母可能不对。
+
+**解决**：每个 stage 的聚合 pipeline 加了 `$match: {"{stage}.duration_s": {"$exists": True}}` 前置过滤，确保只对实际运行过该 stage 的文档做统计。同时返回 `trigger_count` 让前端展示"该 agent 实际触发了多少次"，而非默认所有 pipeline 都触发了。
+
+---
+
+## 10. Docker Compose healthcheck 依赖顺序问题
+
+**问题**：原来 `depends_on` 只保证容器启动顺序，不保证服务就绪。Backend 启动时立即尝试连接 MongoDB，但 MongoDB 容器可能还在初始化 WiredTiger。导致偶发 `ServerSelectionTimeoutError`。
+
+**解决**：
+1. MongoDB 和 Redis 加了 `healthcheck`（`mongosh --eval "db.adminCommand('ping')"` / `redis-cli ping`）
+2. Backend 的 `depends_on` 改为 `condition: service_healthy`
+3. Backend 自身加了 healthcheck（`curl -f http://localhost:8000/health`），确保 Nginx 和前端只在 backend 真正就绪后才路由流量
+
+---
+
+## 11. Token refresh 并发竞态
+
+**问题**：前端多个 API 请求同时收到 401 时，如果每个都独立调用 `/auth/refresh`，会造成多次 refresh（旧 refresh token 可能已失效，导致后续 refresh 请求全部 401）。
+
+**解决**：用 `isRefreshing` flag + `refreshQueue` 数组实现请求合并。第一个 401 触发 refresh，后续 401 请求进入队列等待。Refresh 完成后统一用新 token 重试队列中的所有请求。如果 refresh 失败，清空 token 并跳转 login 页。
+
+---
+
+## 通用经验（续）
+
+| 场景 | 做法 |
+|------|------|
+| 持久化混合 state | 显式声明快照字段白名单，不存控制信号 |
+| 多层状态源（Redis + MongoDB） | 更新时先读后合并，保护 identity 字段不被覆盖 |
+| 文档结构不统一的聚合 | 前置 `$match $exists` 过滤缺失字段 |
+| 容器间服务就绪依赖 | healthcheck + `condition: service_healthy` |
+| 前端并发 token refresh | 单次 refresh + 队列合并等待模式 |
