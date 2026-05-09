@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://redis:6379/1"
     celery_result_backend: str = "redis://redis:6379/2"
 
+    # File storage
+    file_storage_dir: str = "/data/uploads"
+
     class Config:
         env_file = ".env"
 

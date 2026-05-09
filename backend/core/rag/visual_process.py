@@ -27,13 +27,13 @@ THUMBNAIL_DIR = Path("/data/thumbnails")
 def process_visual_file_task(
     self,
     file_id: str,
-    file_bytes_hex: str,
+    storage_path: str,
     filename: str,
     client_id: str,
 ):
     """Celery task: render visual file, extract styles, embed, and index."""
     try:
-        asyncio.run(_process_visual_file(file_id, file_bytes_hex, filename, client_id))
+        asyncio.run(_process_visual_file(file_id, storage_path, filename, client_id))
     except Exception as exc:
         logger.error(f"Visual processing failed for {file_id}: {exc}")
         asyncio.run(_mark_failed(file_id, str(exc)))
@@ -42,11 +42,11 @@ def process_visual_file_task(
 
 async def _process_visual_file(
     file_id: str,
-    file_bytes_hex: str,
+    storage_path: str,
     filename: str,
     client_id: str,
 ):
-    file_bytes = bytes.fromhex(file_bytes_hex)
+    file_bytes = Path(storage_path).read_bytes()
     db = await get_database()
     repo = FileRepository(db)
 

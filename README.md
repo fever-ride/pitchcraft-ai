@@ -185,8 +185,8 @@ Every pipeline completion (initial or rerun) triggers an automatic version save:
 | **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily → DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN → Chanmama/Feigua, Global → CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
 | **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
 | **Strategy P2** | `research_result` + `strategy_insight` + rejected directions | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. |
-| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` | `ResourceResult` (Pydantic) | Reads typed fields directly from state — no re-detection. Multi-type parallel retrieval (KOL/KOC, media, vendor, placement). Conditional skip when `resource_types_needed` is empty. |
-| **Deck System** | `strategy_result`, `resource_result`, brand RAG | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup. Content Agent: per-slide generation with brand tone. Narrative Agent: non-blocking coherence check with page refs. |
+| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` | `ResourceResult` (Pydantic) | Reads typed fields directly from state — no re-detection. Multi-type parallel retrieval (KOL/KOC, media, vendor, placement). Conditional skip when empty. **Post-validation**: verifies every LLM recommendation exists in MongoDB; filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). |
+| **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project → client → LLM generation). Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
 | **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
 
 ### Human-in-the-Loop (HITL)
@@ -225,12 +225,40 @@ Over multiple proposals for the same client, the system accumulates brand knowle
 
 ### RAG & Knowledge System
 
-- **Brand Library** (per-client): brand specs, historical proposals, brand copy → Pinecone `brand_spec_{client_id}` and `brand_history_{client_id}`
-- **Project Library** (per-project): project briefs, competitor materials → Pinecone `project_{project_id}`
-- **Resource Library** (per-client): KOL, media, vendor, placement databases → type-specific Pinecone namespaces
-- **Visual Reference Processing**: PPTX/PDF → page-level PNG rendering (LibreOffice headless) → Claude Vision style extraction (colors, layout, typography, density) → text embedding for RAG retrieval
+**Namespace Architecture** (all isolated per tenant):
+
+| Namespace Pattern | Content | Written By | Read By |
+|-------------------|---------|-----------|---------|
+| `brand_spec_{client_id}` | Brand guidelines, tone specs, visual style | File upload + feedback approval | Strategy P1, Slide Content, Brand Check |
+| `brand_history_{client_id}` | Historical proposals, campaign copy | File upload | Research Agent |
+| `project_{project_id}` | Project briefs, competitor materials | File upload | Research Agent |
+| `resource_kol_{client_id}` | KOL/KOC profiles (from Excel import) | Resource import | Resource Agent |
+| `resource_media_{client_id}` | Media outlet profiles | Resource import | Resource Agent |
+| `resource_vendor_{client_id}` | Vendor profiles | Resource import | Resource Agent |
+| `resource_placement_{client_id}` | Ad placement inventory | Resource import | Resource Agent |
+
+**Ingestion Pipeline** (two paths):
+
+```
+Path 1: Document upload (PDF/PPTX/DOCX)
+  Stream to disk → Celery task → parse (text extraction) → semantic chunk
+  → BGE-M3 embed → Pinecone upsert (namespace by file_type + client_id)
+
+Path 2: Resource Excel import
+  Parse rows → MongoDB (structured record per row) → convert to searchable text
+  → BGE-M3 embed → Pinecone upsert (namespace by resource_type + client_id)
+```
+
+**Retrieval** (semantic similarity):
+
+```
+Agent constructs query string → BGE-M3 embeds query → Pinecone cosine similarity
+  → filter by score threshold (0.3–0.5) → return top_k text chunks as context
+```
+
+- **Visual Reference Processing**: PPTX/PDF → page-level PNG rendering (LibreOffice headless) → Claude Vision style extraction (colors, layout, typography, density) → text description → BGE-M3 embedding → RAG-retrievable visual identity
 - **Semantic chunking**: token-based splitting on paragraph/sentence boundaries, language-agnostic
-- **BGE-M3 embedding**: self-hosted, multilingual (Chinese + English), zero API cost
+- **BGE-M3 embedding**: self-hosted, multilingual (Chinese + English), zero API cost, cross-lingual retrieval (Chinese query matches English documents and vice versa)
 
 ### Multilingual Support
 
@@ -276,6 +304,53 @@ Typical scenario: Chinese brief → Chinese strategy (internal HITL review)
 - **Fallback Chains**: Tavily → DuckDuckGo → internal-only; each external dependency has deterministic fallback
 - **Semantic Cache**: Redis-backed, 30-day TTL, keyed by `client_id:competitor:date_bucket`
 - **Per-stage metrics**: timing, token usage, success/failure tracked in MongoDB `stage_metrics` collection
+
+### Data Integrity & Anti-Hallucination
+
+**Resource Recommendation Validation**
+
+LLMs can hallucinate plausible-sounding resource names. The Resource Agent applies a post-validation layer:
+
+```
+LLM recommends: ["李佳琦", "骆王宇", "FakeKOL123"]
+                              │
+                              ▼
+Post-validation (MongoDB lookup per name, case-insensitive):
+  ├── "李佳琦"      → found, status=active     ✓ keep
+  ├── "骆王宇"      → found, status=booked     ✓ keep + tag "currently booked"
+  └── "FakeKOL123"  → not found                ✗ remove → add to missing_resources[]
+```
+
+- Only resources that **exist in the client's database** pass through to the final recommendation
+- Prompt-level guardrail: system prompt explicitly instructs "only recommend from provided database results"
+- Schema-level guardrail: tool_use structured output forces the LLM to fill typed fields, reducing free-form hallucination
+
+**Resource Freshness Tracking**
+
+Every resource record carries `last_verified_at` and `status` (active / inactive / booked):
+
+- Import sets `last_verified_at = now` and `status = active`
+- API responses include freshness labels: "recent" / "verified N days ago" / "data may be outdated (M months)"
+- Resources older than 6 months are flagged `is_stale = true` in API responses
+- Pricing shown as "reference price — confirm with resource before committing"
+- `PATCH /resources/{id}/verify` endpoint for manual refresh
+- `PATCH /resources/{id}/status` endpoint for availability updates
+
+**File Processing Integrity**
+
+File upload uses streaming write (64KB chunks) to persistent disk storage — never loads entire file into API process memory:
+
+```
+Upload (streaming) → /data/uploads/{client_id}/{uuid}.ext (persistent)
+                         │
+                         ▼ Celery receives storage_path (not file content)
+                   Read from disk → parse → chunk → embed → Pinecone
+```
+
+- API memory usage bounded regardless of file size (up to 50MB limit)
+- Files persist across worker crashes — Celery retry reads from disk
+- `storage_path` stored in MongoDB FileRecord for future re-processing or download
+- Processing is idempotent: re-running the Celery task with the same path overwrites existing vectors
 
 ---
 
@@ -345,6 +420,8 @@ Typical scenario: Chinese brief → Chinese strategy (internal HITL review)
 | Decision | Rationale |
 |----------|-----------|
 | Tool-use structured output + typed LangGraph state | Agents produce Pydantic-validated output via `with_structured_output()` (tool_use); pipeline nodes write specific typed fields to state; downstream agents receive only the fields they need — no `json.dumps` blob passing or keyword-matching fallbacks |
+| Post-validation against ground truth DB | LLMs hallucinate plausible names; every resource recommendation is verified against MongoDB before reaching the user — eliminates phantom resources |
+| Streaming file upload to disk | Never buffer entire file in API memory; Celery receives a path, not content — bounded memory, crash-resilient, supports retry without re-upload |
 | Research ‖ Strategy Phase 1 parallelism | LangGraph fan-out/fan-in saves ~8s per run; Phase 2 waits for both to complete |
 | BGE-M3 over OpenAI text-embedding-3-small | Superior multilingual (CN+EN) marketing terminology; open-source, self-hosted, zero per-call cost |
 | Narrative Agent as non-blocking advisor | No flow control or retry loops — suggestions displayed alongside slides in Gallery Review |
@@ -353,6 +430,7 @@ Typical scenario: Chinese brief → Chinese strategy (internal HITL review)
 | Token-based semantic chunking | Language-agnostic paragraph/sentence boundary splitting; handles mixed CN/EN documents |
 | Soft-delete for files | Running pipelines unaffected when teammates modify shared Brand Library |
 | Visual style → text embedding | Claude Vision extracts style JSON → text description → BGE-M3 embedding; enables RAG retrieval of visual identity |
+| Resource freshness tracking | `last_verified_at` + `status` fields prevent recommending outdated or unavailable resources; API responses carry freshness labels so users know data age |
 
 ---
 

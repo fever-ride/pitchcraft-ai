@@ -1,12 +1,12 @@
 """Resource Excel import: parse .xlsx, create DB records, embed, upsert to Pinecone."""
 import io
-import json
 from collections import defaultdict
+from datetime import datetime
 
 from openpyxl import load_workbook
 
 from backend.core.database.connection import get_database
-from backend.core.models.resource import resource_namespace
+from backend.core.models.resource import ResourceStatus, parse_follower_count, resource_namespace
 from backend.core.rag.embedder import embed_texts
 from backend.core.rag.indexer import upsert_vectors
 
@@ -37,6 +37,9 @@ def parse_resource_excel(file_bytes: bytes) -> list[dict]:
             record.setdefault("type", "kol")
             record.setdefault("platform", "")
             record.setdefault("tags", "")
+            record["followers_count"] = parse_follower_count(record.get("followers"))
+            record["status"] = ResourceStatus.ACTIVE.value
+            record["last_verified_at"] = datetime.utcnow()
             resources.append(record)
 
     wb.close()

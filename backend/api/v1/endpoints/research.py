@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
 
 router = APIRouter()
+
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB per image
+MAX_IMAGES = 10
 
 
 class VisualAnalysisResponse(BaseModel):
@@ -18,11 +21,18 @@ async def analyze_competitor_screenshots(
 ):
     """Upload competitor screenshots for visual analysis. Returns structured insights per image."""
     from backend.core.agents.visual_analysis import analyze_competitor_batch
-    from backend.core.language.detector import detect_language
+
+    if len(files) > MAX_IMAGES:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_IMAGES} images per request")
 
     images = []
-    for f in files[:10]:  # Max 10 screenshots per request
+    for f in files:
         content = await f.read()
+        if len(content) > MAX_IMAGE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image '{f.filename}' exceeds 5 MB limit",
+            )
         mime = f.content_type or "image/png"
         images.append((content, mime))
 

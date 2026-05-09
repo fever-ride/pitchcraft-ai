@@ -195,3 +195,119 @@ def use_llm_call(self):
 | Linter 首次引入项目 | 不要用 `--check` 模式，先跑宽松规则再逐步收紧 |
 | `npm ci` vs `npm install` | 没有 lock 文件时只能用 `npm install`，正式项目应尽早 commit lock |
 | 多语言输出需求 | 分离"理解语言"和"产出语言"两个维度，用户控制产出，auto 做 fallback |
+
+---
+
+## Inter-Agent Communication Refactoring
+
+---
+
+## 14. json.dumps 传参模式导致脆弱的 agent 间通信
+
+**问题**：所有 agent 之间的数据传递采用 `json.dumps(upstream_output)[:N]` 塞入下游 agent 的 prompt 字符串。这带来多个问题：
+
+1. **格式不稳定**：prompt 指示 LLM "输出 JSON"，实际合规率约 90%，10% 的情况返回带 markdown code block、多余说明文字、或字段名错误的 JSON
+2. **Resource Agent 三层 fallback**：因为不信任 Strategy 的输出格式，Resource Agent 自己实现了 50 行 `_detect_needed_types()` 函数做关键词扫描，用 `json.dumps(strategy).lower()` 全文搜索 KOL/media/vendor 关键词
+3. **信息过度暴露**：下游 agent 收到完整上游 JSON blob（如 3000 字符的 strategy 全文），大部分字段与当前任务无关，浪费 token 且可能干扰 LLM 判断
+4. **测试困难**：每个 agent 的输出需要手写 mock JSON 字符串，且 `strip_code_block()` + `json.loads()` 的解析链容易因微小格式变化而断裂
+
+**影响范围**：`strategy.py`, `resource.py`, `deck.py`（全部3个 downstream agent + pipeline.py 所有节点）
+
+**解决方案**（全量重构）：
+
+1. **新增 `invoke_llm_structured()`**：使用 LangChain `with_structured_output()` (底层走 Anthropic tool_use / function calling)，返回 Pydantic model 实例，格式合规率 ~99%
+2. **新增 `schemas.py`**：定义所有 agent 的输出 schema（`BriefAnalysis`, `StrategyPhase1Result`, `StrategyPhase2Result`, `ResearchResult`, `ResourceResult`, `DeckStructureResult`, `SlideContent`, `NarrativeResult`, `BrandCheckResult`）
+3. **扩展 `PipelineState`**：新增 typed 字段（`big_idea: str`, `channels: list[dict]`, `resource_types_needed: list[str]`, `kpis: list[str]`, `audience_insight: str`, `brand_direction: str`）
+4. **每个 pipeline node 写特定字段**：如 `strategy_phase2_node` 写 `big_idea`, `channels`, `resource_types_needed` 等分离字段到 state
+5. **下游 agent 只收所需字段**：如 Resource Agent 接收 `(big_idea, channels, resource_types_needed)` 三个参数，不再接收完整 strategy dict
+6. **删除 Resource Agent 的 `_detect_needed_types()`**：不再需要 — Strategy P2 通过 tool_use schema 直接输出 `resource_types: list[str]`
+
+**教训**：
+- prompt-instructed JSON extraction 是 prototype 阶段的做法，上生产需要用 tool_use / function calling 做 schema enforcement
+- Agent 间通信应该是 "typed contract"（每个 agent 读写明确字段），不是 "dump everything into a string"
+- 下游 agent 不应该需要"理解"上游的输出（那本身就说明上游输出不够结构化）
+
+---
+
+## 15. Resource Agent 推荐幻觉
+
+**问题**：Resource Agent 将 Pinecone 检索结果作为 context 给 LLM，让 LLM 推荐资源组合。但 LLM 可能输出数据库中不存在的资源名称 — 它从 context 中"联想"出一个看似合理但实际不存在的 KOL 名字。
+
+**根因**：
+- LLM 的 prompt 说"基于资源库结果推荐"，但没有硬性约束它只能选已有的
+- Pinecone 返回的文本是 `"Name: XX | Type: kol | Platform: 抖音 | ..."` 格式，LLM 可能组合多条结果的信息生成一个"合成"的推荐
+- 没有输出校验层
+
+**解决**：
+1. **Prompt 加强约束**：system prompt 明确说 "Only recommend resources that exist in the provided database results — do not invent names"
+2. **Post-validation**：`_validate_recommendations()` 函数在 LLM 输出后逐条用 name 去 MongoDB `resources` collection 做 case-insensitive regex 匹配
+3. **不存在的移除**：hallucinated entries 从 `recommended_resources[]` 移除，加入 `missing_resources[]` 标注 "(not found in database)"
+4. **状态检查**：即使存在，如果 `status=inactive` 也移除；`status=booked` 保留但加 tag 提示
+
+**教训**：
+- "基于 context 回答"不等于"只输出 context 中的内容" — LLM 天然倾向于综合和推理
+- 涉及真实资源/人名/数据的推荐必须有 ground truth 校验层
+- 三重防线：prompt 约束（软）→ tool_use schema（中）→ DB 回查（硬）
+
+---
+
+## 16. 文件上传全量读入内存 + hex 编码传 Celery
+
+**问题**：
+```python
+content = await file.read()        # 50MB 全部读入 API 进程内存
+process_file_task.delay(
+    file_bytes_hex=content.hex(),   # 50MB binary → 100MB hex string
+    ...                              # 通过 Redis broker 传递
+)
+```
+
+**影响**：
+- 并发 10 个上传 = API 进程 500MB+ 内存峰值
+- Redis broker 暂存 100MB 的 task message（Redis 默认 maxmemory 通常只有几百 MB）
+- 如果 worker crash，文件内容丢失（因为只存在于 Redis message 中，无持久化）
+- 大文件可能触发 Redis `OOM command not allowed` 或 Celery 的 message size 限制
+
+**解决**：
+1. 新增 `_stream_to_disk()`：以 64KB chunks 流式写入 `/data/uploads/{client_id}/{uuid}.ext`
+2. MongoDB `FileRecord` 新增 `storage_path` 字段
+3. Celery task 签名改为接收 `storage_path: str`（一个短字符串），worker 自行从磁盘读取
+4. `config.py` 新增 `file_storage_dir` 配置项
+
+**效果**：
+- API 内存占用恒定（64KB buffer × 并发数）
+- Redis message 只传路径字符串，不传文件内容
+- Worker crash 后 retry 直接从磁盘重新读取
+- 后续可无缝替换为 S3（改 `_stream_to_disk` 为 `_stream_to_s3`，`storage_path` 改为 S3 key）
+
+---
+
+## 17. Resource 数据模型缺少运营字段
+
+**问题**：Resource 模型中 `followers` 存为字符串（如 "500万"），无法做数值过滤（如"找粉丝大于50万的KOL"）。同时缺少 status 和 freshness 字段，无法判断资源是否可用、数据是否过时。
+
+**解决**：
+1. 新增 `followers_count: int | None` — 存储解析后的数字（`parse_follower_count()` 处理 "500万"/"12.5k"/"3000" 等格式）
+2. 新增 `status: ResourceStatus`（active / inactive / booked）
+3. 新增 `last_verified_at: datetime | None`
+4. 保留原始 `followers: str` 用于显示
+5. API 新增 `min_followers` 查询参数支持数值过滤
+6. API 新增 `PATCH /{id}/verify` 和 `PATCH /{id}/status` 端点
+7. 列表返回时附带 `freshness` 标签和 `pricing_note: "reference price — confirm before committing"`
+
+**教训**：
+- 面向显示的字段和面向查询的字段应该分离（`followers` for display, `followers_count` for filtering）
+- 资源推荐系统需要"可用性"维度 — 仅有匹配度不够，还需要确认资源当前状态
+- freshness 是用户信任度的关键因素 — 6个月前的数据和昨天的数据对用户决策影响很大
+
+---
+
+## 通用经验（续 3）
+
+| 场景 | 做法 |
+|------|------|
+| Agent 间数据传递 | tool_use structured output + typed state fields，不要 json.dumps into prompt |
+| LLM 推荐真实实体 | 必须有 ground truth 回查验证层，prompt 约束不够 |
+| 大文件传 task queue | 持久化到磁盘/对象存储，只传 path/key |
+| 面向查询 vs 面向显示 | 同一信息存两份：原始字符串(display) + 解析后数值(query) |
+| 数据新鲜度 | `last_verified_at` + `status` + API 层 freshness label |

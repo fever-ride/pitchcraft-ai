@@ -12,6 +12,11 @@ class ResourceType(str, Enum):
     PLACEMENT = "placement"
 
 
+class ResourceStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
 class Pricing(BaseModel):
     min: float | None = None
     max: float | None = None
@@ -26,6 +31,9 @@ class CollaborationRecord(BaseModel):
     performance: str | None = None
 
 
+FRESHNESS_THRESHOLD_DAYS = 180
+
+
 class Resource(BaseModel):
     id: str | None = Field(None, alias="_id")
     client_id: str
@@ -36,10 +44,13 @@ class Resource(BaseModel):
     pricing: Pricing | None = None
     collaboration_history: list[CollaborationRecord] = []
     metadata: dict = {}
+    status: ResourceStatus = ResourceStatus.ACTIVE
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_verified_at: datetime | None = None
 
     # KOL/KOC specific
     followers: str | None = None
+    followers_count: int | None = None
     engagement_rate: str | None = None
     content_style: str | None = None
 
@@ -60,6 +71,25 @@ class Resource(BaseModel):
     audience_reach: str | None = None
     available_formats: list[str] = []
 
+    @property
+    def is_stale(self) -> bool:
+        if not self.last_verified_at:
+            return True
+        age = (datetime.utcnow() - self.last_verified_at).days
+        return age > FRESHNESS_THRESHOLD_DAYS
+
+    @property
+    def freshness_label(self) -> str:
+        if not self.last_verified_at:
+            return "never verified"
+        age_days = (datetime.utcnow() - self.last_verified_at).days
+        if age_days <= 30:
+            return "recent"
+        if age_days <= FRESHNESS_THRESHOLD_DAYS:
+            return f"verified {age_days} days ago"
+        months = age_days // 30
+        return f"data may be outdated ({months} months since last verification)"
+
 
 def resource_namespace(resource_type: str, client_id: str) -> str:
     """Resolve Pinecone namespace for a resource type."""
@@ -72,3 +102,20 @@ def resource_namespace(resource_type: str, client_id: str) -> str:
     }
     prefix = type_map.get(resource_type, "resource_kol")
     return f"{prefix}_{client_id}"
+
+
+def parse_follower_count(raw: str | None) -> int | None:
+    """Parse follower string like '500万', '12.5k', '3000' into integer."""
+    if not raw:
+        return None
+    text = raw.strip().lower().replace(",", "")
+    try:
+        if "万" in text:
+            return int(float(text.replace("万", "")) * 10000)
+        if "k" in text:
+            return int(float(text.replace("k", "")) * 1000)
+        if "m" in text:
+            return int(float(text.replace("m", "")) * 1000000)
+        return int(float(text))
+    except (ValueError, TypeError):
+        return None

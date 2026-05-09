@@ -1,8 +1,12 @@
+import shutil
+import uuid
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from backend.api.v1.permissions import CurrentUser, Role, get_current_user
+from backend.core.config import settings
 from backend.core.database.connection import get_database
 from backend.core.database.repositories.files import FileRepository
 from backend.core.models.file import FileCategory, FileType, ProcessingStatus
@@ -13,12 +17,27 @@ router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".ppt"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+CHUNK_SIZE = 64 * 1024  # 64 KB streaming chunks
 
 
 def _get_category(file_type: FileType) -> FileCategory:
     if file_type in (FileType.BRAND_SPEC, FileType.BRAND_HISTORY_PROPOSAL, FileType.BRAND_HISTORY_COPY):
         return FileCategory.BRAND_LIBRARY
     return FileCategory.PROJECT_LIBRARY
+
+
+async def _stream_to_disk(upload: UploadFile, dest: Path) -> int:
+    """Stream uploaded file to disk in chunks. Returns total bytes written."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    total = 0
+    with open(dest, "wb") as f:
+        while chunk := await upload.read(CHUNK_SIZE):
+            total += len(chunk)
+            if total > MAX_FILE_SIZE:
+                dest.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail="File exceeds 50 MB limit")
+            f.write(chunk)
+    return total
 
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
@@ -29,8 +48,6 @@ async def upload_file(
     file_type: str = Form(...),
     user: CurrentUser = Depends(get_current_user),
 ):
-    from pathlib import Path
-
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
@@ -40,9 +57,9 @@ async def upload_file(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid file_type: {file_type}")
 
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File exceeds 50 MB limit")
+    storage_key = f"{client_id}/{uuid.uuid4().hex}{ext}"
+    storage_path = Path(settings.file_storage_dir) / storage_key
+    await _stream_to_disk(file, storage_path)
 
     db = await get_database()
     repo = FileRepository(db)
@@ -54,6 +71,7 @@ async def upload_file(
         "filename": file.filename,
         "file_category": _get_category(ft).value,
         "file_type": ft.value,
+        "storage_path": str(storage_path),
         "processing_status": ProcessingStatus.PENDING.value,
         "chunk_count": 0,
         "deleted": False,
@@ -65,14 +83,14 @@ async def upload_file(
     if ft == FileType.VISUAL_REF:
         process_visual_file_task.delay(
             file_id=file_id,
-            file_bytes_hex=content.hex(),
+            storage_path=str(storage_path),
             filename=file.filename,
             client_id=client_id,
         )
     else:
         process_file_task.delay(
             file_id=file_id,
-            file_bytes_hex=content.hex(),
+            storage_path=str(storage_path),
             filename=file.filename,
             file_type=ft.value,
             client_id=client_id,

@@ -31,6 +31,7 @@ class FileRecord(BaseModel):
     project_id: str | None = None
     uploaded_by: str
     filename: str
+    storage_path: str | None = None
     file_category: FileCategory
     file_type: FileType
     pinecone_namespace: str | None = None

@@ -1,8 +1,11 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
 from backend.core.database.connection import get_database
+from backend.core.models.resource import FRESHNESS_THRESHOLD_DAYS, ResourceStatus, parse_follower_count
 from backend.core.rag.resource_import import import_resources as do_import
 
 router = APIRouter()
@@ -11,26 +14,63 @@ router = APIRouter()
 class CreateResourceRequest(BaseModel):
     type: str  # kol / media / vendor / placement
     name: str
+    platform: str = ""
     tags: list[str] = []
+    followers: str | None = None
     pricing: dict | None = None
     metadata: dict = {}
+
+
+def _enrich_with_freshness(doc: dict) -> dict:
+    """Add freshness info and pricing disclaimer to resource response."""
+    doc["_id"] = str(doc["_id"])
+    doc["pricing_note"] = "reference price — confirm with resource before committing"
+
+    verified_at = doc.get("last_verified_at")
+    if not verified_at:
+        doc["freshness"] = "never verified"
+        doc["is_stale"] = True
+    else:
+        if isinstance(verified_at, str):
+            verified_at = datetime.fromisoformat(verified_at)
+        age_days = (datetime.utcnow() - verified_at).days
+        if age_days <= 30:
+            doc["freshness"] = "recent"
+            doc["is_stale"] = False
+        elif age_days <= FRESHNESS_THRESHOLD_DAYS:
+            doc["freshness"] = f"verified {age_days} days ago"
+            doc["is_stale"] = False
+        else:
+            months = age_days // 30
+            doc["freshness"] = f"data may be outdated ({months} months since last verification)"
+            doc["is_stale"] = True
+
+    return doc
 
 
 @router.get("")
 async def list_resources(
     client_id: str,
     type: str | None = None,
+    status_filter: str | None = None,
+    min_followers: int | None = None,
     user: CurrentUser = Depends(get_current_user),
 ):
     db = await get_database()
     query: dict = {"client_id": client_id}
     if type:
         query["type"] = type
+    if status_filter:
+        query["status"] = status_filter
+    else:
+        query["status"] = {"$ne": ResourceStatus.INACTIVE.value}
+    if min_followers is not None:
+        query["followers_count"] = {"$gte": min_followers}
+
     cursor = db["resources"].find(query).limit(200)
     results = []
     async for doc in cursor:
-        doc["_id"] = str(doc["_id"])
-        results.append(doc)
+        results.append(_enrich_with_freshness(doc))
     return results
 
 
@@ -43,8 +83,48 @@ async def create_resource(
     db = await get_database()
     doc = request.model_dump()
     doc["client_id"] = client_id
+    doc["status"] = ResourceStatus.ACTIVE.value
+    doc["last_verified_at"] = datetime.utcnow()
+    doc["followers_count"] = parse_follower_count(request.followers)
     result = await db["resources"].insert_one(doc)
     return {"status": "created", "id": str(result.inserted_id)}
+
+
+@router.patch("/{resource_id}/verify")
+async def verify_resource(
+    resource_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Mark a resource as freshly verified."""
+    db = await get_database()
+    from bson import ObjectId
+    result = await db["resources"].update_one(
+        {"_id": ObjectId(resource_id)},
+        {"$set": {"last_verified_at": datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return {"status": "verified"}
+
+
+@router.patch("/{resource_id}/status")
+async def update_resource_status(
+    resource_id: str,
+    new_status: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Update resource availability status (active/inactive)."""
+    if new_status not in (s.value for s in ResourceStatus):
+        raise HTTPException(status_code=400, detail="Invalid status. Must be: active, inactive")
+    db = await get_database()
+    from bson import ObjectId
+    result = await db["resources"].update_one(
+        {"_id": ObjectId(resource_id)},
+        {"$set": {"status": new_status}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return {"status": "updated", "new_status": new_status}
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
@@ -57,5 +137,7 @@ async def import_resources(
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
 
     content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Excel file exceeds 10 MB limit")
     result = await do_import(content, client_id)
     return result
