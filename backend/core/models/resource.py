@@ -25,10 +25,13 @@ class Pricing(BaseModel):
 
 
 class CollaborationRecord(BaseModel):
-    client: str
-    project_type: str
-    date: str
+    client: str = ""
+    project_type: str = ""
+    date: str = ""
     performance: str | None = None
+    performance_summary: str = ""
+    metrics: dict[str, str] = {}
+    recommendation: str = ""
 
 
 FRESHNESS_THRESHOLD_DAYS = 180
@@ -48,11 +51,16 @@ class Resource(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_verified_at: datetime | None = None
 
+    # Profile fields (semantic — used in embedding text for similarity matching)
+    categories: list[str] = []
+    content_style: str | None = None
+    audience_tags: list[str] = []
+    past_cpe: str | None = None
+
     # KOL/KOC specific
     followers: str | None = None
     followers_count: int | None = None
     engagement_rate: str | None = None
-    content_style: str | None = None
 
     # Media specific
     outlet_type: str | None = None  # newspaper, magazine, online, TV

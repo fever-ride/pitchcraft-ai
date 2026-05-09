@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class StructuredBrief(BaseModel):
     client_name: str = Field(default="not provided", description="Brand/client name or 'not provided'")
+    category: str = Field(default="not provided", description="Project category, e.g. '美妆新品上市', 'tech product launch', '快消品牌焕新'")
     theme: str = Field(default="not provided", description="Campaign theme/direction or 'not provided'")
     audience: str = Field(default="not provided", description="Target audience or 'not provided'")
     channels: list[str] = Field(default_factory=list, description="Channel list")
@@ -79,6 +80,7 @@ class TimelinePhase(BaseModel):
 class StrategyPhase2Result(BaseModel):
     big_idea: str = Field(description="Core creative concept")
     big_idea_rationale: str = Field(default="", description="Why this idea works")
+    content_tone: str = Field(default="", description="Desired content tone/style, e.g. 'playful and youthful', '专业权威', 'lifestyle-driven'")
     channels: list[Channel] = Field(default_factory=list)
     resource_types: list[str] = Field(default_factory=list, description="Required resource types: kol, media, vendor, placement")
     budget_allocation: dict[str, str] = Field(default_factory=dict)
@@ -139,3 +141,24 @@ class NarrativeIssue(BaseModel):
 
 class NarrativeResult(BaseModel):
     issues: list[NarrativeIssue] = Field(default_factory=list)
+
+
+# --- Project Archive ---
+
+class ResourcePerformance(BaseModel):
+    name: str = Field(description="Resource/KOL/media name as it appears in the report")
+    type: str = Field(default="kol", description="kol/koc/media/vendor/placement")
+    performance_summary: str = Field(default="", description="Brief performance description")
+    metrics: dict[str, str] = Field(default_factory=dict, description="Key metrics, e.g. {'cpe': '2.3', 'engagement_rate': '4.5%'}")
+    recommendation: str = Field(default="", description="Whether to reuse: 'recommend' / 'neutral' / 'avoid'")
+
+
+class ArchiveExtraction(BaseModel):
+    """Structured extraction from a project recap/case study report."""
+    project_summary: str = Field(default="", description="1-2 sentence project summary")
+    strategy_learnings: list[str] = Field(default_factory=list, description="Key strategy takeaways for future reference")
+    audience_insights: list[str] = Field(default_factory=list, description="Audience behavior/feedback insights discovered")
+    resource_performances: list[ResourcePerformance] = Field(default_factory=list, description="Performance data per resource used")
+    content_insights: list[str] = Field(default_factory=list, description="Content format/style insights that worked or didn't")
+    campaign_category: str = Field(default="", description="Campaign type, e.g. '美妆新品上市', 'brand refresh'")
+    channels_used: list[str] = Field(default_factory=list, description="Channels that were actually used")

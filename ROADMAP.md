@@ -216,6 +216,29 @@ Version control, analytics, deployment infrastructure.
 - [ ] PDF export as alternative to .pptx
 - [x] Token refresh interceptor in frontend API client (auto-refresh on 401, queued retries, redirect to login on failure)
 
+### 3.6 Cost Optimization
+
+**Prompt Caching (rerun scenario)**
+- [ ] Mark stable context (brand specs, system prompts, RAG results) with `cache_control: ephemeral`
+- [ ] On rerun, identical prefix hits Anthropic cache → ~90% token cost reduction on stable portion
+- [ ] Applicable agents: Strategy P2 (brand_spec RAG), Brand Check (brand_spec RAG), Slide Content (big_idea + brand_direction)
+
+**Fork-mode parallel caching (slide generation)**
+- [ ] Refactor Slide Content from sequential `for` loop to parallel `asyncio.gather`
+- [ ] All slides share identical prefix: system prompt + big_idea + brand_direction + brand RAG (~5000 tokens)
+- [ ] Only per-slide instruction differs (~200 tokens)
+- [ ] Fork pattern: 1 full call + (N-1) delta-only calls → 15-slide deck costs ~1 + 14×delta instead of 15×full
+- [ ] Requires: messages prefix byte-identical across calls for cache hit
+
+**Narrative Agent co-caching**
+- [ ] Narrative Agent runs in parallel with Slide Content, shares same slides context
+- [ ] Can cache the full slides array as shared prefix
+
+**Token tracking**
+- [ ] Per-agent token usage (input/output) logged in stage_metrics
+- [ ] Dashboard shows cost attribution by agent and pipeline
+- [ ] Enables informed budget tuning (e.g. lower max_tokens for agents that consistently use less)
+
 ---
 
 ## Success Metrics
@@ -236,34 +259,39 @@ Richer resource profiles, knowledge accumulation from completed projects.
 
 ### 4.1 Resource Profile Enrichment
 
-- [ ] New resource fields: `categories`, `content_style`, `audience_tags`, `past_cpe`
-- [ ] Free-text, no standardization needed (semantic matching handles "彩妆"≈"美妆")
-- [ ] Supported in both Excel bulk import AND manual single-entry API (`POST /resources`)
-- [ ] New fields concatenated into embedding text for semantic similarity — NOT metadata filter
-- [ ] Metadata filter remains for discrete enums only: status, platform, type
-- [ ] Brief Analyzer adds `category` field (project classification, e.g. "美妆新品上市")
-- [ ] Strategy P2 adds `content_tone` field (e.g. "playful", "professional")
-- [ ] Resource Agent query construction: `big_idea + content_tone + audience_insight + category` → semantic query; `status + platform` → metadata filter
+- [x] New resource fields: `categories`, `content_style`, `audience_tags`, `past_cpe`
+- [x] Free-text, no standardization needed (semantic matching handles "彩妆"≈"美妆")
+- [x] Supported in both Excel bulk import AND manual single-entry API (`POST /resources`)
+- [x] New fields concatenated into embedding text for semantic similarity — NOT metadata filter
+- [x] Metadata filter remains for discrete enums only: status, platform, type
+- [x] Brief Analyzer adds `category` field (project classification, e.g. "美妆新品上市")
+- [x] Strategy P2 adds `content_tone` field (e.g. "playful", "professional")
+- [x] Resource Agent query construction: `big_idea + content_tone + audience_insight + category` → semantic query; `status + platform` → metadata filter
+- [x] Chinese header alias mapping for Excel import (姓名→name, 粉丝数→followers, 品类→categories, etc.)
+- [x] Import result feedback: recognized_columns + ignored_columns returned to user
+- [x] Manual resource creation also upserts to Pinecone (searchable immediately)
 
 ### 4.2 Project Archive Pipeline
 
-- [ ] New API: `POST /api/v1/projects/{id}/archive` (upload recap/case study)
-- [ ] LLM structured extraction from one report → multi-destination:
+- [x] New API: `POST /api/v1/projects/{id}/archive` (upload recap/case study)
+- [x] LLM structured extraction from one report → multi-destination:
   - Resource performance data → update `collaboration_history`, refresh resource embedding
   - Strategy learnings → `brand_history_{client_id}` namespace
   - Industry insights → client knowledge base
   - Audience feedback/sentiment → audience insight pool
-- [ ] Built on existing file upload + RAG pipeline, extended with extraction + routing
+- [x] Built on existing file upload + RAG pipeline, extended with extraction + routing
+- [x] `GET /api/v1/projects/{id}/archive` to check extraction status and results
 
 ### 4.3 Progressive Resource Accumulation
 
-- [ ] Post-pipeline: auto-record which resources were selected + project category
-- [ ] Reverse-tag resources with confirmed categories from actual usage
-- [ ] Resource profiles improve over time without manual maintenance
+- [x] Post-pipeline: auto-record which resources were selected + project category
+- [x] Reverse-tag resources with confirmed categories from actual usage (`$addToSet`)
+- [x] Resource profiles improve over time without manual maintenance
 
 ### 4.4 External Data API (Interface Only)
 
-- [ ] Config: `social_data_provider` field reserved
+- [x] Config: `social_data_provider` field reserved
+- [x] Resource model has `followers_count`, `engagement_rate` fields ready for external data
 - [ ] Abstract base: `backend/core/integrations/social_data.py`
 - [ ] Adapter interface: `fetch_profile(platform, handle) -> dict`
 - [ ] Suitable for: periodic followers_count / engagement_rate refresh

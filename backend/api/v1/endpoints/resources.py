@@ -5,7 +5,9 @@ from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
 from backend.core.database.connection import get_database
-from backend.core.models.resource import FRESHNESS_THRESHOLD_DAYS, ResourceStatus, parse_follower_count
+from backend.core.models.resource import FRESHNESS_THRESHOLD_DAYS, ResourceStatus, parse_follower_count, resource_namespace
+from backend.core.rag.embedder import embed_texts
+from backend.core.rag.indexer import upsert_vectors
 from backend.core.rag.resource_import import import_resources as do_import
 
 router = APIRouter()
@@ -16,9 +18,38 @@ class CreateResourceRequest(BaseModel):
     name: str
     platform: str = ""
     tags: list[str] = []
+    categories: list[str] = []
+    content_style: str | None = None
+    audience_tags: list[str] = []
+    past_cpe: str | None = None
     followers: str | None = None
     pricing: dict | None = None
     metadata: dict = {}
+
+
+def _resource_to_embed_text(r: dict) -> str:
+    """Build embedding text for a single resource (same logic as resource_import)."""
+    parts = [f"Name: {r.get('name', '')}", f"Type: {r.get('type', '')}"]
+    if r.get("platform"):
+        parts.append(f"Platform: {r['platform']}")
+    if r.get("followers"):
+        parts.append(f"Followers: {r['followers']}")
+    if r.get("categories"):
+        cats = r["categories"]
+        parts.append(f"Categories: {', '.join(cats) if isinstance(cats, list) else cats}")
+    if r.get("content_style"):
+        parts.append(f"Content Style: {r['content_style']}")
+    if r.get("audience_tags"):
+        tags = r["audience_tags"]
+        parts.append(f"Audience: {', '.join(tags) if isinstance(tags, list) else tags}")
+    if r.get("past_cpe"):
+        parts.append(f"Past CPE: {r['past_cpe']}")
+    if r.get("tags"):
+        tags = r["tags"]
+        parts.append(f"Tags: {', '.join(tags) if isinstance(tags, list) else tags}")
+    if r.get("pricing"):
+        parts.append(f"Pricing: {r['pricing']}")
+    return " | ".join(parts)
 
 
 def _enrich_with_freshness(doc: dict) -> dict:
@@ -87,7 +118,22 @@ async def create_resource(
     doc["last_verified_at"] = datetime.utcnow()
     doc["followers_count"] = parse_follower_count(request.followers)
     result = await db["resources"].insert_one(doc)
-    return {"status": "created", "id": str(result.inserted_id)}
+
+    resource_id = str(result.inserted_id)
+    text = _resource_to_embed_text(doc)
+    embeddings = await embed_texts([text])
+    ns = resource_namespace(doc.get("type", "kol"), client_id)
+    extra_meta = {
+        "name": doc.get("name", ""),
+        "type": doc.get("type", "kol"),
+        "platform": doc.get("platform", ""),
+        "status": doc.get("status", "active"),
+        "followers_count": doc.get("followers_count") or 0,
+        "tags": ", ".join(doc.get("tags", [])),
+    }
+    upsert_vectors(ns, resource_id, [text], embeddings, extra_metadata=[extra_meta])
+
+    return {"status": "created", "id": resource_id}
 
 
 @router.patch("/{resource_id}/verify")

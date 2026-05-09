@@ -12,24 +12,89 @@ from backend.core.rag.indexer import upsert_vectors
 
 VALID_TYPES = {"kol", "koc", "media", "vendor", "placement"}
 
+KNOWN_COLUMNS = {
+    "name", "type", "platform", "followers", "categories", "content_style",
+    "audience_tags", "past_cpe", "tags", "pricing", "notes",
+    "outlet_type", "beat", "service_type", "region",
+    "placement_type", "location", "audience_reach",
+}
 
-def parse_resource_excel(file_bytes: bytes) -> list[dict]:
-    """Parse xlsx bytes into list of resource dicts."""
+HEADER_ALIASES = {
+    "姓名": "name",
+    "名称": "name",
+    "资源名称": "name",
+    "类型": "type",
+    "平台": "platform",
+    "粉丝数": "followers",
+    "粉丝": "followers",
+    "品类": "categories",
+    "擅长品类": "categories",
+    "内容风格": "content_style",
+    "风格": "content_style",
+    "受众": "audience_tags",
+    "受众标签": "audience_tags",
+    "历史cpe": "past_cpe",
+    "cpe": "past_cpe",
+    "标签": "tags",
+    "报价": "pricing",
+    "价格": "pricing",
+    "备注": "notes",
+    "媒体类型": "outlet_type",
+    "跑线": "beat",
+    "领域": "beat",
+    "服务类型": "service_type",
+    "区域": "region",
+    "地区": "region",
+    "广告类型": "placement_type",
+    "位置": "location",
+    "覆盖人群": "audience_reach",
+}
+
+
+class ImportParseResult:
+    def __init__(self, resources: list[dict], recognized: list[str], ignored: list[str]):
+        self.resources = resources
+        self.recognized_columns = recognized
+        self.ignored_columns = ignored
+
+
+def parse_resource_excel(file_bytes: bytes) -> ImportParseResult:
+    """Parse xlsx bytes into list of resource dicts with column recognition feedback."""
     wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
     ws = wb.active
 
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
-        return []
+        wb.close()
+        return ImportParseResult([], [], [])
 
-    headers = [str(h).strip().lower() if h else "" for h in rows[0]]
+    raw_headers = [str(h).strip() if h else "" for h in rows[0]]
+
+    # Map headers: try lowercase match, then alias lookup
+    mapped_headers = []
+    recognized = []
+    ignored = []
+    for h in raw_headers:
+        normalized = h.lower()
+        if normalized in KNOWN_COLUMNS:
+            mapped_headers.append(normalized)
+            recognized.append(h)
+        elif normalized in HEADER_ALIASES:
+            mapped_headers.append(HEADER_ALIASES[normalized])
+            recognized.append(h)
+        else:
+            mapped_headers.append("")
+            if h:
+                ignored.append(h)
+
     resources = []
-
     for row in rows[1:]:
         if not any(row):
             continue
         record = {}
-        for idx, header in enumerate(headers):
+        for idx, header in enumerate(mapped_headers):
+            if not header:
+                continue
             val = row[idx] if idx < len(row) else None
             if val is not None:
                 record[header] = str(val).strip()
@@ -37,13 +102,21 @@ def parse_resource_excel(file_bytes: bytes) -> list[dict]:
             record.setdefault("type", "kol")
             record.setdefault("platform", "")
             record.setdefault("tags", "")
+            record.setdefault("categories", "")
+            record.setdefault("content_style", "")
+            record.setdefault("audience_tags", "")
+            record.setdefault("past_cpe", "")
             record["followers_count"] = parse_follower_count(record.get("followers"))
             record["status"] = ResourceStatus.ACTIVE.value
             record["last_verified_at"] = datetime.utcnow()
+            for list_field in ("categories", "audience_tags", "tags"):
+                val = record.get(list_field, "")
+                if isinstance(val, str):
+                    record[list_field] = [t.strip() for t in val.split(",") if t.strip()]
             resources.append(record)
 
     wb.close()
-    return resources
+    return ImportParseResult(resources, recognized, ignored)
 
 
 def _resource_to_text(r: dict) -> str:
@@ -56,8 +129,19 @@ def _resource_to_text(r: dict) -> str:
         parts.append(f"Platform: {r['platform']}")
     if r.get("followers"):
         parts.append(f"Followers: {r['followers']}")
+    if r.get("categories"):
+        cats = r["categories"]
+        parts.append(f"Categories: {', '.join(cats) if isinstance(cats, list) else cats}")
+    if r.get("content_style"):
+        parts.append(f"Content Style: {r['content_style']}")
+    if r.get("audience_tags"):
+        tags = r["audience_tags"]
+        parts.append(f"Audience: {', '.join(tags) if isinstance(tags, list) else tags}")
+    if r.get("past_cpe"):
+        parts.append(f"Past CPE: {r['past_cpe']}")
     if r.get("tags"):
-        parts.append(f"Tags: {r['tags']}")
+        tags = r["tags"]
+        parts.append(f"Tags: {', '.join(tags) if isinstance(tags, list) else tags}")
     if r.get("pricing"):
         parts.append(f"Pricing: {r['pricing']}")
     if r.get("notes"):
@@ -84,9 +168,15 @@ def _resource_to_text(r: dict) -> str:
 
 async def import_resources(file_bytes: bytes, client_id: str) -> dict:
     """Full import pipeline: parse → DB → embed → Pinecone (grouped by type)."""
-    resources = parse_resource_excel(file_bytes)
+    parse_result = parse_resource_excel(file_bytes)
+    resources = parse_result.resources
     if not resources:
-        return {"imported": 0, "error": "No valid rows found"}
+        return {
+            "imported": 0,
+            "error": "No valid rows found",
+            "recognized_columns": parse_result.recognized_columns,
+            "ignored_columns": parse_result.ignored_columns,
+        }
 
     db = await get_database()
     collection = db["resources"]
@@ -135,4 +225,6 @@ async def import_resources(file_bytes: bytes, client_id: str) -> dict:
         "imported": len(resources),
         "by_type": {k: len(v) for k, v in by_type.items()},
         "namespaces": namespaces_used,
+        "recognized_columns": parse_result.recognized_columns,
+        "ignored_columns": parse_result.ignored_columns,
     }

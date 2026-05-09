@@ -3,16 +3,14 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any
 
 import redis.asyncio as redis
 
 from backend.core.config import settings
 from backend.core.database.connection import get_database
-from backend.core.database.repositories.proposals import ProposalRepository
 from backend.core.database.repositories.proposal_versions import ProposalVersionRepository
 from backend.core.database.repositories.stage_metrics import StageMetricsRepository
-from backend.core.graph.state import BudgetExceeded, PipelineState, RequestBudget
+from backend.core.graph.state import BudgetExceeded, RequestBudget
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +153,7 @@ class PipelineExecutor:
 
             trigger = "rerun" if start_from else "pipeline_complete"
             await self._save_version(state, trigger=trigger)
+            await self._accumulate_resource_tags(state)
 
         except BudgetExceeded as e:
             await self.set_status("budget_exceeded", None)
@@ -252,3 +251,40 @@ class PipelineExecutor:
             "client_id": state.get("client_id", ""),
             **metrics,
         })
+
+    async def _accumulate_resource_tags(self, state: dict):
+        """Post-pipeline: tag selected resources with project category for progressive profiling."""
+        resource_result = state.get("resource_result", {})
+        if not resource_result or resource_result.get("skipped"):
+            return
+
+        brief = state.get("structured_brief", {})
+        category = brief.get("category", "")
+        if not category or category == "not provided":
+            return
+
+        client_id = state.get("client_id", "")
+        if not client_id:
+            return
+
+        recommended = resource_result.get("recommended_resources", [])
+        if not recommended:
+            return
+
+        try:
+            db = await get_database()
+            collection = db["resources"]
+
+            for rec in recommended:
+                name = rec.get("name", "") if isinstance(rec, dict) else ""
+                if not name:
+                    continue
+                await collection.update_one(
+                    {
+                        "client_id": client_id,
+                        "name": {"$regex": f"^{name}$", "$options": "i"},
+                    },
+                    {"$addToSet": {"categories": category}},
+                )
+        except Exception as e:
+            logger.warning(f"Resource accumulation failed: {e}")

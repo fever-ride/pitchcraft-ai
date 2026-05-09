@@ -131,6 +131,7 @@ async def strategy_phase2_node(state: PipelineState) -> dict:
     return {
         "strategy_result": result_dict,
         "big_idea": result.big_idea,
+        "content_tone": result.content_tone,
         "channels": [c.model_dump() for c in result.channels],
         "resource_types_needed": result.resource_types,
         "kpis": result.kpis,
@@ -156,11 +157,15 @@ async def hitl_strategy_node(state: PipelineState) -> dict:
 
 async def resource_agent_node(state: PipelineState) -> dict:
     budget = state.get("request_budget")
+    brief = state.get("structured_brief", {})
     result = await run_resource_agent(
         big_idea=state.get("big_idea", ""),
         channels=state.get("channels", []),
         resource_types_needed=state.get("resource_types_needed", []),
         client_id=state["client_id"],
+        content_tone=state.get("content_tone", ""),
+        audience_insight=state.get("audience_insight", ""),
+        category=brief.get("category", ""),
         budget=budget,
         output_language=state.get("output_language", "auto"),
     )

@@ -360,6 +360,69 @@ Upload (streaming) → /data/uploads/{client_id}/{uuid}.ext (persistent)
 - `storage_path` stored in MongoDB FileRecord for future re-processing or download
 - Processing is idempotent: re-running the Celery task with the same path overwrites existing vectors
 
+### Performance & Cost Optimization
+
+Three complementary strategies minimize redundant work across the pipeline:
+
+**1. Incremental State Updates (data minimization per LLM call)**
+
+Each pipeline node writes only its own output to LangGraph state; downstream nodes read only the specific fields they need. No node receives the full upstream blob.
+
+```
+Strategy Phase 2 writes:  big_idea, content_tone, channels[], resource_types[]
+Resource Agent reads:     big_idea, content_tone, audience_insight, category, channels[]
+Deck Orchestrator reads:  big_idea, channels[], kpis[]
+Slide Content reads:      big_idea, brand_direction
+```
+
+This eliminates information over-sharing: Resource Agent never sees deck structure, Slide Content never sees research details. Each LLM call receives only task-relevant context, reducing prompt size and improving output focus.
+
+**2. State Caching (avoid re-executing expensive operations)**
+
+Three layers of caching prevent repeated computation:
+
+| Layer | What it caches | TTL | Bypass mechanism |
+|-------|---------------|-----|------------------|
+| Redis pipeline state | Full PipelineState between HITL pauses | 24h | User can resume hours later without re-running completed nodes |
+| Semantic research cache | Web search + social data results | 30 days | `force_refresh=True` when user clicks "refresh research" |
+| Rerun state preservation | Upstream node outputs during partial rerun | Session | `start_from="strategy_phase2"` skips earlier nodes, preserves their results |
+
+Concrete example — user reruns strategy after feedback:
+```
+start_from="strategy_phase2"
+  ├── brief_analyzer: SKIPPED (result in state)
+  ├── research_agent: SKIPPED (result in state, unless refresh requested)
+  ├── strategy_phase1: SKIPPED (result in state)
+  └── strategy_phase2: RE-EXECUTED with new constraints from feedback
+       └── downstream: re-executed with new strategy
+```
+
+**3. Prompt Caching & Fork-Mode Parallelism (planned — Phase 3.6)**
+
+Two complementary approaches to token cost reduction:
+
+*Rerun caching:* Brand specs, system prompts, and RAG context are identical between original run and rerun. Marking these with `cache_control: ephemeral` lets Anthropic cache the prefix — ~90% cost reduction on stable portion for Strategy P2, Brand Check, and Slide Content reruns.
+
+*Fork-mode slide generation:* Currently slides are generated sequentially. All 15 calls share an identical prefix (~5000 tokens: system prompt + big_idea + brand_direction + brand RAG). Only the per-slide instruction differs (~200 tokens). Parallelizing with shared-prefix caching:
+
+```
+Current:  15 slides × 5000 tokens input = 75,000 tokens
+With Fork: 5000 (first, full price) + 14 × 200 (delta, cache-read price) ≈ 7,800 tokens effective cost
+Savings:  ~90% on slide generation phase
+```
+
+Requirement: messages prefix must be byte-identical across parallel calls for cache hit. Architecture already supports this — `big_idea`, `brand_direction`, and brand RAG results are frozen in state before slide generation begins.
+
+**Architectural separation that enables all three:**
+
+```
+LangGraph (flow control)  →  decides WHICH nodes run and in WHAT order
+Typed state fields        →  decides WHAT data each node receives
+Redis/Pinecone caching    →  decides WHETHER to re-compute or reuse
+
+LLM is never responsible for flow decisions — only for the task within its node.
+```
+
 ---
 
 ## System Architecture

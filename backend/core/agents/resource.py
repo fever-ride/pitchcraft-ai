@@ -91,21 +91,30 @@ async def run_resource_agent(
     channels: list[dict],
     resource_types_needed: list[str],
     client_id: str,
+    content_tone: str = "",
+    audience_insight: str = "",
+    category: str = "",
     budget: RequestBudget | None = None,
     output_language: str = "auto",
 ) -> ResourceResult | dict:
     """Match resources from DB based on typed strategy fields.
 
-    resource_types_needed comes directly from StrategyPhase2Result.resource_types,
-    written to state by the strategy_phase2 node. No re-detection needed.
+    Semantic query: big_idea + content_tone + audience_insight + category
+    Metadata filter: status=active, platform (for KOL/KOC)
     """
     if not resource_types_needed:
         return {"skipped": True, "reason": "No resource types specified by strategy"}
 
     lang = resolve_output_language(output_language, big_idea)
 
-    channel_names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in channels]
-    search_query = f"{big_idea} {' '.join(channel_names)} {' '.join(resource_types_needed)}"
+    query_parts = [big_idea]
+    if content_tone:
+        query_parts.append(content_tone)
+    if audience_insight:
+        query_parts.append(audience_insight)
+    if category and category != "not provided":
+        query_parts.append(category)
+    search_query = " ".join(query_parts)
 
     all_results = []
     for rtype in resource_types_needed:
@@ -123,8 +132,12 @@ async def run_resource_agent(
 
     resource_context = "\n".join([r.text for r in all_results]) if all_results else "No resources found in database."
 
+    channel_names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in channels]
     user_msg = (
         f"Big Idea: {big_idea}\n"
+        f"Content Tone: {content_tone or 'not specified'}\n"
+        f"Target Audience: {audience_insight or 'not specified'}\n"
+        f"Category: {category or 'not specified'}\n"
         f"Channels: {', '.join(channel_names)}\n"
         f"Required resource types: {', '.join(resource_types_needed)}\n\n"
         f"Resource database results:\n{resource_context}"

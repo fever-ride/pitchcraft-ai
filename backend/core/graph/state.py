@@ -33,6 +33,7 @@ class PipelineState(TypedDict, total=False):
     # Strategy Phase 2
     strategy_result: dict  # Full StrategyPhase2Result as dict
     big_idea: str
+    content_tone: str  # e.g. "playful and youthful", "专业权威"
     channels: list[dict]  # list of Channel dicts
     resource_types_needed: list[str]  # Typed: ["kol", "media", "vendor", "placement"]
     kpis: list[str]
