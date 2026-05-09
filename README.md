@@ -14,79 +14,203 @@ Account teams at agencies spend 3–5 days per pitch doing work that is largely 
 
 ### Multi-Agent Pipeline
 
-Six specialized AI agents orchestrated in a stateful LangGraph pipeline:
+Six specialized AI agents orchestrated via LangGraph with **parallel execution**, **conditional branching**, **5 HITL checkpoints**, and **feedback-driven rerun** from any upstream node:
 
 ```
 Brief Input
     │
     ▼
 ┌─────────────────┐
-│  Brief Analyzer  │ ← Node 1: HITL confirm interpretation
+│  Brief Analyzer  │ ← HITL Node 1: confirm/edit interpretation
 └────────┬────────┘
          │
-    ┌────┴────┐        (fan-out parallel)
-    ▼         ▼
-┌────────┐ ┌──────────────┐
-│Research│ │Strategy Ph.1 │
-└───┬────┘ └──────┬───────┘
-    │              │       (fan-in)
-    ▼              ▼
-┌──────────────────────┐
-│   Strategy Phase 2    │ ← Node 2: HITL confirm strategy
+    ┌────┴────┐           ┌───────────────────────────────────────────┐
+    ▼         ▼           │  LangGraph fan-out: two agents run        │
+┌────────┐ ┌───────────┐ │  concurrently via asyncio.gather().       │
+│Research│ │Strategy P1 │ │  P1 uses only Brief + Brand Library;      │
+│  Agent │ │(no research│ │  Research uses web + internal RAG.        │
+│        │ │  needed)   │ │  Fan-in barrier: both must finish before  │
+└───┬────┘ └─────┬─────┘ │  Phase 2 can start.                       │
+    │            │        └───────────────────────────────────────────┘
+    └─────┬──────┘
+          ▼
+┌──────────────────────┐  ┌───────────────────────────────────────────┐
+│  Strategy Phase 2     │  │  Receives: research_result + phase1_insight│
+│  + Brand Check        │  │  Reads: rejected directions from feedback  │
+└──────────┬───────────┘  │  Outputs: structured JSON contract          │
+           │              │  → big_idea, channels[], resource_types[],  │
+           │  ← HITL Node 2  budget_allocation{}, kpis[], timeline[]   │
+           │              └───────────────────────────────────────────┘
+           ▼
+┌──────────────────────┐  ┌───────────────────────────────────────────┐
+│   Resource Agent      │  │  CONDITIONAL: checks strategy.resource_    │
+│                       │  │  types[] + channels[] to decide which      │
+│  (may skip entirely)  │  │  resource types to retrieve. If none       │
+└──────────┬───────────┘  │  needed → clean skip, zero LLM calls.      │
+           │              │  If multiple types → parallel Pinecone      │
+           │              │  queries across namespaces.                  │
+           │              └───────────────────────────────────────────┘
+           ▼
+┌──────────────────────┐  ← HITL Node 3: confirm/edit structure
+│  Deck Orchestrator    │  (three-tier lookup: project → client → LLM)
 └──────────┬───────────┘
            │
            ▼
+┌──────────────────────┐  ┌───────────────────────────────────────────┐
+│ Slide Content Agent   │  │  Streaming: each completed slide pushed   │
+│                       │  │  to frontend via WebSocket immediately.    │
+│ Narrative Agent ──────│──│─ Runs NON-BLOCKING in parallel with       │
+│ (coherence advisor)   │  │  slide generation. Outputs suggestions    │
+└──────────┬───────────┘  │  with page references, never blocks flow.  │
+           │              └───────────────────────────────────────────┘
+           │  ← HITL Node 4: Gallery Review (batch mark + regenerate)
+           ▼
 ┌──────────────────────┐
-│    Resource Agent      │   (conditional: skips if not needed)
+│     PPT Builder       │ → .pptx download + web preview
 └──────────┬───────────┘
            │
-           ▼
-┌──────────────────────┐
-│   Deck Orchestrator   │ ← Node 3: HITL confirm structure
-└──────────┬───────────┘
+           │  ← HITL Node 5: Client feedback
            │
-           ▼
-┌──────────────────────┐
-│ Slide Content Agent   │   (streaming: push each slide to frontend)
-│ + Narrative Agent     │   (non-blocking coherence check)
-└──────────┬───────────┘
-           │              ← Node 4: Gallery Review (batch regenerate)
-           ▼
-┌──────────────────────┐
-│     PPT Builder       │ → .pptx download
-└──────────────────────┘
-           │              ← Node 5: Client feedback → targeted rerun
+           │    ┌──────────────────────────────────────────────────┐
+           └───▶│  FEEDBACK-DRIVEN RERUN                            │
+                │                                                    │
+                │  Client says "strategy direction is wrong"         │
+                │       → system suggests: rerun from Strategy P2    │
+                │  Client says "slide 7 content is off-brand"        │
+                │       → system suggests: rerun from Slide Content  │
+                │  Client says "wrong KOL selection"                 │
+                │       → system suggests: rerun from Resource Agent │
+                │                                                    │
+                │  Executor receives start_from="strategy_phase2"    │
+                │  and re-executes from that node forward,           │
+                │  preserving all upstream state.                    │
+                │                                                    │
+                │  Each rerun auto-saves a new VERSION SNAPSHOT.     │
+                └─────────────────────┬────────────────────────────┘
+                                      │
+                                      ▼ (pipeline resumes from target node)
 ```
+
+### Pipeline Orchestration Details
+
+**1. Parallel Execution with Data Dependencies**
+- Research Agent and Strategy Phase 1 run concurrently (`asyncio.gather`) — neither depends on the other
+- Strategy Phase 2 **cannot start** until both complete (fan-in barrier)
+- Narrative Agent runs in parallel with Slide Content Agent but is purely advisory (no flow control)
+
+**2. Conditional Branching**
+- Resource Agent reads `strategy_result.resource_types[]` and `strategy_result.channels[]` to determine which resource types (if any) to retrieve
+- When strategy outputs `resource_types: ["kol", "media"]` → Resource Agent queries `resource_kol` and `resource_media` namespaces in parallel
+- When strategy outputs `resource_types: []` → Resource Agent skips entirely (zero latency, zero LLM cost)
+- Deck Orchestrator uses three-tier template lookup: if project has a saved structure → use it; else if client has a default → use it; else generate via LLM
+
+**3. Stateful HITL Pause/Resume**
+- Pipeline state is checkpointed to **Redis** before every node and at every HITL pause
+- On HITL pause, the executor publishes a WebSocket event and blocks on Redis pub/sub (`wait_for_resume`)
+- Frontend receives the event, renders the confirmation UI, user responds → Redis publish → executor unblocks
+- If the user takes 3 hours to respond, the state survives (24h TTL)
+- The pipeline is a **Celery task** — the WebSocket server and the executor are different processes communicating via Redis
+
+**4. Feedback-Driven Partial Rerun (Non-Linear Control Flow)**
+
+The most architecturally interesting piece. After pipeline completion:
+
+```python
+RERUN_SUGGESTIONS = {
+    FeedbackTarget.STRATEGY:  "strategy_phase2",    # re-derive Big Idea + channels
+    FeedbackTarget.STRUCTURE: "deck_orchestrator",  # re-plan slide structure
+    FeedbackTarget.SLIDE:     "slide_content",      # regenerate slide copy
+    FeedbackTarget.RESOURCE:  "resource_agent",     # re-match resources
+    FeedbackTarget.OVERALL:   "parallel_research_strategy",  # full redo
+}
+```
+
+When client feedback triggers a rerun:
+- Executor skips all nodes before `start_from` in the `node_sequence`
+- Upstream state (brief, research, etc.) is preserved from Redis
+- Only downstream nodes re-execute
+- **Rejected directions** from feedback are injected as constraints into Strategy Phase 2's prompt, preventing the system from repeating mistakes
+- **Approved directions** are embedded into the brand_spec Pinecone namespace, improving future runs for this client
+
+This creates a **non-linear DAG** where the pipeline can jump back to any node while preserving partial results — not just a linear retry.
+
+**5. Inter-Agent Data Contracts (Structured JSON)**
+
+Agents communicate via explicit JSON schemas, not free-text:
+
+```
+Strategy Phase 2 output:
+{
+  "big_idea": "...",
+  "communication_logic": "...",
+  "channels": ["xiaohongshu", "douyin", "offline_event"],
+  "resource_types": ["kol", "vendor"],
+  "budget_allocation": {"xiaohongshu": 40, "douyin": 35, "event": 25},
+  "kpis": [...],
+  "timeline_phases": [...]
+}
+```
+
+- Resource Agent reads `resource_types` and `channels` to decide what to retrieve
+- Deck Orchestrator reads `channels` and `budget_allocation` to structure the deck
+- Slide Content Agent reads everything above to write per-slide content
+- Brand Check compares `big_idea` + `communication_logic` against brand_spec RAG embeddings
+
+This eliminates fragile keyword-matching (e.g., scanning for "KOL" in prose text) and makes the pipeline deterministic given the same strategy output.
+
+**6. Version Snapshots and Rollback**
+
+Every pipeline completion (initial or rerun) triggers an automatic version save:
+- Full state snapshot stored in MongoDB `proposal_versions` collection
+- Versions are immutable — rollback creates a **new** version from an old snapshot
+- Diff API compares any two versions field-by-field
+- Frontend shows version timeline with trigger labels (Initial / Rerun / Rollback)
 
 ### Agent Capabilities
 
-| Agent | What It Does |
-|-------|-------------|
-| **Brief Analyzer** | Parses free-text briefs → structured fields (client, theme, audience, channels, budget, timeline). Detects missing fields and generates clarification questions. |
-| **Research Agent** | Web search (Tavily → DuckDuckGo fallback) + internal history RAG + social data APIs (Chanmama/Feigua for CN, CreatorIQ for global) + multimodal competitor screenshot analysis via Claude Vision. |
-| **Strategy Agent** | Two-phase: Phase 1 (audience insights, brand direction) runs parallel with research. Phase 2 (Big Idea, communication logic, channel mix, budget allocation, KPIs) integrates research results. Outputs structured JSON consumed by downstream agents. |
-| **Resource Agent** | Multi-type matching: KOL/KOC, media outlets, vendors (event/production), ad placements (OOH/elevator/cinema). Auto-detects needed types from strategy output. Skips entirely when no external resources needed. |
-| **Deck System** | Orchestrator plans structure (three-tier priority: global → client → project templates). Content Agent generates per-slide copy with brand tone from RAG. Narrative Agent provides page-referenced coherence suggestions. |
-| **PPT Builder** | Template-based assembly via python-pptx. 5 templates (social, PR, integrated, brand_refresh, default). Web preview + .pptx download. |
+| Agent | Inputs | Outputs | Key Behaviors |
+|-------|--------|---------|---------------|
+| **Brief Analyzer** | Raw text brief | `structured_brief{}` | Extracts fields (client, theme, audience, channels, budget, timeline, objective). Detects missing fields → generates clarification questions. |
+| **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily → DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN → Chanmama/Feigua, Global → CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
+| **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
+| **Strategy P2** | `research_result` + `strategy_insight` + rejected directions | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. |
+| **Resource Agent** | `strategy_result.resource_types[]`, `strategy_result.channels[]` | `resource_result{}` | Multi-type parallel retrieval (KOL/KOC, media, vendor, placement). Auto-detects needed types. Conditional skip. |
+| **Deck System** | `strategy_result`, `resource_result`, brand RAG | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup. Content Agent: per-slide generation with brand tone. Narrative Agent: non-blocking coherence check with page refs. |
+| **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
 
 ### Human-in-the-Loop (HITL)
 
-Five pause points where the pipeline stops and waits for human confirmation via WebSocket push:
+Five pause points. Each one: executor checkpoints state → publishes WebSocket event → blocks on Redis pub/sub → user responds → executor resumes.
 
-| Node | Decision | Rerun Options |
-|------|----------|---------------|
-| 1 | Confirm brief interpretation | — |
-| 2 | Confirm strategy direction | Refresh research / rerun strategy only / both |
-| 3 | Confirm or edit slide structure | Add / remove / reorder slides |
-| 4 | Gallery Review: browse all slides | Mark pages for batch regeneration |
-| 5 | Record client feedback | Targeted rerun from any upstream node |
+| Node | What the User Sees | What They Can Do | What Happens Next |
+|------|-------------------|------------------|-------------------|
+| 1 | Parsed brief fields + clarification questions | Confirm / edit fields | Pipeline continues to parallel phase |
+| 2 | Strategy result + research summary + brand check status | Confirm / reject / request research refresh | If rejected: re-executes strategy with feedback. If refresh: re-runs research first. |
+| 3 | Proposed slide structure (titles, ordering) | Add / remove / reorder slides | Deck generation uses modified structure |
+| 4 | Full slide gallery + narrative suggestions panel | Mark slides for regeneration (batch) | Flagged slides re-generated, others preserved |
+| 5 | Final proposal + feedback form | Tag feedback target + directions | Triggers targeted rerun from appropriate node |
 
-### Client Feedback Loop
+### Client Feedback Loop (Learning System)
 
-- Approved directions are embedded into the Brand Library (Pinecone `brand_spec` namespace) for future pipeline runs
-- Rejected directions are injected as constraints in Strategy Phase 2 to prevent repetition
-- System auto-suggests which node to rerun based on feedback target (strategy / structure / slide / resource)
-- Supports partial pipeline re-execution via `start_from` parameter
+Not just a one-shot rerun — the system **learns** from client feedback:
+
+```
+Feedback submitted
+    │
+    ├─ approved_directions[] ──▶ Embed into brand_spec_{client_id} namespace
+    │                            (available to ALL future pipeline runs for this client)
+    │
+    ├─ rejected_directions[] ──▶ Stored in feedback collection
+    │                            (injected as constraints next time Strategy P2 runs)
+    │
+    └─ trigger_rerun ──────────▶ RERUN_SUGGESTIONS[target] → start_from node
+                                  (executor skips upstream, re-runs downstream)
+```
+
+Over multiple proposals for the same client, the system accumulates brand knowledge:
+- Strategy outputs improve (avoids rejected directions, aligns with approved ones)
+- Brand tone becomes more consistent (approved directions in RAG context)
+- Resource matching improves (feedback on KOL/media selections refines future queries)
 
 ### RAG & Knowledge System
 
@@ -225,27 +349,30 @@ pitchcraft/
 │   │   ├── stability/            # budget.py (RequestBudget), fallback.py (FallbackChain)
 │   │   ├── models/               # resource.py, feedback.py, pipeline.py
 │   │   └── database/             # connection.py, repositories (mongo collections)
-│   ├── tests/                    # 93 unit tests (pure logic, mocked deps)
+│   ├── tests/                    # 105 unit tests + integration suite + load tests
 │   └── Dockerfile                # Python 3.11 + LibreOffice headless + poppler-utils
 ├── frontend/
 │   ├── app/                      # Next.js App Router pages
 │   │   ├── pipeline/             # Pipeline execution + HITL confirmation UIs
-│   │   ├── proposals/[id]/       # Proposal detail + FeedbackPanel
+│   │   ├── proposals/[id]/       # Proposal detail + FeedbackPanel + VersionPanel
 │   │   ├── clients/              # Client management
 │   │   ├── files/                # File library (upload, visual ref thumbnails)
 │   │   ├── resources/            # Resource library (list, filter, Excel import)
-│   │   └── research/             # Research data display + refresh
+│   │   ├── research/             # Research data display + refresh
+│   │   └── analytics/            # Analytics dashboard (KPIs, stage perf, feedback stats)
 │   ├── components/
 │   │   ├── gallery/              # GalleryView, SlideThumbnail, SlidePreview, NarrativePanel
 │   │   ├── hitl/                 # HITL confirmation components (Nodes 1-4)
 │   │   ├── feedback/             # FeedbackPanel (Node 5)
+│   │   ├── versions/             # VersionPanel (history, diff, rollback)
 │   │   ├── pipeline/             # Pipeline execution status view
 │   │   └── layout/               # Nav, shell
 │   ├── hooks/                    # useWebSocket, usePipeline
 │   └── lib/                      # api.ts (HTTP client), ws.ts (WebSocket)
 ├── infrastructure/
-│   └── docker/
-│       └── docker-compose.yml    # 8 services: backend, frontend, worker, redis, mongo, nginx, bge-m3, pinecone
+│   ├── docker/
+│   │   └── docker-compose.yml    # 8 services with healthchecks
+│   └── terraform/                # AWS deployment (ECS Fargate + ALB + ElastiCache + CloudWatch)
 ├── scripts/
 │   └── generate_templates.py     # PPT template generator (5 types)
 ├── .github/workflows/ci.yml      # pytest + lint + frontend build (3 parallel jobs)
@@ -314,7 +441,7 @@ cd backend && pytest tests/ -v
 
 **Phase 2 (Research & Resource Enhancement)** — Complete. Multimodal research, multi-type resources, client feedback loop, visual reference processing.
 
-**Phase 3 (Production Hardening)** — In progress. Version management, analytics dashboard, deployment infrastructure.
+**Phase 3 (Production Hardening)** — Mostly complete. Version management, analytics dashboard, Terraform deployment, health checks, integration/load tests done. Remaining: Pinecone/MongoDB backup strategy, PPT template expansion, PDF export.
 
 See [ROADMAP.md](./ROADMAP.md) for detailed progress.
 
