@@ -42,3 +42,31 @@ app.include_router(ws_router)
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/health/detailed")
+async def health_detailed():
+    import redis.asyncio as aioredis
+    from backend.core.database.connection import get_database
+
+    checks = {}
+
+    # MongoDB
+    try:
+        db = await get_database()
+        await db.command("ping")
+        checks["mongodb"] = "ok"
+    except Exception as e:
+        checks["mongodb"] = f"error: {e}"
+
+    # Redis
+    try:
+        r = aioredis.from_url(settings.redis_url)
+        await r.ping()
+        await r.aclose()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"error: {e}"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    return {"status": "ok" if all_ok else "degraded", "checks": checks}

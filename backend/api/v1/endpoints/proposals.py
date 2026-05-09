@@ -9,6 +9,7 @@ from backend.api.v1.permissions import CurrentUser, get_current_user
 from backend.core.database.connection import get_database
 from backend.core.database.repositories.feedback import FeedbackRepository
 from backend.core.database.repositories.proposals import ProposalRepository
+from backend.core.database.repositories.proposal_versions import ProposalVersionRepository
 from backend.core.graph.executor import PipelineExecutor
 from backend.core.models.feedback import RERUN_SUGGESTIONS, FeedbackTarget
 
@@ -137,3 +138,122 @@ async def submit_feedback(
         suggested_rerun_node=suggested_node,
         rerun_triggered=rerun_triggered,
     )
+
+
+# --- Version Management ---
+
+
+class VersionNoteRequest(BaseModel):
+    note: str = ""
+
+
+@router.get("/{proposal_id}/versions")
+async def list_versions(proposal_id: str, user: CurrentUser = Depends(get_current_user)):
+    db = await get_database()
+    repo = ProposalVersionRepository(db)
+    versions = await repo.find_by_proposal(proposal_id)
+    return [
+        {
+            "_id": v["_id"],
+            "version": v["version"],
+            "trigger": v.get("trigger", ""),
+            "note": v.get("note", ""),
+            "created_at": v.get("created_at"),
+        }
+        for v in versions
+    ]
+
+
+@router.get("/{proposal_id}/versions/{version}")
+async def get_version(
+    proposal_id: str, version: int, user: CurrentUser = Depends(get_current_user)
+):
+    db = await get_database()
+    repo = ProposalVersionRepository(db)
+    doc = await repo.get_version(proposal_id, version)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return doc
+
+
+@router.put("/{proposal_id}/versions/{version}/note")
+async def update_version_note(
+    proposal_id: str,
+    version: int,
+    request: VersionNoteRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    db = await get_database()
+    repo = ProposalVersionRepository(db)
+    doc = await repo.get_version(proposal_id, version)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Version not found")
+    await repo.update(doc["_id"], {"note": request.note})
+    return {"status": "updated"}
+
+
+@router.get("/{proposal_id}/versions/{v1}/diff/{v2}")
+async def diff_versions(
+    proposal_id: str, v1: int, v2: int, user: CurrentUser = Depends(get_current_user)
+):
+    db = await get_database()
+    repo = ProposalVersionRepository(db)
+    doc1 = await repo.get_version(proposal_id, v1)
+    doc2 = await repo.get_version(proposal_id, v2)
+    if not doc1 or not doc2:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    snap1 = doc1.get("snapshot", {})
+    snap2 = doc2.get("snapshot", {})
+
+    diff = {}
+    all_keys = set(list(snap1.keys()) + list(snap2.keys()))
+    for key in all_keys:
+        val1 = snap1.get(key)
+        val2 = snap2.get(key)
+        if val1 != val2:
+            diff[key] = {"v1": val1, "v2": val2}
+
+    return {
+        "proposal_id": proposal_id,
+        "v1": v1,
+        "v2": v2,
+        "changed_fields": list(diff.keys()),
+        "diff": diff,
+    }
+
+
+@router.post("/{proposal_id}/versions/{version}/rollback")
+async def rollback_to_version(
+    proposal_id: str, version: int, user: CurrentUser = Depends(get_current_user)
+):
+    db = await get_database()
+    repo = ProposalVersionRepository(db)
+    target = await repo.get_version(proposal_id, version)
+    if not target:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    snapshot = target.get("snapshot", {})
+
+    # Create a new version from the old snapshot (rollback is non-destructive)
+    state_for_save = {
+        **snapshot,
+        "proposal_id": proposal_id,
+        "project_id": target.get("project_id", ""),
+        "client_id": target.get("client_id", ""),
+    }
+    new_version = await repo.save_version(
+        proposal_id,
+        state_for_save,
+        trigger=f"rollback_from_v{version}",
+        note=f"Rolled back to version {version}",
+    )
+
+    # Update Redis state so the active proposal reflects the rollback
+    executor = PipelineExecutor(proposal_id)
+    current_state = await executor.load_state()
+    if current_state:
+        current_state.update(snapshot)
+        await executor.save_state(current_state)
+
+    return {"status": "rolled_back", "new_version": new_version}

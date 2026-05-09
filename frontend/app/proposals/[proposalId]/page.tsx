@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import FeedbackPanel from "@/components/feedback/FeedbackPanel";
+import VersionPanel from "@/components/versions/VersionPanel";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -125,7 +126,8 @@ export default function ProposalPage() {
         </div>
 
         <div className="col-span-1">
-          <div className="sticky top-8">
+          <div className="sticky top-8 space-y-4">
+            <VersionPanel proposalId={proposalId} onRollback={loadProposal} />
             <FeedbackPanel proposalId={proposalId} onSubmitted={loadProposal} />
           </div>
         </div>

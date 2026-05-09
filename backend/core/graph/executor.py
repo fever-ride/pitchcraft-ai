@@ -10,6 +10,7 @@ import redis.asyncio as redis
 from backend.core.config import settings
 from backend.core.database.connection import get_database
 from backend.core.database.repositories.proposals import ProposalRepository
+from backend.core.database.repositories.proposal_versions import ProposalVersionRepository
 from backend.core.database.repositories.stage_metrics import StageMetricsRepository
 from backend.core.graph.state import BudgetExceeded, PipelineState, RequestBudget
 
@@ -152,6 +153,9 @@ class PipelineExecutor:
 
             await self._save_metrics(state, metrics)
 
+            trigger = "rerun" if start_from else "pipeline_complete"
+            await self._save_version(state, trigger=trigger)
+
         except BudgetExceeded as e:
             await self.set_status("budget_exceeded", None)
             logger.warning(f"Pipeline {self.pipeline_id} budget exceeded: {e}")
@@ -223,6 +227,12 @@ class PipelineExecutor:
     async def _notify_complete(self, pptx_path: str):
         from backend.api.v1.websocket import manager
         await manager.broadcast_pipeline_complete(self.pipeline_id, pptx_path)
+
+    async def _save_version(self, state: dict, trigger: str = "pipeline_complete"):
+        db = await get_database()
+        repo = ProposalVersionRepository(db)
+        proposal_id = state.get("proposal_id", self.pipeline_id)
+        await repo.save_version(proposal_id, state, trigger=trigger)
 
     async def _save_metrics(self, state: dict, metrics: dict):
         db = await get_database()

@@ -29,9 +29,18 @@ services:
     env_file:
       - ../../.env
     depends_on:
-      - mongodb
-      - redis
-      - embedding
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      embedding:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     networks:
       - pitchcraft_network
 
@@ -73,6 +82,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - pitchcraft_network
 
@@ -82,6 +96,11 @@ services:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - pitchcraft_network
 

@@ -1,8 +1,34 @@
-// TODO: add token refresh interceptor — on 401, call /api/v1/auth/refresh then retry
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+let isRefreshing = false;
+let refreshQueue: Array<() => void> = [];
+
+function getToken(): string | null {
+  return typeof window !== "undefined" ? localStorage.getItem("token") : null;
+}
+
+async function refreshToken(): Promise<boolean> {
+  const refresh = typeof window !== "undefined" ? localStorage.getItem("refresh") : null;
+  if (!refresh) return false;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refresh }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    localStorage.setItem("token", data.access_token);
+    if (data.refresh_token) localStorage.setItem("refresh", data.refresh_token);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -12,6 +38,30 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
     headers: { ...headers, ...options?.headers },
   });
+
+  if (res.status === 401 && token) {
+    if (!isRefreshing) {
+      isRefreshing = true;
+      const refreshed = await refreshToken();
+      isRefreshing = false;
+
+      if (refreshed) {
+        refreshQueue.forEach((cb) => cb());
+        refreshQueue = [];
+        return request<T>(path, options);
+      } else {
+        refreshQueue = [];
+        localStorage.removeItem("token");
+        localStorage.removeItem("refresh");
+        if (typeof window !== "undefined") window.location.href = "/login";
+        throw new Error("Session expired");
+      }
+    } else {
+      return new Promise<T>((resolve) => {
+        refreshQueue.push(() => resolve(request<T>(path, options)));
+      });
+    }
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

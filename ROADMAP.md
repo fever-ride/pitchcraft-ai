@@ -174,26 +174,29 @@ Version control, analytics, deployment infrastructure.
 
 ### 3.1 Version Management
 
-- [ ] Auto-save version on each generation or modification
-- [ ] Version diff view (what changed between versions)
-- [ ] One-click rollback to any previous version
-- [ ] Version notes
+- [x] Auto-save version on each generation or modification (executor saves snapshot on pipeline_complete and rerun)
+- [x] Version diff view (what changed between versions) — field-level diff API + frontend side-by-side comparison
+- [x] One-click rollback to any previous version (creates new version from old snapshot, updates Redis state)
+- [x] Version notes (editable per-version via PUT endpoint)
 
 ### 3.2 Analytics Dashboard
 
-- [ ] Agent trigger rate and interception rate
-- [ ] Brief Analyzer clarification frequency
-- [ ] Narrative Agent suggestion acceptance rate
-- [ ] Average pipeline execution time
-- [ ] Request Budget usage distribution
-- [ ] Cache hit rate
+- [x] Agent trigger rate and interception rate (resource_agent_trigger_rate + per-stage trigger_count)
+- [ ] Brief Analyzer clarification frequency (needs clarification event tracking)
+- [ ] Narrative Agent suggestion acceptance rate (needs acceptance event tracking)
+- [x] Average pipeline execution time (avg_duration_s from stage_metrics aggregation)
+- [x] Request Budget usage distribution (avg_llm_calls, avg_search_calls)
+- [x] Cache hit rate (cached_research_entries count from Redis scan)
+- [x] Feedback stats: rerun trigger rate, target distribution, direction counts
+- [x] Version stats: total versions, rerun count, rollback count, trigger distribution
+- [x] Frontend dashboard page (/analytics) with KPI cards, stage bar chart, feedback breakdown
 
 ### 3.3 Infrastructure and DevOps
 
 - [x] CI/CD: GitHub Actions (pytest + lint + frontend build → Docker image push)
-- [ ] Terraform deployment scripts
-- [ ] Health checks and alerting
-- [ ] Log aggregation
+- [x] Terraform deployment scripts (ECS Fargate + ALB + ElastiCache + ECR + CloudWatch)
+- [x] Health checks and alerting (detailed /health/detailed endpoint, Docker healthchecks, CloudWatch alarms)
+- [x] Log aggregation (CloudWatch Logs with 30-day retention, per-service log groups)
 - [ ] Pinecone index backup strategy
 - [ ] MongoDB backup and recovery
 
@@ -201,9 +204,9 @@ Version control, analytics, deployment infrastructure.
 
 ### 3.4 Testing
 
-- [x] Unit tests (93 passing, pure logic + mocked deps)
-- [ ] Integration tests: Docker Compose 起全套服务后跑端到端 pipeline
-- [ ] Load test: concurrent pipeline runs, budget enforcement under parallelism
+- [x] Unit tests (105 passing, pure logic + mocked deps)
+- [x] Integration tests: Docker Compose E2E (health, pipeline start, status, versions, analytics, files, resources)
+- [x] Load test: Locust script for concurrent pipelines, budget enforcement, analytics queries
 
 ### 3.5 Quality of Life
 
@@ -211,7 +214,7 @@ Version control, analytics, deployment infrastructure.
 - [ ] Client VI color/font customization in PPT Builder
 - [ ] Batch operations (run pipeline for multiple projects)
 - [ ] PDF export as alternative to .pptx
-- [ ] Token refresh interceptor in frontend API client
+- [x] Token refresh interceptor in frontend API client (auto-refresh on 401, queued retries, redirect to login on failure)
 
 ---
 
