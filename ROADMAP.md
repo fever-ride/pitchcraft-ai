@@ -419,6 +419,16 @@ Optional:  admin can mark records as "client_only" (isolate competing brands)
 
 This enables faster accumulation. A beauty launch for Client A informs planning for Client B's beauty launch.
 
+**Privacy limitation (known, acceptable for current scope):**
+
+Removing `client_name` is necessary but not sufficient for full anonymization. A combination of industry + budget_tier + target_audience can be re-identifying in niche markets (e.g. "automotive, 50M budget, new energy, family" narrows to very few brands in China). Current desensitization is adequate for single-agency internal use where all users already have access to all client work. For multi-agency SaaS or external licensing of campaign data, stronger measures would be needed:
+- Budget ranges instead of exact figures (already using tiers, not exact numbers)
+- Generalized audience descriptions ("young female" not "Gen-Z female in tier-1 cities aged 18-24")
+- Minimum k-anonymity check before cross-client retrieval returns a record
+- Opt-in per client: client onboarding includes consent for anonymized cross-reference
+
+These are not implemented now. The current design prioritizes knowledge accumulation speed for a single agency deployment.
+
 **Methodology Library evolution path:**
 
 ```
@@ -490,7 +500,7 @@ CampaignRecord:
     slide_count
     chapter_structure[]                (section titles in order)
     presentation_style                 (data-heavy, visual, storytelling)
-    visual_style:                      (extracted from PPTX pages via Claude Vision, reuses Phase 2.4 pipeline)
+    visual_style:                      (DEFERRED — optional enrichment, high implementation cost)
       color_palette[]                  (hex values: primary, secondary, accent, background)
       layout_patterns[]                (e.g. "full-bleed image", "left-right split", "centered title")
       typography_style                 (serif/sans-serif, weight hierarchy)
@@ -538,12 +548,20 @@ Note: Archive Pipeline no longer writes text chunks to brand_style namespace. St
 - LLM marks each section's confidence (high if numbers are explicit in report, low if inferred)
 - Fields not found in source are left null, not hallucinated
 
-**Visual style extraction (PPTX archives only):**
-- If uploaded file is .pptx, trigger visual analysis in parallel with text extraction
-- Reuses existing Phase 2.4 pipeline: PPTX → page-level PNG → Claude Vision → style JSON
-- Results written into CampaignRecord.deck_info.visual_style
-- Enables Deck Orchestrator to reference not just structure but also visual identity of past decks
-- PDF reports skip this step (typically text-heavy, no design value)
+**Visual style extraction (PPTX archives only) — DEFERRED, optional:**
+
+Writing "reuses Phase 2.4 pipeline" understates the complexity. Actual requirements:
+- PPTX → PNG rendering (LibreOffice headless, already in Docker but slow for 20+ pages)
+- Per-page Claude Vision calls (cost: ~$0.01-0.03 per page, 20-page deck = $0.20-0.60 per archive)
+- Style JSON → standardized `color_palette[]`, `typography_style` fields (output stability not guaranteed across runs)
+- Aggregation logic to merge per-page styles into a file-level summary
+
+Phase 2.4 already does this for brand_spec uploads (stores as text description in Pinecone). But Campaign Knowledge Base needs structured JSON fields, not text embeddings. Adapter work is non-trivial.
+
+**Decision:** Defer visual_style extraction from CampaignRecord v1. The `deck_info.visual_style` field exists in the schema but is populated only when budget/priority justifies it. First iteration focuses on text-extractable fields (chapter_structure, slide_count, presentation_style). Visual style can be added later as an optional enrichment step.
+
+- [ ] (Optional, low priority) Adapt Phase 2.4 output to write structured JSON into CampaignRecord.deck_info.visual_style
+- PDF reports skip this step entirely (text-heavy, no design value)
 
 ### 5.4 Human Confirmation Step
 

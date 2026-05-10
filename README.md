@@ -327,6 +327,8 @@ Response:  desensitized (no client_name exposed to agents, only meta + decisions
 Optional:  admin can mark records as "client_only" to isolate competing brands
 ```
 
+Note: name removal is necessary but not sufficient for full anonymization. Meta field combinations (industry + budget + audience) can be re-identifying in niche markets. Current design is adequate for single-agency internal use. Multi-tenant SaaS would require stricter measures (k-anonymity, generalized ranges, opt-in consent). See ROADMAP Phase 5.1 for details.
+
 **How agents consume it (per-agent retrieval profiles):**
 
 | Agent | What it reads from CampaignRecord | Why |
