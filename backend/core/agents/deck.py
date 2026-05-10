@@ -7,7 +7,7 @@ from backend.core.agents.llm import invoke_llm_structured
 from backend.core.agents.schemas import DeckStructureResult, NarrativeResult, SlideContent
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import resolve_output_language
-from backend.core.rag.retriever import retrieve_for_client
+from backend.core.rag.retriever import format_results_with_sources, retrieve_for_client
 from backend.core.database.connection import get_database
 
 ORCHESTRATOR_SYSTEM = {
@@ -92,7 +92,7 @@ async def generate_slide_content(
     brand_results = await retrieve_for_client(
         "brand tone voice style guidelines", client_id, project_id, top_k=3
     )
-    brand_tone = "\n".join([r.text for r in brand_results]) or "No brand tone reference available."
+    brand_tone = format_results_with_sources(brand_results) or "No brand tone reference available."
 
     user_msg = (
         f"Slide: {json.dumps(slide, ensure_ascii=False)}\n"

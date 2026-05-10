@@ -105,6 +105,28 @@ async def retrieve(
     return results[:top_k]
 
 
+def format_results_with_sources(results: list[RAGResult]) -> str:
+    """Format RAG results with source citations for agent context.
+
+    Example output:
+      [brand_guidelines.pdf, page 3]
+      Brand tone should remain youthful and energetic...
+
+      [past_deck.pptx, slide 7]
+      Communication strategy centers on authenticity...
+    """
+    if not results:
+        return ""
+    parts = []
+    for r in results:
+        loc = r.source_location
+        if loc:
+            parts.append(f"[{loc}]\n{r.text}")
+        else:
+            parts.append(r.text)
+    return "\n\n".join(parts)
+
+
 async def retrieve_for_client(
     query: str,
     client_id: str,

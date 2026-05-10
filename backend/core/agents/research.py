@@ -11,7 +11,7 @@ from backend.core.config import settings
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import detect_language
 from backend.core.rag.cache import SemanticCache
-from backend.core.rag.retriever import retrieve_for_client
+from backend.core.rag.retriever import format_results_with_sources, retrieve_for_client
 from backend.core.stability.fallback import FallbackChain
 
 SYSTEM_PROMPT = {
@@ -40,7 +40,7 @@ async def _search_duckduckgo(query: str) -> list[dict]:
 
 async def _search_internal_only(query: str, client_id: str, project_id: str | None) -> list[dict]:
     rag_results = await retrieve_for_client(query, client_id, project_id, top_k=5)
-    return [{"title": "Internal", "content": r.text, "url": ""} for r in rag_results]
+    return [{"title": r.source_location or "Internal", "content": r.text, "url": ""} for r in rag_results]
 
 
 def _detect_locale(brief: dict) -> str:
@@ -96,7 +96,7 @@ async def run_research(
     rag_results = await retrieve_for_client(
         search_query, client_id, project_id, top_k=5
     )
-    internal_context = "\n".join([r.text for r in rag_results])
+    internal_context = format_results_with_sources(rag_results)
 
     # 4. Visual competitor analysis (if screenshots provided)
     visual_context = ""

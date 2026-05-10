@@ -317,7 +317,7 @@ Improved: "[BrandX | brand_spec | brand_guidelines_2025.pdf | Tone of Voice]
 - [x] Prefix format: `[Client | file_type | filename | section/page]`
 - [x] PDF: include page number in prefix
 - [x] PPTX: include slide index in prefix
-- [ ] Apply to new uploads only. Optional migration script for existing vectors.
+- [x] Migration script for existing vectors (`scripts/migrate_vectors.py` with --dry-run support)
 
 **4.5.2 Source Location Tracking**
 
@@ -327,8 +327,8 @@ Store page/slide position in Pinecone metadata for citation traceability.
 - [x] PPTX chunks: `slide_index` in Pinecone metadata
 - [x] `filename` stored in Pinecone metadata for all chunks
 - [x] RAGResult exposes `source_location` property (e.g. "brand_guidelines.pdf, page 3")
-- [ ] Agents can cite: "See brand guidelines, page 3" or "Reference deck, slide 7"
-- [ ] HITL users can verify RAG-sourced claims against original document location
+- [x] Agents receive cited context via `format_results_with_sources()` (Strategy, Research, Deck agents updated)
+- [ ] HITL UI displays source citations alongside RAG-sourced content (frontend)
 
 **4.5.3 Adaptive Chunking by File Type**
 

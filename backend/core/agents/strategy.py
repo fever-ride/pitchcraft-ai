@@ -9,7 +9,7 @@ from backend.core.database.connection import get_database
 from backend.core.database.repositories.feedback import FeedbackRepository
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import detect_language
-from backend.core.rag.retriever import retrieve_for_client
+from backend.core.rag.retriever import format_results_with_sources, retrieve_for_client
 
 PHASE1_SYSTEM = {
     "zh": "你是资深品牌策略师。基于brief和品牌资料库，输出受众洞察和品牌方向建议。",
@@ -42,7 +42,7 @@ async def run_strategy_phase1(
         project_id,
         top_k=5,
     )
-    brand_context = "\n".join([r.text for r in brand_results])
+    brand_context = format_results_with_sources(brand_results)
 
     user_msg = f"Brief:\n{json.dumps(brief, ensure_ascii=False)}\n\nBrand materials:\n{brand_context or 'No brand materials available.'}"
 
@@ -105,7 +105,7 @@ async def run_brand_check(
     brand_results = await retrieve_for_client(
         "brand guidelines tone values positioning", client_id, top_k=5
     )
-    brand_spec = "\n".join([r.text for r in brand_results])
+    brand_spec = format_results_with_sources(brand_results)
 
     if not brand_spec.strip():
         return BrandCheckResult(passed=True, issues=[])
