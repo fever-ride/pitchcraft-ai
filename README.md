@@ -225,53 +225,106 @@ Over multiple proposals for the same client, the system accumulates brand knowle
 
 ### Knowledge Architecture
 
-The system maintains two distinct knowledge stores, each solving a different problem:
+The system's knowledge design starts from what each agent needs at generation time, not from what data is available.
 
-| | Brand Library | Campaign Knowledge Base |
-|---|---|---|
-| **Purpose** | "What does this brand look like?" | "What did we do before, and did it work?" |
-| **Contains** | Brand guidelines, tone specs, visual identity, historical proposal text | Structured decision records with strategy, media plan, execution details, and outcome data |
-| **Storage** | Pinecone vectors (text chunks) | MongoDB structured documents + Pinecone proposition vectors |
-| **Retrieval** | Semantic similarity on text fragments | Metadata filter + semantic match on propositions, returns full structured records |
-| **Consumers** | Strategy P1 (brand direction), Brand Check (consistency), Slide Content (tone) | All pipeline agents (each reads its own module from the record) |
-| **Populated by** | Brand Library Pipeline + Client Feedback Loop | Archive Pipeline (LLM extraction from project recaps) |
+**Five knowledge layers** cover everything an agent needs to produce a professional proposal:
 
-These two stores serve complementary roles in every pipeline run. Brand Library provides constraints (output must align with brand). Campaign Knowledge Base provides references (similar past decisions and their outcomes inform new plans).
+```
+Knowledge System
+│
+├── Brand Library (brand identity)
+│   "What is this brand?"
+│   Constraint: agents cannot violate.
+│   Static. Updates when client rebrands.
+│   Implementation: Pinecone vector store (dedicated storage)
+│
+├── Campaign Knowledge Base (project experience)
+│   "What did we do before, and did it work?"
+│   Reference: agents can learn from but are not bound by.
+│   Dynamic. Grows with every archived project.
+│   Implementation: MongoDB + Pinecone propositions (dedicated storage)
+│
+├── Methodology Library (how to do the job)
+│   "What is the professional framework for this type of work?"
+│   Industry best practices, tier allocation frameworks, planning heuristics.
+│   Semi-static. Curated from team expertise.
+│   Implementation: embedded in agent system prompts (no dedicated storage)
+│   Evolution: hardcoded prompts → auto-distilled from Campaign Knowledge Base (Phase 5.9)
+│
+├── Industry Knowledge (external market context)
+│   "What is happening in the market right now?"
+│   Competitor moves, platform trends, audience behavior shifts.
+│   Volatile. Freshness matters more than persistence.
+│   Implementation: Research Agent real-time search + 30-day semantic cache (no dedicated storage)
+│
+└── Resource Library (available execution options)
+    "Who and what can we use?"
+    KOLs, media outlets, vendors, ad placements with profiles and history.
+    Dynamic. Maintained by users + enriched by system.
+    Implementation: MongoDB + Pinecone vectors (dedicated storage)
+```
+
+**Three of five layers have dedicated storage** (Brand Library, Campaign Knowledge Base, Resource Library). The other two are served by existing infrastructure: Methodology lives in prompts, Industry Knowledge lives in real-time search with caching. This avoids building storage for information that either changes rarely (methodology) or expires quickly (industry trends).
+
+**Agent needs mapped to knowledge layers:**
+
+| Agent | Brand Library | Campaign KB | Methodology | Industry | Resource Library |
+|-------|:---:|:---:|:---:|:---:|:---:|
+| Brief Analyzer | | past briefs | | | |
+| Strategy P1/P2 | brand constraints | past decisions | strategy frameworks | | |
+| Slide Content | copywriting style | | | | |
+| Media Planning | | past media plans + outcomes | tier allocation frameworks | | |
+| Resource Agent | | past execution results | | | resource profiles |
+| Research Agent | | | | real-time search | |
+| Deck Orchestrator | visual identity | past deck structures | | | |
+
+**Boundary rule between Brand Library and Campaign Knowledge Base:** If the information retains its value regardless of wording (numbers, decisions, outcomes), it belongs in Campaign Knowledge Base. If the value IS the wording itself (tone, phrasing, narrative style), it belongs in Brand Library.
 
 #### Brand Library
 
-Reference material for maintaining brand consistency across proposals.
+The brand's identity card. Stores what this brand IS, not what was done for it.
 
-**What it stores:** Raw text chunks from brand documents. Style descriptions extracted from visual references. Approved strategy directions from client feedback.
+**What it stores:**
+- Brand specifications: VI guidelines, tone of voice, core values, brand story
+- Copywriting style examples: past proposal text preserved for tone reference
+- Visual identity: color palettes, layout patterns, typography (extracted from design decks)
+- Approved strategy directions from client feedback
 
 **Pinecone namespaces** (all tenant-isolated):
 
 | Namespace | Content | Written By | Read By |
 |-----------|---------|-----------|---------|
 | `brand_spec_{client_id}` | Brand guidelines, tone specs, visual style summaries | Brand Library Pipeline + Feedback Loop | Strategy P1, Slide Content, Brand Check |
-| `brand_history_{client_id}` | Historical proposals, campaign copy | Brand Library Pipeline + Archive Pipeline | Research Agent |
-| `project_{project_id}` | Project briefs, competitor materials | Brand Library Pipeline | Research Agent |
+| `brand_style_{client_id}` | Historical proposal text as style/tone examples | Brand Library Pipeline | Slide Content Agent |
+| `project_{project_id}` | Current project briefs, competitor materials | Brand Library Pipeline | Research Agent |
 
-**How it grows over time:**
-- Users upload brand documents (guidelines, past decks, briefs). Text is chunked and embedded immediately.
+**How it grows:**
+- Users upload brand documents (guidelines, VI manuals). Text is chunked and embedded immediately.
 - Visual references (PPTX/PDF) are rendered to PNGs, analyzed by Claude Vision for style attributes, and stored as text descriptions.
 - Client feedback embeds approved directions into `brand_spec`, making future runs more aligned without manual re-upload.
 
+**What does NOT belong here:** Historical briefs, strategy decisions, media plans, budget numbers, outcome data. These are project experience, not brand identity.
+
 #### Campaign Knowledge Base (planned, Phase 5)
 
-Structured decision records from completed campaigns. Enables agents to reference past strategy, media allocation, execution, and measured outcomes when planning new work.
+The team's work history. Stores what was DONE, what was DECIDED, and whether it WORKED.
 
-**Three-layer design:**
+**What it stores:**
+- Historical project briefs (what the client asked for)
+- Strategy decisions (big idea, positioning, rejected directions)
+- Media plans (tier allocation, budget splits, channel selection rationale)
+- Execution details (which resources were used, content formats)
+- Outcome data (KPI results, what overperformed, what underperformed, lessons learned)
+
+**Cross-client retrieval (org-wide, desensitized):**
+
+Records are owned by `client_id` (clear data ownership), but retrieval searches across all clients in the org. This enables faster knowledge accumulation. A beauty launch for Client A informs planning for Client B's beauty launch.
 
 ```
-Layer 1: Raw text chunks (existing, in brand_history namespace)
-  → Style reference, tone matching, copywriting context
-
-Layer 2: Structured CampaignRecord in MongoDB + proposition vectors in Pinecone
-  → Decision-level reasoning: "similar campaign allocated budget this way, result was X"
-
-Layer 3: Distilled cross-campaign insights (deferred)
-  → Industry-level patterns from 10+ campaigns. Manual prompt knowledge initially.
+Storage:   each CampaignRecord belongs to a client_id
+Retrieval: matches by industry + campaign_type + budget_tier across all clients
+Response:  desensitized (no client_name exposed to agents, only meta + decisions + outcomes)
+Optional:  admin can mark records as "client_only" to isolate competing brands
 ```
 
 **How agents consume it (per-agent retrieval profiles):**
@@ -297,7 +350,7 @@ Three pipelines feed the knowledge stores. They share infrastructure (parser, ch
 Pipeline 1: Brand Library Pipeline
   Trigger: user uploads brand document (PDF/PPTX/DOCX) with file_type tag
   Flow:    stream to disk → Celery → parse → semantic chunk → BGE-M3 embed → Pinecone
-  Output:  text chunks in brand_spec / brand_history / project namespace
+  Output:  text chunks in brand_spec / brand_style / project namespace
   Note:    no LLM involved. Pure parse-chunk-embed.
 
 Pipeline 2: Resource Import Pipeline
@@ -308,10 +361,11 @@ Pipeline 2: Resource Import Pipeline
 Pipeline 3: Archive Pipeline
   Trigger: user uploads project recap/case study via POST /projects/{id}/archive
   Flow:    parse → LLM structured extraction → multi-destination distribution
-  Output:  three simultaneous outputs from a single upload:
-    ├── text chunks → brand_history namespace (Layer 1, same as Pipeline 1)
+  Output:  two simultaneous outputs from a single upload:
     ├── collaboration_history → resource profiles in MongoDB + re-embed to Pinecone
     └── [Phase 5] CampaignRecord → MongoDB campaign_records + proposition vectors
+  Note:    strategy decisions, budget data, outcomes go into CampaignRecord (structured).
+           Style/tone text no longer duplicated to brand_style namespace.
 ```
 
 **Visual Reference Processing** (sub-pipeline of Pipeline 1):
@@ -646,18 +700,19 @@ LLM is never responsible for flow decisions. It only handles the task within its
 
 ```
 Organization (Agency)
+  ├── Campaign Knowledge Base (org-wide, cross-client retrieval with desensitization)
   └── Users: account / lead_account / admin
        └── Clients (shared across org)
-            ├── Brand Library (brand specs, history, visual refs)
-            ├── Campaign Knowledge Base (structured decision records from past projects)
-            ├── Resource Library (KOLs, media, vendors, placements)
+            ├── Brand Library (brand specs, style, visual refs — per client)
+            ├── Resource Library (KOLs, media, vendors, placements — per client)
             └── Projects
                  └── Proposals (pipeline runs, versions, feedback)
 ```
 
 - Organization context derived from JWT. No org-switching UI needed.
 - Role-based permissions: account (own projects), lead_account (team projects), admin (org-wide).
-- Brand Library and Campaign Knowledge Base are shared at client level. All accounts in the org contribute and benefit.
+- Brand Library and Resource Library are per-client. All accounts in the org contribute and benefit.
+- Campaign Knowledge Base is org-wide. Records belong to a client but retrieval crosses client boundaries (desensitized). Admin can mark records as "client_only" for competing brand isolation.
 
 ---
 

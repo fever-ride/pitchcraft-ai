@@ -276,11 +276,13 @@ Richer resource profiles, knowledge accumulation from completed projects.
 - [x] New API: `POST /api/v1/projects/{id}/archive` (upload recap/case study)
 - [x] LLM structured extraction from one report → multi-destination:
   - Resource performance data → update `collaboration_history`, refresh resource embedding
-  - Strategy learnings → `brand_history_{client_id}` namespace
+  - Strategy learnings → `brand_history_{client_id}` namespace (to be replaced by CampaignRecord in Phase 5)
   - Industry insights → client knowledge base
   - Audience feedback/sentiment → audience insight pool
 - [x] Built on existing file upload + RAG pipeline, extended with extraction + routing
 - [x] `GET /api/v1/projects/{id}/archive` to check extraction status and results
+
+> **Phase 5 migration note:** Once Campaign Knowledge Base is implemented, strategy learnings and industry insights from archive extraction will route to structured CampaignRecord fields instead of raw text chunks in brand_history. The brand_history namespace will be renamed to brand_style and narrowed to copywriting style/tone reference only.
 
 ### 4.3 Progressive Resource Accumulation
 
@@ -333,7 +335,7 @@ Different document types have different information density. Adjust chunk parame
 | file_type | chunk_size | overlap | Rationale |
 |-----------|-----------|---------|-----------|
 | brand_spec | 800 | 200 | Rule-dense, every sentence matters |
-| brand_history | 1200 | 300 | Proposals/decks, longer narrative context |
+| brand_style | 1200 | 300 | Proposals/decks, longer narrative context for tone reference |
 | project_brief | 600 | 100 | Short, focused documents |
 | competitor_copy | 1000 | 200 | Articles, moderate density |
 
@@ -364,23 +366,78 @@ Structured knowledge RAG (this phase):
 
 The competitive moat is not the retrieval technology. It is the accumulated structured decision records that improve with every archived campaign. After 20+ campaigns, the system's recommendations are informed by real outcome data specific to this agency's clients and industry verticals.
 
-### 5.1 Knowledge Architecture (three layers)
+### 5.1 Knowledge Architecture
+
+**Design principle:** Start from what agents need at generation time, not from what data is available.
+
+**Full knowledge system (five layers):**
 
 ```
-Layer 1: Raw text chunks (existing)
-  brand_history namespace in Pinecone
-  Used for: style reference, tone matching, copywriting context
-  Status: already implemented in Phase 4
+Layer                        Role              Implementation              Status
+─────────────────────────────────────────────────────────────────────────────────────
+Brand Library                Constraint        Pinecone vectors            Implemented
+Campaign Knowledge Base      Reference         MongoDB + Pinecone props    This phase
+Methodology Library          Guidance          Agent system prompts        Implemented (static)
+Industry Knowledge           Context           Real-time search + cache    Implemented
+Resource Library             Execution pool    MongoDB + Pinecone vectors  Implemented
+```
 
-Layer 2: Structured campaign records (this phase)
-  MongoDB campaign_records collection + embedded summary in Pinecone
+Three layers have dedicated storage (Brand Library, Campaign Knowledge Base, Resource Library). Methodology lives in agent prompts and evolves via auto-distillation from Campaign Knowledge Base once enough records accumulate (Phase 5.9). Industry Knowledge is served by Research Agent's real-time search with 30-day semantic caching.
+
+**This phase builds Campaign Knowledge Base.** The other layers are already operational.
+
+**Campaign Knowledge Base vs Brand Library boundary:**
+
+```
+Brand Library (already implemented)
+  = Brand identity. What this brand IS.
+  = Constraint: agents cannot violate.
+  Stores: brand specs, visual identity, copywriting style examples, approved directions
+  Scope: per-client, relatively static
+  Namespace: brand_spec_{client_id}, brand_style_{client_id}
+
+Campaign Knowledge Base (this phase)
+  = Project experience. What was DONE and whether it WORKED.
+  = Reference: agents can learn from but are not bound by.
+  Stores: structured decision records (strategy, media plan, execution, outcomes)
+  Scope: org-wide cross-client retrieval (desensitized), accumulates with every project
+  Storage: MongoDB campaign_records + Pinecone campaign_knowledge_{client_id}
+```
+
+**Boundary rule:** If the information retains value regardless of wording (numbers, decisions, outcomes), it belongs in Campaign Knowledge Base. If the value IS the wording (tone, phrasing, narrative style), it belongs in Brand Library.
+
+**Cross-client retrieval design:**
+
+```
+Storage:   each CampaignRecord belongs to a client_id (clear data ownership)
+Retrieval: matches by industry + campaign_type + budget_tier across all clients in the org
+Response:  desensitized (no client_name, only meta + decisions + outcomes)
+Optional:  admin can mark records as "client_only" (isolate competing brands)
+```
+
+This enables faster accumulation. A beauty launch for Client A informs planning for Client B's beauty launch.
+
+**Methodology Library evolution path:**
+
+```
+Now:     tier allocation frameworks, planning heuristics written in agent system prompts
+Phase 5.9: auto-distill patterns from 10+ confirmed CampaignRecords
+           (e.g. "beauty launches: KOC consistently outperforms mid-tier on ROI")
+Future:  if methodology content grows beyond prompt capacity, migrate to RAG-retrievable format
+```
+
+**Two layers within Campaign Knowledge Base:**
+
+```
+Layer 1: Structured CampaignRecord (this phase)
+  MongoDB campaign_records collection + proposition vectors in Pinecone
   Used for: finding similar past campaigns, referencing specific decisions and outcomes
   Consumers: all pipeline agents (each reads different fields)
 
-Layer 3: Distilled industry insights (future, Phase 5.5)
+Layer 2: Distilled insights (Phase 5.9, feeds back into Methodology Library)
   MongoDB media_insights collection
   Used for: cross-campaign patterns, industry benchmarks
-  Initially: hand-written in prompts. Auto-distillation when case volume justifies.
+  Trigger: auto-distillation when a client accumulates 10+ confirmed records
 ```
 
 ### 5.2 CampaignRecord Schema Design
@@ -461,17 +518,17 @@ Most fields are optional. LLM extracts what it can. User confirms and fills gaps
 ```
 Current flow (unchanged):
   upload → parse → extract_archive() → ArchiveExtraction
-    → _distribute_to_brand_history() (text chunks → Pinecone)
     → _distribute_to_resources() (collaboration_history updates)
 
 New addition:
   extract_archive() → also produces CampaignRecord (new schema fields)
     → _distribute_to_campaign_records():
         1. Store full record in MongoDB campaign_records collection
-        2. Embed summary text into brand_history namespace with structured metadata
-           (campaign_type, industry, budget_tier as Pinecone metadata filters)
+        2. After confirmation: proposition extraction → Pinecone campaign_knowledge_{client_id}
     → Mark status as "pending_confirmation"
 ```
+
+Note: Archive Pipeline no longer writes text chunks to brand_style namespace. Strategy decisions, budget data, and outcomes belong in CampaignRecord (structured), not as raw text chunks. Style/tone reference is handled by Brand Library Pipeline from dedicated brand document uploads.
 
 **LLM extraction prompt design:**
 - Single extraction call produces both ArchiveExtraction (existing) and CampaignRecord (new)
@@ -626,25 +683,32 @@ Prevent agents from blindly using irrelevant historical data.
 - [ ] If insufficient: agent falls back entirely to prompt-embedded industry knowledge. No historical references cited.
 - [ ] Prevents: "We did a beauty launch before so here's the plan" when the retrieved campaign was actually a beauty branding campaign with completely different objectives
 
-### 5.9 Distilled Insights (deferred, manual first)
+### 5.9 Distilled Insights (Methodology Library auto-evolution)
+
+This phase connects Campaign Knowledge Base back to the Methodology Library. When enough project records accumulate, the system auto-distills patterns and updates agent prompts.
 
 When a client accumulates 10+ confirmed campaign records:
 - [ ] Auto-trigger insight distillation (batch LLM call across records)
 - [ ] Output: industry-level patterns (e.g. "beauty launch campaigns: KOC tier consistently outperforms mid-tier on ROI")
 - [ ] Store in `media_insights` collection, tagged by industry + campaign_type
 - [ ] Media Planning Agent prompt includes relevant distilled insights as background context
+- [ ] Closes the loop: Campaign Knowledge Base (raw experience) feeds Methodology Library (distilled guidance)
 
 **Initial approach (before auto-distillation):**
-- Industry frameworks written directly in Media Planning Agent's system prompt as few-shot references
+- Industry frameworks written directly in Media Planning Agent's system prompt as few-shot references (this IS the Methodology Library today)
 - Updated manually as team accumulates experience
 - Migrated to RAG-retrievable format once content volume justifies the infrastructure
 
-### Design Decisions (to be discussed)
+### Design Decisions
 
+**Decided:**
+- Cross-client retrieval: org-wide by default. Records belong to client_id (ownership) but retrieval matches across all clients by industry + campaign_type + budget_tier. Agent responses are desensitized (no client_name). Admin can mark records "client_only" for competing brand isolation.
+- Knowledge boundary: Brand Library stores brand identity (constraints, style). Campaign Knowledge Base stores project experience (decisions, outcomes). Boundary rule: if value survives rewording, it is Campaign Knowledge Base. If value IS the wording, it is Brand Library.
+
+**Open:**
 - Extraction reliability: single LLM call for full CampaignRecord, or split into multiple focused calls (meta + media_plan + outcome separately)? Single call is cheaper but may lose precision on numeric fields.
 - Confirmation UX: full form or guided wizard (step through meta > strategy > media > outcome)? Wizard reduces cognitive load but takes more clicks.
 - Retrieval ranking: when multiple campaigns match, how to rank? By recency? By outcome rating? By budget similarity? Likely a weighted combination.
-- Cross-client learning: should distilled insights be per-client or shared across the org? Per-client is safer (data isolation) but org-level learns faster.
 - Cold start: first campaign archived has no similar records. System should gracefully fall back to prompt-embedded industry knowledge without degrading output quality.
 - Proposition granularity: how many propositions per campaign record? Too few loses detail, too many increases retrieval noise. Estimate: 8-15 per record depending on data completeness.
 - Sparse vector weight: 0.2 keyword / 0.8 semantic is a starting point. May need tuning after first 10 records are indexed and tested.
