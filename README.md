@@ -223,50 +223,136 @@ Over multiple proposals for the same client, the system accumulates brand knowle
 - Brand tone becomes more consistent (approved directions in RAG context)
 - Resource matching improves (feedback on KOL/media selections refines future queries)
 
-### RAG & Knowledge System
+### Knowledge Architecture
 
-**Namespace Architecture** (all isolated per tenant):
+The system maintains two distinct knowledge stores, each solving a different problem:
 
-| Namespace Pattern | Content | Written By | Read By |
-|-------------------|---------|-----------|---------|
-| `brand_spec_{client_id}` | Brand guidelines, tone specs, visual style | File upload + feedback approval | Strategy P1, Slide Content, Brand Check |
-| `brand_history_{client_id}` | Historical proposals, campaign copy | File upload | Research Agent |
-| `project_{project_id}` | Project briefs, competitor materials | File upload | Research Agent |
-| `resource_kol_{client_id}` | KOL/KOC profiles (from Excel import) | Resource import | Resource Agent |
-| `resource_media_{client_id}` | Media outlet profiles | Resource import | Resource Agent |
-| `resource_vendor_{client_id}` | Vendor profiles | Resource import | Resource Agent |
-| `resource_placement_{client_id}` | Ad placement inventory | Resource import | Resource Agent |
+| | Brand Library | Campaign Knowledge Base |
+|---|---|---|
+| **Purpose** | "What does this brand look like?" | "What did we do before, and did it work?" |
+| **Contains** | Brand guidelines, tone specs, visual identity, historical proposal text | Structured decision records with strategy, media plan, execution details, and outcome data |
+| **Storage** | Pinecone vectors (text chunks) | MongoDB structured documents + Pinecone proposition vectors |
+| **Retrieval** | Semantic similarity on text fragments | Metadata filter + semantic match on propositions, returns full structured records |
+| **Consumers** | Strategy P1 (brand direction), Brand Check (consistency), Slide Content (tone) | All pipeline agents (each reads its own module from the record) |
+| **Populated by** | Brand Library Pipeline + Client Feedback Loop | Archive Pipeline (LLM extraction from project recaps) |
 
-**Ingestion Pipeline** (two paths):
+These two stores serve complementary roles in every pipeline run. Brand Library provides constraints (output must align with brand). Campaign Knowledge Base provides references (similar past decisions and their outcomes inform new plans).
+
+#### Brand Library
+
+Reference material for maintaining brand consistency across proposals.
+
+**What it stores:** Raw text chunks from brand documents. Style descriptions extracted from visual references. Approved strategy directions from client feedback.
+
+**Pinecone namespaces** (all tenant-isolated):
+
+| Namespace | Content | Written By | Read By |
+|-----------|---------|-----------|---------|
+| `brand_spec_{client_id}` | Brand guidelines, tone specs, visual style summaries | Brand Library Pipeline + Feedback Loop | Strategy P1, Slide Content, Brand Check |
+| `brand_history_{client_id}` | Historical proposals, campaign copy | Brand Library Pipeline + Archive Pipeline | Research Agent |
+| `project_{project_id}` | Project briefs, competitor materials | Brand Library Pipeline | Research Agent |
+
+**How it grows over time:**
+- Users upload brand documents (guidelines, past decks, briefs). Text is chunked and embedded immediately.
+- Visual references (PPTX/PDF) are rendered to PNGs, analyzed by Claude Vision for style attributes, and stored as text descriptions.
+- Client feedback embeds approved directions into `brand_spec`, making future runs more aligned without manual re-upload.
+
+#### Campaign Knowledge Base (planned, Phase 5)
+
+Structured decision records from completed campaigns. Enables agents to reference past strategy, media allocation, execution, and measured outcomes when planning new work.
+
+**Three-layer design:**
 
 ```
-Path 1: Document upload (PDF/PPTX/DOCX)
-  Stream to disk → Celery task → parse (text extraction) → semantic chunk
-  → BGE-M3 embed → Pinecone upsert (namespace by file_type + client_id)
+Layer 1: Raw text chunks (existing, in brand_history namespace)
+  → Style reference, tone matching, copywriting context
 
-Path 2: Resource Excel import
-  Parse rows → MongoDB (structured record per row) → convert to searchable text
-  → BGE-M3 embed → Pinecone upsert (namespace by resource_type + client_id)
+Layer 2: Structured CampaignRecord in MongoDB + proposition vectors in Pinecone
+  → Decision-level reasoning: "similar campaign allocated budget this way, result was X"
+
+Layer 3: Distilled cross-campaign insights (deferred)
+  → Industry-level patterns from 10+ campaigns. Manual prompt knowledge initially.
 ```
 
-**Retrieval** (hybrid: metadata filter + semantic similarity):
+**How agents consume it (per-agent retrieval profiles):**
+
+| Agent | What it reads from CampaignRecord | Why |
+|-------|----------------------------------|-----|
+| Strategy P2 | `strategy_decisions`, `outcome.lessons_learned` | Avoid repeating failed directions, reference successful strategies |
+| Media Planning | `media_plan` (full), `outcome.best_performing_tier` | Tier allocation ratios, budget splits that worked |
+| Resource Agent | `execution.resources_used`, `outcome.best_performing_channel` | Which resources delivered results in similar campaigns |
+| Deck Orchestrator | `deck_info.chapter_structure`, `deck_info.visual_style` | Slide structure and visual patterns from successful decks |
+
+**Key technical decisions:**
+- Proposition-based indexing: each record is decomposed into 8-15 atomic, self-contained insights (e.g. "[beauty | launch | 2M] KOC tier drove 60% engagement at 10% budget"). Enables precise matching without diluting signals in a single summary embedding.
+- Parent-child retrieval: search at proposition level (precision), expand to full structured modules before sending to the agent (context).
+- Human confirmation gate: LLM-extracted records are marked `pending_confirmation`. Only user-reviewed records enter retrieval. Prevents noisy or incorrect data from polluting recommendations.
+- Self-verification: after retrieval, LLM judges whether historical records are sufficiently similar to the current task. Falls back to prompt-embedded knowledge if not.
+
+### Ingestion Pipelines
+
+Three pipelines feed the knowledge stores. They share infrastructure (parser, chunker, embedder) but differ in output and destination.
+
+```
+Pipeline 1: Brand Library Pipeline
+  Trigger: user uploads brand document (PDF/PPTX/DOCX) with file_type tag
+  Flow:    stream to disk → Celery → parse → semantic chunk → BGE-M3 embed → Pinecone
+  Output:  text chunks in brand_spec / brand_history / project namespace
+  Note:    no LLM involved. Pure parse-chunk-embed.
+
+Pipeline 2: Resource Import Pipeline
+  Trigger: user uploads Excel or creates resource via API
+  Flow:    parse rows → MongoDB (structured record) → render to text → BGE-M3 embed → Pinecone
+  Output:  searchable resource vectors in resource_kol / resource_media / resource_vendor / resource_placement namespace
+
+Pipeline 3: Archive Pipeline
+  Trigger: user uploads project recap/case study via POST /projects/{id}/archive
+  Flow:    parse → LLM structured extraction → multi-destination distribution
+  Output:  three simultaneous outputs from a single upload:
+    ├── text chunks → brand_history namespace (Layer 1, same as Pipeline 1)
+    ├── collaboration_history → resource profiles in MongoDB + re-embed to Pinecone
+    └── [Phase 5] CampaignRecord → MongoDB campaign_records + proposition vectors
+```
+
+**Visual Reference Processing** (sub-pipeline of Pipeline 1):
+
+When the uploaded file is tagged as a visual reference (design deck, moodboard), an additional path runs in parallel:
+- PPTX/PDF rendered to page-level PNGs (LibreOffice headless + pdftoppm)
+- Claude Vision extracts style attributes per slide (colors, layout, typography, density)
+- File-level Visual Identity Summary aggregated from all slides
+- Style description converted to text, embedded via BGE-M3, stored in `brand_spec` namespace
+
+### Retrieval
+
+All retrieval uses hybrid search: Pinecone metadata filter (exact match on structured fields) followed by cosine similarity on the filtered subset.
 
 ```
 Agent constructs query + metadata filter
-  > BGE-M3 embeds query
-  > Pinecone: apply metadata filter FIRST (status, platform, type, followers_count)
+  → BGE-M3 embeds query (dense + sparse vectors)
+  → Pinecone: metadata filter FIRST (status, platform, type, followers_count)
     THEN cosine similarity on filtered subset
-  > score threshold (0.3-0.5) > return top_k text chunks as context
+  → Score threshold (0.3-0.5) → return top_k results as agent context
 
 Resource Agent example:
   query: "new product launch xiaohongshu douyin kol"
   filter: {"status": {"$eq": "active"}, "platform": {"$in": ["xiaohongshu", "douyin"]}}
-  > only active KOLs on matching platforms enter similarity ranking
+  → only active KOLs on matching platforms enter similarity ranking
 ```
 
-- **Visual Reference Processing**: PPTX/PDF rendered to page-level PNGs (LibreOffice headless). Claude Vision extracts style attributes (colors, layout, typography, density). Output converted to text description, embedded via BGE-M3, and stored for RAG retrieval.
-- **Semantic chunking**: token-based splitting on paragraph/sentence boundaries. Language-agnostic.
-- **BGE-M3 embedding**: self-hosted, multilingual (Chinese + English), zero API cost. Cross-lingual retrieval works bidirectionally between Chinese and English.
+**Campaign Knowledge Base retrieval** (Phase 5, planned):
+
+```
+Step 1: metadata filter on propositions (campaign_type, industry, budget_tier)
+Step 2: semantic similarity on proposition vectors → top_k matches
+Step 3: deduplicate by campaign_record_id → N distinct campaigns
+Step 4: fetch full structured modules from MongoDB (per agent's retrieval profile)
+Step 5: LLM self-verification (sufficient / partial / insufficient similarity)
+```
+
+**Embedding infrastructure:**
+- **BGE-M3**: self-hosted, multilingual (Chinese + English), zero API cost. Outputs dense + sparse vectors simultaneously. Cross-lingual retrieval works bidirectionally.
+- **Semantic chunking**: token-based splitting on paragraph/sentence boundaries. Language-agnostic. Chunk size adapts by file type (planned, Phase 4.5).
+- **Contextual embedding** (planned, Phase 4.5): prepend document metadata (client, file_type, filename, section) before embedding so vectors capture source context.
 
 ### Multilingual Support
 
@@ -563,6 +649,7 @@ Organization (Agency)
   └── Users: account / lead_account / admin
        └── Clients (shared across org)
             ├── Brand Library (brand specs, history, visual refs)
+            ├── Campaign Knowledge Base (structured decision records from past projects)
             ├── Resource Library (KOLs, media, vendors, placements)
             └── Projects
                  └── Proposals (pipeline runs, versions, feedback)
@@ -570,7 +657,7 @@ Organization (Agency)
 
 - Organization context derived from JWT. No org-switching UI needed.
 - Role-based permissions: account (own projects), lead_account (team projects), admin (org-wide).
-- Brand Library shared at client level. All accounts in the org contribute and benefit.
+- Brand Library and Campaign Knowledge Base are shared at client level. All accounts in the org contribute and benefit.
 
 ---
 
@@ -685,6 +772,10 @@ cd backend && pytest tests/ -v
 **Phase 2 (Research & Resource Enhancement)**: Complete. Multimodal research, multi-type resources, client feedback loop, visual reference processing.
 
 **Phase 3 (Production Hardening)**: Mostly complete. Version management, analytics dashboard, Terraform deployment, health checks, integration/load tests done. Remaining: Pinecone/MongoDB backup strategy, PPT template expansion, PDF export.
+
+**Phase 4 (Resource Intelligence & Project Archive)**: Mostly complete. Resource profile enrichment, archive pipeline, progressive accumulation done. Remaining: external social data API integration, RAG pipeline quality improvements (contextual embedding, source tracking, adaptive chunking).
+
+**Phase 5 (Campaign Knowledge Base)**: Planned. Structured campaign records, proposition indexing, per-agent retrieval profiles, human confirmation workflow. See ROADMAP.md for full design.
 
 See [ROADMAP.md](./ROADMAP.md) for detailed progress.
 

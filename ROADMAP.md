@@ -298,6 +298,49 @@ Richer resource profiles, knowledge accumulation from completed projects.
 - [ ] Candidate providers: Xinbang, Chanmama, Huitun (evaluate on demand)
 - [ ] Not a core dependency — data supplement only
 
+### 4.5 RAG Pipeline Quality Improvements
+
+Three low-cost improvements to the existing document ingestion pipeline. Benefits all downstream agents (Strategy, Brand Check, Slide Content, Research) immediately.
+
+**4.5.1 Contextual Embedding**
+
+Prepend document metadata before embedding so the vector captures source context, not just content.
+
+```
+Current:  "Brand tone should remain youthful and energetic..." → embed
+Improved: "[BrandX | brand_spec | brand_guidelines_2025.pdf | Tone of Voice]
+           Brand tone should remain youthful and energetic..." → embed
+```
+
+- [ ] Prefix format: `[Client | file_type | filename | section/page]`
+- [ ] PDF: include page number in prefix
+- [ ] PPTX: include slide index in prefix
+- [ ] Apply to new uploads only. Optional migration script for existing vectors.
+
+**4.5.2 Source Location Tracking**
+
+Store page/slide position in Pinecone metadata for citation traceability.
+
+- [ ] PDF chunks: `page_number` in Pinecone metadata
+- [ ] PPTX chunks: `slide_index` in Pinecone metadata
+- [ ] Agents can cite: "See brand guidelines, page 3" or "Reference deck, slide 7"
+- [ ] HITL users can verify RAG-sourced claims against original document location
+
+**4.5.3 Adaptive Chunking by File Type**
+
+Different document types have different information density. Adjust chunk parameters accordingly.
+
+| file_type | chunk_size | overlap | Rationale |
+|-----------|-----------|---------|-----------|
+| brand_spec | 800 | 200 | Rule-dense, every sentence matters |
+| brand_history | 1200 | 300 | Proposals/decks, longer narrative context |
+| project_brief | 600 | 100 | Short, focused documents |
+| competitor_copy | 1000 | 200 | Articles, moderate density |
+
+- [ ] Define chunk profiles as config dict keyed by file_type
+- [ ] Chunker selects profile based on file record metadata
+- [ ] Unknown types fall back to current default parameters
+
 ---
 
 ## Phase 5: Campaign Knowledge Base
@@ -306,7 +349,20 @@ Upgrade archive pipeline from fragmented text chunks into a structured, multi-la
 
 ### Why this matters
 
-Most RAG systems store raw text chunks and retrieve by semantic similarity. This returns "similar words" but not "decision logic from similar situations." A structured campaign knowledge base enables agents to reference how similar campaigns were planned, what resource allocation was used, and what worked.
+Most RAG systems store raw text chunks and retrieve by semantic similarity. This returns "similar words" but not "decision logic from similar situations." The difference:
+
+```
+Shallow RAG:
+  "This campaign used 10 KOLs on Xiaohongshu..." (text fragment)
+  → Agent sees words but not WHY or WHETHER it worked
+
+Structured knowledge RAG (this phase):
+  Campaign Record → Proposition: "[beauty | launch | 2M] KOC tier at 10% budget drove 60% engagement"
+  → Agent sees: what was decided, under what conditions, and what the outcome was
+  → Agent can reason: "similar conditions to ours, this allocation pattern worked"
+```
+
+The competitive moat is not the retrieval technology. It is the accumulated structured decision records that improve with every archived campaign. After 20+ campaigns, the system's recommendations are informed by real outcome data specific to this agency's clients and industry verticals.
 
 ### 5.1 Knowledge Architecture (three layers)
 
@@ -375,6 +431,12 @@ CampaignRecord:
     slide_count
     chapter_structure[]                (section titles in order)
     presentation_style                 (data-heavy, visual, storytelling)
+    visual_style:                      (extracted from PPTX pages via Claude Vision, reuses Phase 2.4 pipeline)
+      color_palette[]                  (hex values: primary, secondary, accent, background)
+      layout_patterns[]                (e.g. "full-bleed image", "left-right split", "centered title")
+      typography_style                 (serif/sans-serif, weight hierarchy)
+      image_to_text_ratio              (percentage estimate)
+      design_keywords[]                (e.g. "minimal", "corporate", "bold typography")
 
   outcome:                           ← all agents reference
     kpi_results{}                      (metric -> actual value)
@@ -417,6 +479,13 @@ New addition:
 - LLM marks each section's confidence (high if numbers are explicit in report, low if inferred)
 - Fields not found in source are left null, not hallucinated
 
+**Visual style extraction (PPTX archives only):**
+- If uploaded file is .pptx, trigger visual analysis in parallel with text extraction
+- Reuses existing Phase 2.4 pipeline: PPTX → page-level PNG → Claude Vision → style JSON
+- Results written into CampaignRecord.deck_info.visual_style
+- Enables Deck Orchestrator to reference not just structure but also visual identity of past decks
+- PDF reports skip this step (typically text-heavy, no design value)
+
 ### 5.4 Human Confirmation Step
 
 Extracted CampaignRecord is not immediately available for retrieval. Requires user review.
@@ -427,37 +496,137 @@ Extracted CampaignRecord is not immediately available for retrieval. Requires us
 - [ ] UI: form pre-filled with LLM extraction, user edits fields, adds missing data (especially budget numbers and outcome metrics that may not be in the report)
 - [ ] Low-confidence fields highlighted in UI for user attention
 
-### 5.5 Retrieval Design
+### 5.5 Proposition Indexing & Contextual Embedding
 
-**How agents find relevant campaigns:**
+Standard approach: embed one summary per campaign record. Problem: a single summary embedding dilutes specific decision signals. "Beauty launch, KOC outperformed mid-tier" is lost inside a 200-word summary.
 
-Step 1: Metadata filter (narrow candidates)
+**Proposition extraction (after human confirmation):**
+
+Each confirmed CampaignRecord is decomposed into atomic, self-contained insights:
+
 ```
-campaign_type = "launch"
-industry = "beauty"
-budget_tier = "500k_2m"
-status = "confirmed"
+CampaignRecord (beauty launch, 2M budget) → atomic propositions:
+
+- "Beauty launch campaign with 2M budget: top-tier KOL allocated 40% for topic creation, ROI 1.8x"
+- "Beauty launch campaign with 2M budget: mid-tier KOL on Xiaohongshu outperformed Douyin by 2x ROI"
+- "Beauty launch campaign with 2M budget: KOC tier (50 creators) drove 60% of total engagement at 10% budget"
+- "Beauty launch campaign with 2M budget: big idea 'Break the Routine' tested well with Gen-Z female"
+- "Beauty launch campaign with 2M budget: 12-slide deck, storytelling structure, opened with market tension"
 ```
 
-Step 2: Semantic similarity on summary embedding
+Each proposition is:
+- Self-contained (no pronouns, no "the campaign" references)
+- Prefixed with campaign meta for contextual embedding (industry + type + budget baked into the vector)
+- Linked back to source campaign_record_id for parent retrieval
+- Tagged with module origin (strategy_decisions / media_plan / execution / deck_info / outcome)
+
+- [ ] LLM-based proposition extraction from confirmed CampaignRecord (gpt-4o-mini or equivalent, low cost per record)
+- [ ] Each proposition stored in MongoDB `campaign_propositions` collection with campaign_record_id back-reference
+- [ ] Each proposition embedded with meta prefix (contextual embedding) and upserted to `campaign_knowledge_{client_id}` Pinecone namespace
+- [ ] Metadata on each vector: campaign_record_id, module, campaign_type, industry, budget_tier
+- [ ] Fallback: if proposition extraction fails, embed full module text with meta prefix
+
+**Why contextual embedding matters:**
+
+Without context prefix:
 ```
-query: "Gen-Z skincare launch, social-first, authentic tone"
-→ cosine similarity against campaign summary embeddings
-→ top 3-5 matches
+"KOC tier drove 60% of engagement at 10% budget"
+→ embedding captures the fact but not WHEN this is applicable
 ```
 
-Step 3: Return full structured records to requesting agent. Agent reads only its relevant module.
+With context prefix:
+```
+"[beauty | launch | 2M | Gen-Z female] KOC tier drove 60% of engagement at 10% budget"
+→ embedding captures both the fact AND its applicability conditions
+```
 
-**Per-agent retrieval patterns:**
+This means a query "beauty launch KOC effectiveness" matches strongly, while "automotive branding KOC" does not, even though both mention KOC.
 
-| Agent | Retrieves | Uses fields |
-|-------|-----------|-------------|
-| Strategy P2 | Similar campaigns by type + industry | strategy_decisions, outcome.lessons_learned |
-| Media Planning | Similar campaigns by type + budget_tier | media_plan (full), outcome.best_performing_tier |
-| Resource Agent | Similar campaigns by channels + industry | execution.resources_used, outcome.best_performing_channel |
-| Deck Orchestrator | Similar campaigns by type | deck_info.chapter_structure, deck_info.slide_count |
+### 5.6 Retrieval Design (Parent-Child Pattern)
 
-### 5.6 Distilled Insights (deferred, manual first)
+**Two-level retrieval: propositions for matching, full modules for context.**
+
+Searching propositions gives precision. But agents need full context to make decisions. Solution: retrieve at proposition level, expand to parent module level before sending to LLM.
+
+```
+Step 1: Metadata filter on propositions
+  campaign_type = "launch", industry = "beauty", budget_tier = "500k_2m", status = "confirmed"
+
+Step 2: Semantic similarity on proposition embeddings
+  query: "Gen-Z skincare launch, social-first, authentic tone"
+  → cosine similarity against proposition vectors
+  → top 10 propositions matched
+
+Step 3: Deduplicate by campaign_record_id
+  → 10 propositions may come from 3 distinct campaigns
+
+Step 4: Fetch full modules from MongoDB
+  → For each matched campaign, load the modules relevant to the requesting agent
+  → Return structured CampaignRecord fields, not raw text
+
+Step 5: Assemble agent context
+  → Agent receives: 3 similar campaign records with full relevant modules
+  → Plus: the specific propositions that triggered the match (for transparency)
+```
+
+**Per-agent retrieval profiles:**
+
+| Agent | Profile | top_k propositions | Modules returned | Rerank |
+|-------|---------|-------------------|-----------------|--------|
+| Strategy P2 | `strategy_reference` | 6 | strategy_decisions, outcome.lessons_learned | No |
+| Media Planning | `media_planning` | 15 | media_plan (full), outcome.best_performing_tier, outcome.kpi_results | Yes |
+| Resource Agent | `resource_reference` | 8 | execution.resources_used, outcome.best_performing_channel | No |
+| Deck Orchestrator | `deck_reference` | 4 | deck_info.chapter_structure, deck_info.slide_count | No |
+
+- [ ] Define retrieval profiles as config (top_k, module whitelist, rerank flag)
+- [ ] Media Planning profile uses cross-encoder rerank (heavier but highest precision needed)
+- [ ] Other profiles skip rerank for speed (campaign knowledge queries are less latency-sensitive than resource matching)
+- [ ] Profile auto-selected based on calling agent, not query content
+
+**Hybrid search (keyword + semantic):**
+
+Pure semantic search can miss exact terms (specific budget numbers, platform names, campaign types). Add keyword layer:
+
+- [ ] BGE-M3 sparse vectors stored alongside dense vectors in Pinecone (already supported by our embedding model)
+- [ ] Weighted fusion: 0.2 sparse (keyword) + 0.8 dense (semantic) for campaign proposition retrieval
+- [ ] Sparse component catches exact industry terms, budget figures, platform names that semantic search may fuzz over
+
+### 5.7 Retrieval Quality Feedback
+
+Track whether retrieved campaign records actually help agents produce better output.
+
+**Implicit signal: HITL modification rate.**
+
+```
+Media Planning Agent retrieves 3 historical campaigns → produces media plan
+  → User at HITL:
+    - Confirms with minimal edits → retrieved campaigns were helpful (positive signal)
+    - Heavily rewrites the plan → retrieved campaigns may have been irrelevant (negative signal)
+    - Adds budget numbers agent missed → campaigns were relevant but incomplete (neutral)
+```
+
+- [ ] Track edit distance between agent output and user-confirmed output at each HITL checkpoint
+- [ ] Associate edit distance with the campaign_record_ids that were in the agent's context
+- [ ] Aggregate per-record: campaigns that consistently lead to heavy edits get lower quality scores
+- [ ] Quality score influences retrieval ranking (higher quality records ranked above lower quality ones with same similarity score)
+- [ ] Dashboard: show which campaign records are "high value" (frequently referenced, low edit rate) vs "low value" (referenced but always overridden)
+
+**Explicit signal (optional, low priority):**
+
+- [ ] After HITL confirmation, optional one-click "Were the historical references helpful?" (yes/no)
+- [ ] Simpler than edit distance tracking but requires user action
+
+### 5.8 Self-Verification (retrieval sufficiency check)
+
+Prevent agents from blindly using irrelevant historical data.
+
+- [ ] After retrieval, LLM judges: "Are these historical campaigns similar enough to inform the current plan?" (sufficient / partial / insufficient)
+- [ ] If sufficient: agent uses full retrieved context
+- [ ] If partial: agent uses retrieved context but adds explicit caveat ("limited historical data for this scenario, falling back to industry frameworks")
+- [ ] If insufficient: agent falls back entirely to prompt-embedded industry knowledge. No historical references cited.
+- [ ] Prevents: "We did a beauty launch before so here's the plan" when the retrieved campaign was actually a beauty branding campaign with completely different objectives
+
+### 5.9 Distilled Insights (deferred, manual first)
 
 When a client accumulates 10+ confirmed campaign records:
 - [ ] Auto-trigger insight distillation (batch LLM call across records)
@@ -473,10 +642,13 @@ When a client accumulates 10+ confirmed campaign records:
 ### Design Decisions (to be discussed)
 
 - Extraction reliability: single LLM call for full CampaignRecord, or split into multiple focused calls (meta + media_plan + outcome separately)? Single call is cheaper but may lose precision on numeric fields.
-- Confirmation UX: full form or guided wizard (step through meta → strategy → media → outcome)? Wizard reduces cognitive load but takes more clicks.
+- Confirmation UX: full form or guided wizard (step through meta > strategy > media > outcome)? Wizard reduces cognitive load but takes more clicks.
 - Retrieval ranking: when multiple campaigns match, how to rank? By recency? By outcome rating? By budget similarity? Likely a weighted combination.
 - Cross-client learning: should distilled insights be per-client or shared across the org? Per-client is safer (data isolation) but org-level learns faster.
 - Cold start: first campaign archived has no similar records. System should gracefully fall back to prompt-embedded industry knowledge without degrading output quality.
+- Proposition granularity: how many propositions per campaign record? Too few loses detail, too many increases retrieval noise. Estimate: 8-15 per record depending on data completeness.
+- Sparse vector weight: 0.2 keyword / 0.8 semantic is a starting point. May need tuning after first 10 records are indexed and tested.
+- Rerank cost: cross-encoder rerank adds ~200ms latency. Only justified for Media Planning profile where precision directly impacts plan quality. Other profiles skip it.
 
 ---
 
