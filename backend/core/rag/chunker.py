@@ -1,11 +1,30 @@
 import re
+from dataclasses import dataclass
 
 import tiktoken
+
+from backend.core.models.file import FileType
 
 _enc = tiktoken.get_encoding("cl100k_base")
 
 DEFAULT_MAX_TOKENS = 512
 DEFAULT_OVERLAP_TOKENS = 64
+
+CHUNK_PROFILES: dict[str, tuple[int, int]] = {
+    FileType.BRAND_SPEC: (800, 200),
+    FileType.BRAND_HISTORY_PROPOSAL: (1200, 300),
+    FileType.BRAND_HISTORY_COPY: (1200, 300),
+    FileType.PROJECT_BRIEF: (600, 100),
+    FileType.COMPETITOR_COPY: (1000, 200),
+}
+
+
+@dataclass
+class ChunkMeta:
+    """Metadata for a single chunk, tracking source location."""
+    text: str
+    page_number: int | None = None
+    slide_index: int | None = None
 
 
 def count_tokens(text: str) -> int:
@@ -75,6 +94,39 @@ def semantic_chunk(
         chunks.append("\n\n".join(current_parts))
 
     return chunks
+
+
+def semantic_chunk_with_metadata(
+    segments: list["ParsedSegment"],
+    file_type: str | None = None,
+) -> list[ChunkMeta]:
+    """Chunk parsed segments with adaptive sizing and source location tracking.
+
+    Each output ChunkMeta carries the page_number or slide_index from the
+    source segment that contributed the majority of its text.
+    """
+    from backend.core.rag.parser import ParsedSegment
+
+    max_tokens, overlap_tokens = CHUNK_PROFILES.get(
+        file_type, (DEFAULT_MAX_TOKENS, DEFAULT_OVERLAP_TOKENS)
+    )
+
+    results: list[ChunkMeta] = []
+
+    for segment in segments:
+        text = segment.text.strip()
+        if not text:
+            continue
+
+        chunk_texts = semantic_chunk(text, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        for ct in chunk_texts:
+            results.append(ChunkMeta(
+                text=ct,
+                page_number=segment.page_number,
+                slide_index=segment.slide_index,
+            ))
+
+    return results
 
 
 def _get_overlap(parts: list[str], overlap_tokens: int) -> str:

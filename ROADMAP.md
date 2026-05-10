@@ -314,17 +314,19 @@ Improved: "[BrandX | brand_spec | brand_guidelines_2025.pdf | Tone of Voice]
            Brand tone should remain youthful and energetic..." → embed
 ```
 
-- [ ] Prefix format: `[Client | file_type | filename | section/page]`
-- [ ] PDF: include page number in prefix
-- [ ] PPTX: include slide index in prefix
+- [x] Prefix format: `[Client | file_type | filename | section/page]`
+- [x] PDF: include page number in prefix
+- [x] PPTX: include slide index in prefix
 - [ ] Apply to new uploads only. Optional migration script for existing vectors.
 
 **4.5.2 Source Location Tracking**
 
 Store page/slide position in Pinecone metadata for citation traceability.
 
-- [ ] PDF chunks: `page_number` in Pinecone metadata
-- [ ] PPTX chunks: `slide_index` in Pinecone metadata
+- [x] PDF chunks: `page_number` in Pinecone metadata
+- [x] PPTX chunks: `slide_index` in Pinecone metadata
+- [x] `filename` stored in Pinecone metadata for all chunks
+- [x] RAGResult exposes `source_location` property (e.g. "brand_guidelines.pdf, page 3")
 - [ ] Agents can cite: "See brand guidelines, page 3" or "Reference deck, slide 7"
 - [ ] HITL users can verify RAG-sourced claims against original document location
 
@@ -339,9 +341,9 @@ Different document types have different information density. Adjust chunk parame
 | project_brief | 600 | 100 | Short, focused documents |
 | competitor_copy | 1000 | 200 | Articles, moderate density |
 
-- [ ] Define chunk profiles as config dict keyed by file_type
-- [ ] Chunker selects profile based on file record metadata
-- [ ] Unknown types fall back to current default parameters
+- [x] Define chunk profiles as config dict keyed by file_type (`CHUNK_PROFILES` in chunker.py)
+- [x] Chunker selects profile based on file record metadata
+- [x] Unknown types fall back to current default parameters (512 tokens, 64 overlap)
 
 ---
 

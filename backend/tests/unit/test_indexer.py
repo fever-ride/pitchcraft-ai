@@ -4,9 +4,10 @@ from backend.core.models.file import FileType
 
 def resolve_namespace(file_type: str, client_id: str, project_id: str | None) -> str:
     """Mirror of indexer.resolve_namespace for testing without pinecone import."""
-    if file_type in (FileType.BRAND_SPEC, FileType.BRAND_HISTORY_PROPOSAL, FileType.BRAND_HISTORY_COPY):
-        prefix = "brand_spec" if file_type == FileType.BRAND_SPEC else "brand_history"
-        return f"{prefix}_{client_id}"
+    if file_type == FileType.BRAND_SPEC:
+        return f"brand_spec_{client_id}"
+    if file_type in (FileType.BRAND_HISTORY_PROPOSAL, FileType.BRAND_HISTORY_COPY):
+        return f"brand_style_{client_id}"
     return f"project_{project_id or client_id}"
 
 
@@ -17,12 +18,12 @@ def test_brand_spec_namespace():
 
 def test_brand_history_proposal_namespace():
     ns = resolve_namespace("brand_history_proposal", "client_abc", None)
-    assert ns == "brand_history_client_abc"
+    assert ns == "brand_style_client_abc"
 
 
 def test_brand_history_copy_namespace():
     ns = resolve_namespace("brand_history_copy", "client_abc", None)
-    assert ns == "brand_history_client_abc"
+    assert ns == "brand_style_client_abc"
 
 
 def test_project_file_with_project_id():

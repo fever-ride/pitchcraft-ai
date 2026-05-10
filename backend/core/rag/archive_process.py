@@ -66,17 +66,22 @@ async def _process_archive(
         {"$set": {"status": "done", "extraction": extraction_dict}},
     )
 
-    await _distribute_to_brand_history(report_text, extraction, client_id, archive_id)
+    await _distribute_to_brand_style(report_text, extraction, client_id, archive_id)
     await _distribute_to_resources(extraction, client_id)
 
 
-async def _distribute_to_brand_history(
+async def _distribute_to_brand_style(
     report_text: str,
     extraction,
     client_id: str,
     archive_id: str,
 ):
-    """Store strategy learnings + audience insights in brand_history namespace."""
+    """Store strategy learnings + audience insights in brand_style namespace.
+
+    Note: Once Phase 5 (Campaign Knowledge Base) is implemented, strategy
+    learnings and outcomes will route to CampaignRecord instead. This function
+    will be narrowed to store only style/tone reference text.
+    """
     texts_to_embed = []
 
     if extraction.project_summary:
@@ -98,7 +103,7 @@ async def _distribute_to_brand_history(
         texts_to_embed = chunks
 
     embeddings = await embed_texts(texts_to_embed)
-    namespace = f"brand_history_{client_id}"
+    namespace = f"brand_style_{client_id}"
     upsert_vectors(namespace, archive_id, texts_to_embed, embeddings)
 
 

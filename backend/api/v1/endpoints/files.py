@@ -80,6 +80,9 @@ async def upload_file(
 
     file_id = await repo.create(record)
 
+    client_doc = await db.clients.find_one({"_id": client_id}, {"name": 1})
+    client_name = client_doc.get("name") if client_doc else None
+
     if ft == FileType.VISUAL_REF:
         process_visual_file_task.delay(
             file_id=file_id,
@@ -95,6 +98,7 @@ async def upload_file(
             file_type=ft.value,
             client_id=client_id,
             project_id=project_id,
+            client_name=client_name,
         )
 
     return {"status": "processing", "file_id": file_id}

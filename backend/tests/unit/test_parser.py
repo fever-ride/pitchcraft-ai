@@ -6,7 +6,7 @@ pypdf = pytest.importorskip("pypdf")
 docx = pytest.importorskip("docx")
 pptx = pytest.importorskip("pptx")
 
-from backend.core.rag.parser import parse_file
+from backend.core.rag.parser import parse_file, parse_file_structured
 
 
 def test_parse_unsupported_extension():
@@ -55,3 +55,39 @@ def test_parse_pptx():
     result = parse_file(buf.read(), "deck.pptx")
     assert "Test Title" in result
     assert "[Slide 1]" in result
+
+
+def test_parse_pptx_structured():
+    from pptx import Presentation
+
+    prs = Presentation()
+    slide1 = prs.slides.add_slide(prs.slide_layouts[0])
+    slide1.shapes.title.text = "First Slide"
+    slide2 = prs.slides.add_slide(prs.slide_layouts[0])
+    slide2.shapes.title.text = "Second Slide"
+    buf = io.BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+
+    doc = parse_file_structured(buf.read(), "deck.pptx")
+    assert doc.total_pages == 2
+    assert len(doc.segments) == 2
+    assert doc.segments[0].slide_index == 1
+    assert doc.segments[1].slide_index == 2
+    assert "First Slide" in doc.segments[0].text
+
+
+def test_parse_docx_structured():
+    from docx import Document
+
+    d = Document()
+    d.add_paragraph("Para one")
+    d.add_paragraph("Para two")
+    buf = io.BytesIO()
+    d.save(buf)
+    buf.seek(0)
+
+    doc = parse_file_structured(buf.read(), "test.docx")
+    assert len(doc.segments) == 1
+    assert "Para one" in doc.segments[0].text
+    assert doc.segments[0].page_number is None

@@ -14,19 +14,51 @@ def _get_index():
 
 
 class RAGResult:
-    def __init__(self, text: str, score: float, file_id: str, chunk_index: int):
+    def __init__(
+        self,
+        text: str,
+        score: float,
+        file_id: str,
+        chunk_index: int,
+        page_number: int | None = None,
+        slide_index: int | None = None,
+        filename: str | None = None,
+    ):
         self.text = text
         self.score = score
         self.file_id = file_id
         self.chunk_index = chunk_index
+        self.page_number = page_number
+        self.slide_index = slide_index
+        self.filename = filename
+
+    @property
+    def source_location(self) -> str | None:
+        """Human-readable source location for citations."""
+        if self.slide_index is not None:
+            prefix = f"{self.filename}, " if self.filename else ""
+            return f"{prefix}slide {self.slide_index}"
+        if self.page_number is not None:
+            prefix = f"{self.filename}, " if self.filename else ""
+            return f"{prefix}page {self.page_number}"
+        return self.filename
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "text": self.text,
             "score": self.score,
             "file_id": self.file_id,
             "chunk_index": self.chunk_index,
         }
+        if self.page_number is not None:
+            d["page_number"] = self.page_number
+        if self.slide_index is not None:
+            d["slide_index"] = self.slide_index
+        if self.filename:
+            d["filename"] = self.filename
+        if self.source_location:
+            d["source_location"] = self.source_location
+        return d
 
 
 async def retrieve(
@@ -64,6 +96,9 @@ async def retrieve(
                     score=match.score,
                     file_id=match.metadata.get("file_id", ""),
                     chunk_index=match.metadata.get("chunk_index", 0),
+                    page_number=match.metadata.get("page_number"),
+                    slide_index=match.metadata.get("slide_index"),
+                    filename=match.metadata.get("filename"),
                 ))
 
     results.sort(key=lambda r: r.score, reverse=True)
@@ -79,7 +114,7 @@ async def retrieve_for_client(
     """Convenience method: searches Brand Library + Project Library namespaces."""
     namespaces = [
         f"brand_spec_{client_id}",
-        f"brand_history_{client_id}",
+        f"brand_style_{client_id}",
     ]
     if project_id:
         namespaces.append(f"project_{project_id}")
