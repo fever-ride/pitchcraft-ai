@@ -117,4 +117,28 @@ export const api = {
     if (projectId) params.set("project_id", projectId);
     return request<unknown[]>(`/api/v1/files?${params}`);
   },
+
+  listCampaigns(clientId?: string, status?: string) {
+    const params = new URLSearchParams();
+    if (clientId) params.set("client_id", clientId);
+    if (status) params.set("status_filter", status);
+    return request<unknown[]>(`/api/v1/campaigns?${params}`);
+  },
+
+  listPendingCampaigns(clientId?: string) {
+    const params = new URLSearchParams();
+    if (clientId) params.set("client_id", clientId);
+    return request<unknown[]>(`/api/v1/campaigns/pending?${params}`);
+  },
+
+  getCampaignRecord(recordId: string) {
+    return request<Record<string, unknown>>(`/api/v1/campaigns/${recordId}`);
+  },
+
+  confirmCampaignRecord(recordId: string, edits: Record<string, unknown> = {}) {
+    return request<{ record_id: string; status: string }>(`/api/v1/campaigns/${recordId}/confirm`, {
+      method: "PUT",
+      body: JSON.stringify({ edits }),
+    });
+  },
 };

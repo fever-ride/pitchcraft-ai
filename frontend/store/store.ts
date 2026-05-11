@@ -1,9 +1,11 @@
 import { configureStore } from "@reduxjs/toolkit";
+import campaignsReducer from "./campaignsSlice";
 import pipelineReducer from "./pipelineSlice";
 
 export const store = configureStore({
   reducer: {
     pipeline: pipelineReducer,
+    campaigns: campaignsReducer,
   },
 });
 
