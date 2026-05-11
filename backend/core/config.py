@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
 
+    # OpenAI (optional, for cost optimization on simple tasks)
+    openai_api_key: str = ""
+
     # Tavily
     tavily_api_key: str = ""
 
