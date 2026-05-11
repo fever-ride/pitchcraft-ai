@@ -6,9 +6,6 @@ from pathlib import Path
 from backend.core.agents.archive import extract_archive
 from backend.core.agents.campaign_extract import extract_campaign_record
 from backend.core.database.connection import get_database
-from backend.core.rag.chunker import semantic_chunk
-from backend.core.rag.embedder import embed_texts
-from backend.core.rag.indexer import upsert_vectors
 from backend.core.rag.parser import parse_file
 from backend.core.rag.resource_import import refresh_resource_embedding
 from backend.core.tasks import celery_app
@@ -74,7 +71,6 @@ async def _process_archive(
     # Store campaign record for human review
     await _store_campaign_record(campaign_dict, client_id, project_id, archive_id)
 
-    await _distribute_to_brand_style(report_text, extraction, client_id, archive_id)
     await _distribute_to_resources(extraction, client_id)
 
 
@@ -92,42 +88,6 @@ async def _store_campaign_record(
     await db["campaign_records"].insert_one(campaign_dict)
     logger.info(f"Campaign record stored for archive {archive_id}")
 
-
-async def _distribute_to_brand_style(
-    report_text: str,
-    extraction,
-    client_id: str,
-    archive_id: str,
-):
-    """Store strategy learnings + audience insights in brand_style namespace.
-
-    Note: Once Phase 5 (Campaign Knowledge Base) is implemented, strategy
-    learnings and outcomes will route to CampaignRecord instead. This function
-    will be narrowed to store only style/tone reference text.
-    """
-    texts_to_embed = []
-
-    if extraction.project_summary:
-        texts_to_embed.append(f"Project Summary: {extraction.project_summary}")
-
-    for learning in extraction.strategy_learnings:
-        texts_to_embed.append(f"Strategy Learning: {learning}")
-
-    for insight in extraction.audience_insights:
-        texts_to_embed.append(f"Audience Insight: {insight}")
-
-    for content_insight in extraction.content_insights:
-        texts_to_embed.append(f"Content Insight: {content_insight}")
-
-    if not texts_to_embed:
-        chunks = semantic_chunk(report_text)
-        if not chunks:
-            return
-        texts_to_embed = chunks
-
-    embeddings = await embed_texts(texts_to_embed)
-    namespace = f"brand_style_{client_id}"
-    upsert_vectors(namespace, archive_id, texts_to_embed, embeddings)
 
 
 async def _distribute_to_resources(extraction, client_id: str):

@@ -276,13 +276,11 @@ Richer resource profiles, knowledge accumulation from completed projects.
 - [x] New API: `POST /api/v1/projects/{id}/archive` (upload recap/case study)
 - [x] LLM structured extraction from one report → multi-destination:
   - Resource performance data → update `collaboration_history`, refresh resource embedding
-  - Strategy learnings → `brand_history_{client_id}` namespace (to be replaced by CampaignRecord in Phase 5)
-  - Industry insights → client knowledge base
-  - Audience feedback/sentiment → audience insight pool
+  - CampaignRecord → MongoDB `campaign_records` (pending confirmation → proposition indexing on confirm)
 - [x] Built on existing file upload + RAG pipeline, extended with extraction + routing
 - [x] `GET /api/v1/projects/{id}/archive` to check extraction status and results
 
-> **Phase 5 migration note:** Campaign Knowledge Base extraction now runs in parallel with existing archive pipeline. Both `_distribute_to_brand_style()` and `extract_campaign_record()` execute on every archive upload — the former writes strategy text to brand_style namespace (still queried by agents), the latter stores structured CampaignRecord in MongoDB (pending human confirmation + proposition indexing in 5.5). Once 5.5 is complete and agents retrieve from campaign_knowledge namespace, `_distribute_to_brand_style()` will be removed and brand_style namespace narrowed to copywriting style/tone reference only.
+> **Phase 5 migration complete:** `_distribute_to_brand_style()` has been removed from archive pipeline. Strategy learnings and audience insights now route exclusively through CampaignRecord → proposition indexing → `campaign_knowledge_{org_id}`. The `brand_style_{client_id}` namespace is now sourced only by Pipeline 1 (Brand Library uploads: `BRAND_HISTORY_PROPOSAL`, `BRAND_HISTORY_COPY`) — it stores copywriting tone/style reference text, not strategy content.
 
 ### 4.3 Progressive Resource Accumulation
 
@@ -403,7 +401,7 @@ Campaign Knowledge Base (this phase)
   = Reference: agents can learn from but are not bound by.
   Stores: structured decision records (strategy, media plan, execution, outcomes)
   Scope: org-wide cross-client retrieval (desensitized), accumulates with every project
-  Storage: MongoDB campaign_records + Pinecone campaign_knowledge_{client_id}
+  Storage: MongoDB campaign_records + Pinecone campaign_knowledge_{org_id}
 ```
 
 **Boundary rule:** If the information retains value regardless of wording (numbers, decisions, outcomes), it belongs in Campaign Knowledge Base. If the value IS the wording (tone, phrasing, narrative style), it belongs in Brand Library.
@@ -567,7 +565,7 @@ New parallel flow (added):
     → After human confirmation: proposition extraction → Pinecone campaign_knowledge_{org_id}
 ```
 
-Note: `_distribute_to_brand_style()` currently still writes strategy learnings to brand_style namespace — this is intentional during transition. CampaignRecord extraction runs in parallel but records are not yet retrievable by agents (pending 5.5 proposition indexing). Once proposition vectors are live and agents query campaign_knowledge namespace instead, `_distribute_to_brand_style()` will be removed and `extract_archive()` narrowed to resource performance extraction only.
+Note: `_distribute_to_brand_style()` has been removed. All agents now query `campaign_knowledge_{org_id}` namespace via per-agent retrieval profiles (5.6 complete). The `brand_style` namespace is now sourced only by Pipeline 1 Brand Library uploads (copywriting tone/style reference).
 
 **Three parallel LLM extraction calls** (split by information distribution in reports):
 
@@ -628,11 +626,13 @@ Phase 2.4 already does this for brand_spec uploads (stores as text description i
 
 Extracted CampaignRecord is not immediately available for retrieval. Requires user review.
 
-- [ ] `GET /api/v1/campaigns/{id}/review`: returns extracted record for confirmation UI
-- [ ] `PUT /api/v1/campaigns/{id}/confirm`: user submits corrections, sets overall_rating, confirms
-- [ ] Status flow: `pending_confirmation` → `confirmed` (only confirmed records are retrievable)
-- [ ] UI: form pre-filled with LLM extraction, user edits fields, adds missing data (especially budget numbers and outcome metrics that may not be in the report)
-- [ ] Low-confidence fields highlighted in UI for user attention
+- [x] `GET /api/v1/campaigns/{id}`: returns extracted record for confirmation UI
+- [x] `PUT /api/v1/campaigns/{id}/confirm`: user submits corrections, sets overall_rating, confirms
+- [x] Status flow: `pending_confirmation` → `confirmed` (only confirmed records are retrievable)
+- [x] On confirmation: triggers background proposition indexing (5.5) automatically
+- [x] UI: campaign list page (pending/all tabs), detail page with module-by-module editable form
+- [x] Low-confidence records show warning banner, confidence badge on list and detail views
+- [ ] UX polish: guided wizard flow, inline field-level confidence indicators, overall_rating selector
 
 ### 5.5 Proposition Indexing & Contextual Embedding
 
@@ -658,11 +658,11 @@ Each proposition is:
 - Linked back to source campaign_record_id for parent retrieval
 - Tagged with module origin (strategy_decisions / media_plan / execution / deck_info / outcome)
 
-- [ ] LLM-based proposition extraction from confirmed CampaignRecord (gpt-4o-mini or equivalent, low cost per record)
-- [ ] Each proposition stored in MongoDB `campaign_propositions` collection with campaign_record_id back-reference
-- [ ] Each proposition embedded with meta prefix (contextual embedding) and upserted to `campaign_knowledge_{client_id}` Pinecone namespace
-- [ ] Metadata on each vector: campaign_record_id, module, campaign_type, industry, budget_tier
-- [ ] Fallback: if proposition extraction fails, embed full module text with meta prefix
+- [x] LLM-based proposition extraction from confirmed CampaignRecord (8-15 atomic propositions per record)
+- [x] Each proposition stored in MongoDB `campaign_propositions` collection with campaign_record_id back-reference
+- [x] Each proposition embedded with meta prefix (contextual embedding) and upserted to `campaign_knowledge_{org_id}` Pinecone namespace
+- [x] Metadata on each vector: campaign_record_id, module, campaign_type, industry, budget_tier
+- [x] Fallback: if proposition extraction fails, embed full module text with meta prefix
 
 **Why contextual embedding matters:**
 
@@ -796,12 +796,15 @@ When a client accumulates 10+ confirmed campaign records:
 - Cross-client retrieval: org-wide by default. Records belong to client_id (ownership) but retrieval matches across all clients by industry + campaign_type + budget_tier. Agent responses are desensitized (no client_name). Admin can mark records "client_only" for competing brand isolation.
 - Knowledge boundary: Brand Library stores brand identity (constraints, style). Campaign Knowledge Base stores project experience (decisions, outcomes). Boundary rule: if value survives rewording, it is Campaign Knowledge Base. If value IS the wording, it is Brand Library.
 
+**Decided (this session):**
+- Extraction reliability: 3 parallel LLM calls (Background/Execution/Outcome), each specialized. Graceful degradation on partial failure. Overall confidence = min of three.
+- Proposition granularity: 8-15 per record. LLM instructed to produce self-contained atomic propositions with meta prefix.
+- Cold start: agents receive empty campaign context and work normally from prompt-embedded knowledge. No degradation — `if not campaign_context` simply skips the context section.
+- Transition cleanup: `_distribute_to_brand_style()` removed from archive pipeline. `brand_style` namespace now sourced only by Pipeline 1 (Brand Library uploads for copywriting tone reference).
+
 **Open:**
-- Extraction reliability: single LLM call for full CampaignRecord, or split into multiple focused calls (meta + media_plan + outcome separately)? Single call is cheaper but may lose precision on numeric fields.
 - Confirmation UX: full form or guided wizard (step through meta > strategy > media > outcome)? Wizard reduces cognitive load but takes more clicks.
-- Retrieval ranking: when multiple campaigns match, how to rank? By recency? By outcome rating? By budget similarity? Likely a weighted combination.
-- Cold start: first campaign archived has no similar records. System should gracefully fall back to prompt-embedded industry knowledge without degrading output quality.
-- Proposition granularity: how many propositions per campaign record? Too few loses detail, too many increases retrieval noise. Estimate: 8-15 per record depending on data completeness.
+- Retrieval ranking: when multiple campaigns match, how to rank? By recency? By outcome rating? By budget similarity? Currently: by top proposition similarity score. May evolve.
 - Sparse vector weight: 0.2 keyword / 0.8 semantic is a starting point. May need tuning after first 10 records are indexed and tested.
 - Rerank cost: cross-encoder rerank adds ~200ms latency. Only justified for Media Planning profile where precision directly impacts plan quality. Other profiles skip it.
 

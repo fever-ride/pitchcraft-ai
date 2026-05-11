@@ -86,8 +86,8 @@ async def archive_project(
 ):
     """Upload a recap/case study report for structured knowledge extraction.
 
-    Extracts: resource performance, strategy learnings, audience insights, content insights.
-    Distributes to: brand_style namespace, resource collaboration_history.
+    Extracts: resource performance, CampaignRecord (pending human confirmation).
+    Distributes to: resource collaboration_history, campaign_records collection.
     """
     from backend.core.rag.archive_process import process_archive_task
 

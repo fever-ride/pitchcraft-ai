@@ -184,7 +184,7 @@ Every pipeline completion (initial or rerun) triggers an automatic version save:
 | **Brief Analyzer** | Raw text brief + campaign_knowledge (client_learnings) | `structured_brief{}` | Extracts fields (client, theme, audience, channels, budget, timeline, objective). Detects missing fields → generates clarification questions. Retrieves client history to inform gap detection. |
 | **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily > DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN uses Chanmama/Feigua, Global uses CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
 | **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
-| **Strategy P2** | `research_result` + `strategy_insight` + rejected directions | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. |
+| **Strategy P2** | `research_result` + `strategy_insight` + rejected directions + campaign_knowledge (strategy_decisions, communication_plan, outcome) | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. References historical campaign outcomes. |
 | **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` + campaign_knowledge (execution, outcome) | `ResourceResult` (Pydantic) | Reads typed fields directly from state. No re-detection. Hybrid retrieval: Pinecone metadata filter (status=active, platform from channels) + vector similarity in one query. Multi-type parallel retrieval across namespaces. Conditional skip when empty. Post-validation: verifies every LLM recommendation exists in MongoDB, filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). Campaign history provides past execution patterns for reference. |
 | **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG + campaign_knowledge (deck_info, communication_plan) | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project > client > LLM generation). Campaign history provides past deck structures for inspiration. Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
 | **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
@@ -331,12 +331,13 @@ Note: name removal is necessary but not sufficient for full anonymization. Meta 
 
 **How agents consume it (per-agent retrieval profiles):**
 
-| Agent | What it reads from CampaignRecord | Why |
-|-------|----------------------------------|-----|
-| Strategy P2 | `strategy_decisions`, `outcome.lessons_learned` | Avoid repeating failed directions, reference successful strategies |
-| Media Planning | `media_plan` (full), `outcome.best_performing_tier` | Tier allocation ratios, budget splits that worked |
-| Resource Agent | `execution.resources_used`, `outcome.best_performing_channel` | Which resources delivered results in similar campaigns |
-| Deck Orchestrator | `deck_info.chapter_structure`, `deck_info.visual_style` | Slide structure and visual patterns from successful decks |
+| Agent | Profile | What it reads from CampaignRecord | Why |
+|-------|---------|----------------------------------|-----|
+| Strategy P2 | `strategy_reference` | `strategy_decisions`, `communication_plan`, `outcome` | Avoid repeating failed directions, reference successful strategies |
+| Media Planning | `media_planning` | `media_plan`, `execution`, `outcome` | Tier allocation ratios, budget splits that worked |
+| Resource Agent | `resource_reference` | `execution`, `outcome` | Which resources delivered results in similar campaigns |
+| Deck Orchestrator | `deck_reference` | `deck_info`, `communication_plan` | Slide structure and narrative patterns from successful decks |
+| Brief Analyzer | `brief_reference` | `client_learnings`, `meta` | Client decision style, historical priorities, communication notes |
 
 **Key technical decisions:**
 - Proposition-based indexing (implemented): each record is decomposed into 8-15 atomic, self-contained insights (e.g. "[beauty | launch | 2M] KOC tier drove 60% engagement at 10% budget"). Enables precise matching without diluting signals in a single summary embedding.
@@ -363,13 +364,12 @@ Pipeline 2: Resource Import Pipeline
 Pipeline 3: Archive Pipeline
   Trigger: user uploads project recap/case study via POST /projects/{id}/archive
   Flow:    parse → LLM structured extraction → multi-destination distribution
-  Output:  three simultaneous outputs from a single upload:
+  Output:  two outputs from a single upload:
     ├── collaboration_history → resource profiles in MongoDB + re-embed to Pinecone
-    ├── CampaignRecord → MongoDB campaign_records (pending confirmation)
-    │     └── on confirm: proposition extraction → Pinecone campaign_knowledge_{org_id}
-    └── strategy text → brand_style namespace (transitional, will be removed after 5.6)
-  Note:    _distribute_to_brand_style() still runs during transition period.
-           Once agents retrieve from campaign_knowledge namespace, it will be removed.
+    └── CampaignRecord → MongoDB campaign_records (pending confirmation)
+          └── on confirm: proposition extraction → Pinecone campaign_knowledge_{org_id}
+  Note:    brand_style namespace is no longer written by archive pipeline.
+           It is sourced only by Pipeline 1 (Brand Library uploads for tone reference).
 ```
 
 **Visual Reference Processing** (sub-pipeline of Pipeline 1):
@@ -761,6 +761,7 @@ pitchcraft/
 │   │   ├── clients/              # Client management
 │   │   ├── files/                # File library (upload, visual ref thumbnails)
 │   │   ├── resources/            # Resource library (list, filter, Excel import)
+│   │   ├── campaigns/            # Campaign KB review (pending list, detail/edit, confirm)
 │   │   ├── research/             # Research data display + refresh
 │   │   └── analytics/            # Analytics dashboard (KPIs, stage perf, feedback stats)
 │   ├── components/
