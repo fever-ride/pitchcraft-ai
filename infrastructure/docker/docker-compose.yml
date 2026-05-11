@@ -28,6 +28,9 @@ services:
       - EMBEDDING_SERVICE_URL=http://embedding:8001
     env_file:
       - ../../.env
+    volumes:
+      - uploaded_files:/data/uploads
+      - pptx_output:/data/output
     depends_on:
       mongodb:
         condition: service_healthy
@@ -59,6 +62,8 @@ services:
     env_file:
       - ../../.env
     volumes:
+      - uploaded_files:/data/uploads
+      - pptx_output:/data/output
       - thumbnails_data:/data/thumbnails
     depends_on:
       - mongodb
