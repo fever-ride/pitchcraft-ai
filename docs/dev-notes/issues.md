@@ -584,3 +584,102 @@ timeline_phases: ["预热期：3月1-14日", "引爆期：3月15-20日"]
 - Schema 反映了真实的业务认知分层（策略人 vs 媒介人看同一个项目的视角不同）
 
 **Key takeaway**：Schema 设计不是数据建模，是认知建模。问"谁用这个信息做什么决策"比"这个信息客观属于哪个类别"更重要。看起来相似的概念如果被不同角色以不同方式消费，就应该是不同的字段。
+
+---
+
+## Phase 5 完成后问题
+
+---
+
+## 24. MongoDB nested update 覆盖兄弟字段
+
+**问题**：Campaign confirm API 接收前端 edits（如 `{"outcome": {"overall_rating": 5}}`），后端用 `update.update(body.edits)` 合并后 `$set` 到 MongoDB。MongoDB 的 `$set: {"outcome": {"overall_rating": 5}}` 会把整个 `outcome` 字段替换为只含一个 key 的 dict，丢失 `kpi_results`、`lessons_learned` 等同级字段。
+
+**根因**：`dict.update()` 是浅合并。前端发 `{module: {field: value}}` 结构，后端直接 merge 后变成 `$set` 的 top-level key = module，覆盖而非 patch。
+
+**解决**：后端展开 nested edits 为 MongoDB dot-notation：
+
+```python
+for module, fields in body.edits.items():
+    if isinstance(fields, dict):
+        for field, value in fields.items():
+            update[f"{module}.{field}"] = value
+    else:
+        update[module] = fields
+```
+
+`$set: {"outcome.overall_rating": 5}` 只更新指定字段，不动同级。
+
+**教训**：MongoDB `$set` 对嵌套文档的行为是"替换该 key 的整个值"。部分更新必须用 dot-notation path。前后端 JSON 结构（nested dict）和数据库更新语义（flat dot-path）之间需要一个翻译层。
+
+---
+
+## 25. ruff F821 对 string-quoted forward reference 的误报
+
+**问题**：`chunker.py` 中 `segments: list["ParsedSegment"]` 使用 string-quoted forward reference，运行时 import 在函数体内（避免循环依赖）。ruff F821 规则在模块顶层找不到 `ParsedSegment` 定义，报 "Undefined name"。CI 失败。
+
+**根因**：ruff 的 F821 不穿透 string annotation 去检查函数内 deferred import。它只看模块作用域。
+
+**解决**：
+1. 添加 `from __future__ import annotations`（所有 annotation 变 string，运行时不 evaluate）
+2. 用 `TYPE_CHECKING` 守卫做顶层 import（只在类型检查工具运行时可见）
+3. 移除函数内 runtime import（函数只做属性访问，不需要 `ParsedSegment` 作为运行时值）
+
+```python
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.core.rag.parser import ParsedSegment
+```
+
+**教训**：Python 的 deferred import + string annotation 组合虽然解决了循环依赖，但对静态分析工具不友好。`TYPE_CHECKING` + `from __future__ import annotations` 是正统做法，让类型信息和运行时导入完全分离。
+
+---
+
+## 26. 过渡期管道清理的时机判断
+
+**问题**：Phase 5.6 完成后（所有 agent 接入 campaign_knowledge），`_distribute_to_brand_style()` 理论上可以删了。但 ROADMAP 之前写"需要 10+ confirmed records + 质量验证"才能删除。实际情况是：还没有任何真实 confirmed record，但 agent 侧代码已经全切换到 campaign_knowledge namespace。此时 brand_style 里写进去的策略文本只有旧路径在读，新路径已不依赖它。
+
+**分析**：
+- brand_style namespace 的两个写入源：Pipeline 1（Brand Library uploads）和 Archive Pipeline
+- brand_style namespace 的读取者：`retrieve_for_client()` — 被 Strategy P1/P2、Deck、Research 使用
+- Archive Pipeline 写入的内容（strategy learnings, audience insights）现在有更好的归宿：CampaignRecord
+- Pipeline 1 写入的内容（历史提案文案、copywriting style）仍然有价值，没有替代品
+
+**决策**：现在就删 archive pipeline 的 `_distribute_to_brand_style()`。理由：
+1. Agent 已切换到 campaign_knowledge，旧路径写入不再有新的消费者
+2. Pipeline 1 继续写 brand_style（copywriting tone 不可替代）
+3. 已有的 brand_style 向量不删，仍可被 `retrieve_for_client()` 读到
+4. 不等"10+ records"——那个条件是判断"campaign_knowledge 是否足够好到替代 brand_style"，不是判断"是否可以停止往 brand_style 写新内容"
+
+**教训**：迁移的"可以停止写入旧路径"和"可以停止读取旧路径"是两个不同的决策点。前者条件更松（新路径 ready + 旧写入无新消费者），后者条件更严（新路径数据充足 + 质量验证通过）。
+
+---
+
+## D6. 前端状态管理的分层决策
+
+**Situation**：前端有 36 个文件，部分页面用 local state + 直接 fetch（resources、clients、analytics），部分用 Redux（pipeline）。新增 campaigns 页面时需要决定状态管理方式。
+
+**Problem**：campaigns 页面的状态需求：
+- 列表页和详情页共享 tab/filter 状态
+- 详情页有 edits 需要跨组件传递（ModuleSection → confirm bar）
+- confirm 后需要触发 toast 通知
+- 从详情页返回列表页后应保持之前的 filter
+
+这些都是 local state 做不好（或做起来很丑）的场景。
+
+**Action**：
+1. campaigns 用 Redux（createAsyncThunk for API calls + slice for state）
+2. 顺手把 resources page 也 Redux 化（保持风格一致）
+3. 新增 toastSlice（全局通知系统），mount 在 layout 层
+4. analytics/clients/research 保持 local state（只读展示，无跨组件交互需求）
+
+判断标准：**"这个页面的状态是否需要在组件树的多个层级或多个页面间共享？"** 是 → Redux。否 → local state。
+
+**Result**：
+- 4 个页面用 Redux（pipeline, campaigns, resources + toast），都有跨组件/跨页面状态
+- 5 个页面用 local state（analytics, clients×2, research, proposals），都是自包含展示
+- 没有"全部 Redux 化"的过度工程，也没有"全 local state"的状态混乱
+
+**Key takeaway**：状态管理工具不是 all-or-nothing 的选择。按页面的实际交互复杂度选择。一个项目里同时用两种方式是正常的——前提是标准清晰且一致。
