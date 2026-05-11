@@ -8,6 +8,7 @@ class PipelineState(TypedDict, total=False):
     client_id: str
     project_id: str
     proposal_id: str
+    org_id: str
 
     # Language
     output_language: str  # "zh" | "en" | "auto" — controls deck/slide output language

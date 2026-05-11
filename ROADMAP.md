@@ -282,7 +282,7 @@ Richer resource profiles, knowledge accumulation from completed projects.
 - [x] Built on existing file upload + RAG pipeline, extended with extraction + routing
 - [x] `GET /api/v1/projects/{id}/archive` to check extraction status and results
 
-> **Phase 5 migration note:** Once Campaign Knowledge Base is implemented, strategy learnings and industry insights from archive extraction will route to structured CampaignRecord fields instead of raw text chunks in brand_history. The brand_history namespace will be renamed to brand_style and narrowed to copywriting style/tone reference only.
+> **Phase 5 migration note:** Campaign Knowledge Base extraction now runs in parallel with existing archive pipeline. Both `_distribute_to_brand_style()` and `extract_campaign_record()` execute on every archive upload — the former writes strategy text to brand_style namespace (still queried by agents), the latter stores structured CampaignRecord in MongoDB (pending human confirmation + proposition indexing in 5.5). Once 5.5 is complete and agents retrieve from campaign_knowledge namespace, `_distribute_to_brand_style()` will be removed and brand_style namespace narrowed to copywriting style/tone reference only.
 
 ### 4.3 Progressive Resource Accumulation
 
@@ -474,16 +474,19 @@ CampaignRecord:
     big_idea
     big_idea_rationale
     positioning
-    rejected_directions[]              (what was tried and didn't work)
-    rejection_reasons[]                (why each direction was dropped)
+    rejected_directions[]:             (structured, not parallel lists)
+      direction                        (the direction name)
+      reason                           (why it was dropped, optional)
 
   communication_plan:                ← Strategy P2 + Deck Orchestrator ("how to fight")
     channel_mix[]:                     (strategic channel roles, NOT media buying)
       channel
+      channel_type                     (social / offline / pr / paid)
       role                             (引爆/种草/转化/沉淀 or ignite/seed/convert/sustain)
       content_direction
       target_audience_segment
-    phasing[]                          (communication phases: teaser/launch/sustain)
+    phasing_structure                  (phase pattern, e.g. "三阶段：预热/引爆/长尾" — vectorized)
+    phasing_rhythm                     (tempo logic, e.g. "首波引爆后5-7天跟进第二波" — vectorized)
     cross_platform_logic               (how channels interact)
     content_themes[]                   (thematic pillars across channels)
 
@@ -494,8 +497,8 @@ CampaignRecord:
       tier                             (top / mid / tail / koc / media)
       platform
       count
-      budget_allocated
-      budget_percentage
+      budget_allocated                 (at least one of budget_allocated / budget_percentage required)
+      budget_percentage                (validator sets budget_missing=true if both null)
       role                             (awareness / amplification / ugc / credibility)
       selection_criteria               (why this tier got this allocation)
     rationale                          (overall media plan reasoning)
@@ -510,7 +513,14 @@ CampaignRecord:
       deliverables                     (post count, content type)
     content_formats[]                  (video, carousel, article, live stream)
     vendors_used[]
-    timeline_phases[]
+    actual_timeline[]                  (concrete execution dates — MongoDB only, NOT vectorized)
+
+  client_learnings:                  ← Brief Analyzer references ("how this client decides")
+    decision_style                     (e.g. "偏保守，需要数据支撑")
+    client_approved_directions[]       (directions client explicitly approved)
+    client_rejected_directions[]       (directions client explicitly vetoed)
+    kpi_priorities[]                   (KPIs client cares most about, in priority order)
+    communication_notes                (how to communicate with this client)
 
   deck_info:                         ← Deck Orchestrator references
     slide_count
@@ -557,7 +567,7 @@ New parallel flow (added):
     → After human confirmation: proposition extraction → Pinecone campaign_knowledge_{org_id}
 ```
 
-Note: Archive Pipeline no longer writes text chunks to brand_style namespace. Strategy decisions, budget data, and outcomes belong in CampaignRecord (structured), not as raw text chunks. Style/tone reference is handled by Brand Library Pipeline from dedicated brand document uploads.
+Note: `_distribute_to_brand_style()` currently still writes strategy learnings to brand_style namespace — this is intentional during transition. CampaignRecord extraction runs in parallel but records are not yet retrievable by agents (pending 5.5 proposition indexing). Once proposition vectors are live and agents query campaign_knowledge namespace instead, `_distribute_to_brand_style()` will be removed and `extract_archive()` narrowed to resource performance extraction only.
 
 **Three parallel LLM extraction calls** (split by information distribution in reports):
 
@@ -570,9 +580,9 @@ Call 2: ExtractionExecution (media_plan + execution)
   → Report sections: budget tables, resource lists, execution summaries
   → System prompt focuses on "what to buy" + "how it was done"
 
-Call 3: ExtractionOutcome (outcome)
-  → Report sections: results, post-campaign analysis, team retrospective
-  → System prompt focuses on "what happened" + "what to learn"
+Call 3: ExtractionOutcome (outcome + client_learnings)
+  → Report sections: results, post-campaign analysis, team retrospective, client feedback
+  → System prompt focuses on "what happened" + "what to learn" + "how this client decides"
 
 Merge: results combined, confidence = min(call1, call2, call3)
 Partial failure: if one call fails, others still contribute (graceful degradation)
@@ -701,15 +711,25 @@ Step 5: Assemble agent context
 
 | Agent | Profile | top_k propositions | Modules returned | Rerank |
 |-------|---------|-------------------|-----------------|--------|
-| Strategy P2 | `strategy_reference` | 6 | strategy_decisions, outcome.lessons_learned | No |
-| Media Planning | `media_planning` | 15 | media_plan (full), outcome.best_performing_tier, outcome.kpi_results | Yes |
-| Resource Agent | `resource_reference` | 8 | execution.resources_used, outcome.best_performing_channel | No |
-| Deck Orchestrator | `deck_reference` | 4 | deck_info.chapter_structure, deck_info.slide_count | No |
+| Strategy P2 | `strategy_reference` | 6 | strategy_decisions, communication_plan, outcome | No |
+| Media Planning | `media_planning` | 15 | media_plan, execution, outcome | Yes (planned) |
+| Resource Agent | `resource_reference` | 8 | execution, outcome | No |
+| Deck Orchestrator | `deck_reference` | 4 | deck_info, communication_plan | No |
+| Brief Analyzer | `brief_reference` | 4 | client_learnings, meta | No |
 
-- [ ] Define retrieval profiles as config (top_k, module whitelist, rerank flag)
+- [x] Define retrieval profiles as config (top_k, module whitelist, score_threshold)
+- [x] Profile auto-selected based on calling agent via profile_name parameter
+- [x] Strategy P2 integrated: queries campaign_knowledge, appends historical context to prompt
+- [x] `format_campaign_context()` serializes matched records into agent-consumable text
+- [x] `org_id` threaded from JWT → PipelineState → agent calls → retriever namespace
+- [x] Resource Agent integrated: queries campaign_knowledge with "resource_reference" profile
+- [x] Deck Orchestrator integrated: queries campaign_knowledge with "deck_reference" profile
+- [x] Brief Analyzer integrated: queries campaign_knowledge with "brief_reference" profile
 - [ ] Media Planning profile uses cross-encoder rerank (heavier but highest precision needed)
-- [ ] Other profiles skip rerank for speed (campaign knowledge queries are less latency-sensitive than resource matching)
-- [ ] Profile auto-selected based on calling agent, not query content
+- [ ] Media Planning agent integrated (blocked on Phase 6 Media Planning Agent)
+- [ ] Rerank implementation for media_planning profile
+
+Implementation: `backend/core/rag/campaign_retriever.py`
 
 **Hybrid search (keyword + semantic):**
 

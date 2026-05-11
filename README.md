@@ -181,12 +181,12 @@ Every pipeline completion (initial or rerun) triggers an automatic version save:
 
 | Agent | Inputs | Outputs | Key Behaviors |
 |-------|--------|---------|---------------|
-| **Brief Analyzer** | Raw text brief | `structured_brief{}` | Extracts fields (client, theme, audience, channels, budget, timeline, objective). Detects missing fields → generates clarification questions. |
+| **Brief Analyzer** | Raw text brief + campaign_knowledge (client_learnings) | `structured_brief{}` | Extracts fields (client, theme, audience, channels, budget, timeline, objective). Detects missing fields → generates clarification questions. Retrieves client history to inform gap detection. |
 | **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily > DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN uses Chanmama/Feigua, Global uses CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
 | **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
 | **Strategy P2** | `research_result` + `strategy_insight` + rejected directions | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. |
-| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` | `ResourceResult` (Pydantic) | Reads typed fields directly from state. No re-detection. Hybrid retrieval: Pinecone metadata filter (status=active, platform from channels) + vector similarity in one query. Multi-type parallel retrieval across namespaces. Conditional skip when empty. Post-validation: verifies every LLM recommendation exists in MongoDB, filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). |
-| **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project > client > LLM generation). Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
+| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` + campaign_knowledge (execution, outcome) | `ResourceResult` (Pydantic) | Reads typed fields directly from state. No re-detection. Hybrid retrieval: Pinecone metadata filter (status=active, platform from channels) + vector similarity in one query. Multi-type parallel retrieval across namespaces. Conditional skip when empty. Post-validation: verifies every LLM recommendation exists in MongoDB, filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). Campaign history provides past execution patterns for reference. |
+| **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG + campaign_knowledge (deck_info, communication_plan) | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project > client > LLM generation). Campaign history provides past deck structures for inspiration. Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
 | **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
 
 ### Human-in-the-Loop (HITL)
@@ -270,8 +270,8 @@ Knowledge System
 
 | Agent | Brand Library | Campaign KB | Methodology | Industry | Resource Library |
 |-------|:---:|:---:|:---:|:---:|:---:|
-| Brief Analyzer | | past briefs | | | |
-| Strategy P1/P2 | brand constraints | past decisions | strategy frameworks | | |
+| Brief Analyzer | | client_learnings (decision style, priorities) | | | |
+| Strategy P1/P2 | brand constraints | past decisions + outcomes | strategy frameworks | | |
 | Slide Content | copywriting style | | | | |
 | Media Planning | | past media plans + outcomes | tier allocation frameworks | | |
 | Resource Agent | | past execution results | | | resource profiles |
@@ -305,7 +305,7 @@ The brand's identity card. Stores what this brand IS, not what was done for it.
 
 **What does NOT belong here:** Historical briefs, strategy decisions, media plans, budget numbers, outcome data. These are project experience, not brand identity.
 
-#### Campaign Knowledge Base (planned, Phase 5)
+#### Campaign Knowledge Base
 
 The team's work history. Stores what was DONE, what was DECIDED, and whether it WORKED.
 
@@ -339,10 +339,10 @@ Note: name removal is necessary but not sufficient for full anonymization. Meta 
 | Deck Orchestrator | `deck_info.chapter_structure`, `deck_info.visual_style` | Slide structure and visual patterns from successful decks |
 
 **Key technical decisions:**
-- Proposition-based indexing: each record is decomposed into 8-15 atomic, self-contained insights (e.g. "[beauty | launch | 2M] KOC tier drove 60% engagement at 10% budget"). Enables precise matching without diluting signals in a single summary embedding.
-- Parent-child retrieval: search at proposition level (precision), expand to full structured modules before sending to the agent (context).
-- Human confirmation gate: LLM-extracted records are marked `pending_confirmation`. Only user-reviewed records enter retrieval. Prevents noisy or incorrect data from polluting recommendations.
-- Self-verification: after retrieval, LLM judges whether historical records are sufficiently similar to the current task. Falls back to prompt-embedded knowledge if not.
+- Proposition-based indexing (implemented): each record is decomposed into 8-15 atomic, self-contained insights (e.g. "[beauty | launch | 2M] KOC tier drove 60% engagement at 10% budget"). Enables precise matching without diluting signals in a single summary embedding.
+- Parent-child retrieval (implemented): search at proposition level (precision), expand to full structured modules before sending to the agent (context). Per-agent profiles control which modules are returned.
+- Human confirmation gate (implemented): LLM-extracted records are marked `pending_confirmation`. Only user-reviewed records enter retrieval. Prevents noisy or incorrect data from polluting recommendations.
+- Self-verification (planned, Phase 5.8): after retrieval, LLM judges whether historical records are sufficiently similar to the current task. Falls back to prompt-embedded knowledge if not.
 
 ### Ingestion Pipelines
 
@@ -363,11 +363,13 @@ Pipeline 2: Resource Import Pipeline
 Pipeline 3: Archive Pipeline
   Trigger: user uploads project recap/case study via POST /projects/{id}/archive
   Flow:    parse → LLM structured extraction → multi-destination distribution
-  Output:  two simultaneous outputs from a single upload:
+  Output:  three simultaneous outputs from a single upload:
     ├── collaboration_history → resource profiles in MongoDB + re-embed to Pinecone
-    └── [Phase 5] CampaignRecord → MongoDB campaign_records + proposition vectors
-  Note:    strategy decisions, budget data, outcomes go into CampaignRecord (structured).
-           Style/tone text no longer duplicated to brand_style namespace.
+    ├── CampaignRecord → MongoDB campaign_records (pending confirmation)
+    │     └── on confirm: proposition extraction → Pinecone campaign_knowledge_{org_id}
+    └── strategy text → brand_style namespace (transitional, will be removed after 5.6)
+  Note:    _distribute_to_brand_style() still runs during transition period.
+           Once agents retrieve from campaign_knowledge namespace, it will be removed.
 ```
 
 **Visual Reference Processing** (sub-pipeline of Pipeline 1):
@@ -395,20 +397,32 @@ Resource Agent example:
   → only active KOLs on matching platforms enter similarity ranking
 ```
 
-**Campaign Knowledge Base retrieval** (Phase 5, planned):
+**Campaign Knowledge Base retrieval (parent-child pattern):**
 
 ```
 Step 1: metadata filter on propositions (campaign_type, industry, budget_tier)
 Step 2: semantic similarity on proposition vectors → top_k matches
 Step 3: deduplicate by campaign_record_id → N distinct campaigns
 Step 4: fetch full structured modules from MongoDB (per agent's retrieval profile)
-Step 5: LLM self-verification (sufficient / partial / insufficient similarity)
+Step 5: LLM self-verification (sufficient / partial / insufficient similarity) [planned]
 ```
+
+Each agent has a retrieval profile that controls what modules it receives:
+
+| Agent | Profile | top_k | Modules returned |
+|-------|---------|-------|-----------------|
+| Strategy P2 | `strategy_reference` | 6 | strategy_decisions, communication_plan, outcome |
+| Media Planning | `media_planning` | 15 | media_plan, execution, outcome |
+| Resource Agent | `resource_reference` | 8 | execution, outcome |
+| Deck Orchestrator | `deck_reference` | 4 | deck_info, communication_plan |
+| Brief Analyzer | `brief_reference` | 4 | client_learnings, meta |
+
+Why propositions instead of full-record embeddings: a single CampaignRecord has 50+ fields. Embedding the entire record dilutes specific signals. "[beauty | launch | 2M] KOC at 10% budget drove 60% engagement" is findable as a proposition vector but invisible inside a 200-word summary embedding.
 
 **Embedding infrastructure:**
 - **BGE-M3**: self-hosted, multilingual (Chinese + English), zero API cost. Outputs dense + sparse vectors simultaneously. Cross-lingual retrieval works bidirectionally.
-- **Semantic chunking**: token-based splitting on paragraph/sentence boundaries. Language-agnostic. Chunk size adapts by file type (planned, Phase 4.5).
-- **Contextual embedding** (planned, Phase 4.5): prepend document metadata (client, file_type, filename, section) before embedding so vectors capture source context.
+- **Semantic chunking**: token-based splitting on paragraph/sentence boundaries. Language-agnostic. Chunk size adapts by file type via `CHUNK_PROFILES` (brand_spec: 800 tokens, brand_style: 1200, project_brief: 600, competitor_copy: 1000).
+- **Contextual embedding**: prepend document metadata `[Client | file_type | filename | page/slide]` before embedding so vectors capture source context. Raw text (without prefix) stored in Pinecone metadata for display.
 
 ### Multilingual Support
 
@@ -726,15 +740,17 @@ pitchcraft/
 │   ├── api/v1/endpoints/         # REST endpoints (auth, files, pipeline, resources, research, proposals)
 │   ├── core/
 │   │   ├── agents/               # brief_analyzer.py, research.py, strategy.py, resource.py, deck.py,
-│   │   │                         # schemas.py (Pydantic output models), social_data.py, visual_analysis.py
+│   │   │                         # campaign_extract.py, schemas.py (Pydantic output models),
+│   │   │                         # social_data.py, visual_analysis.py
 │   │   ├── graph/                # pipeline.py (LangGraph nodes), executor.py (run/rerun),
 │   │   │                         # state.py (PipelineState)
 │   │   ├── rag/                  # indexer.py, retriever.py, cache.py, resource_import.py,
-│   │   │                         # visual_renderer.py, visual_style.py, visual_process.py,
-│   │   │                         # feedback_embedder.py
+│   │   │                         # campaign_index.py, campaign_retriever.py,
+│   │   │                         # archive_process.py, visual_renderer.py,
+│   │   │                         # visual_style.py, visual_process.py, feedback_embedder.py
 │   │   ├── language/             # router.py (language detection), prompts.py (CN/EN templates)
 │   │   ├── stability/            # budget.py (RequestBudget), fallback.py (FallbackChain)
-│   │   ├── models/               # resource.py, feedback.py, pipeline.py
+│   │   ├── models/               # resource.py, feedback.py, pipeline.py, campaign_record.py
 │   │   └── database/             # connection.py, repositories (mongo collections)
 │   ├── tests/                    # 105 unit tests + integration suite + load tests
 │   └── Dockerfile                # Python 3.11 + LibreOffice headless + poppler-utils
@@ -830,9 +846,9 @@ cd backend && pytest tests/ -v
 
 **Phase 3 (Production Hardening)**: Mostly complete. Version management, analytics dashboard, Terraform deployment, health checks, integration/load tests done. Remaining: Pinecone/MongoDB backup strategy, PPT template expansion, PDF export.
 
-**Phase 4 (Resource Intelligence & Project Archive)**: Mostly complete. Resource profile enrichment, archive pipeline, progressive accumulation done. Remaining: external social data API integration, RAG pipeline quality improvements (contextual embedding, source tracking, adaptive chunking).
+**Phase 4 (Resource Intelligence & Project Archive)**: Complete. Resource profile enrichment, archive pipeline, progressive accumulation, contextual embedding, source location tracking, adaptive chunking all done. Remaining: external social data API integration (low priority), HITL UI for source citations (frontend).
 
-**Phase 5 (Campaign Knowledge Base)**: Planned. Structured campaign records, proposition indexing, per-agent retrieval profiles, human confirmation workflow. See ROADMAP.md for full design.
+**Phase 5 (Campaign Knowledge Base)**: In progress. Schema design (5-dimension CampaignRecord), 3-call parallel extraction pipeline, confirmation API, proposition indexing, and per-agent retrieval integration (5.6) all implemented. All pipeline agents (Strategy P2, Resource Agent, Deck Orchestrator, Brief Analyzer) now query campaign_knowledge with agent-specific profiles. Remaining: Media Planning integration (blocked on Phase 6), retrieval quality feedback (5.7), self-verification (5.8), distilled insights (5.9). See ROADMAP.md for full design.
 
 See [ROADMAP.md](./ROADMAP.md) for detailed progress.
 

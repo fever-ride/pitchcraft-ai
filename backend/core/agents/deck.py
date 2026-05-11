@@ -5,10 +5,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from backend.core.agents.llm import invoke_llm_structured
 from backend.core.agents.schemas import DeckStructureResult, NarrativeResult, SlideContent
+from backend.core.database.connection import get_database
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import resolve_output_language
+from backend.core.rag.campaign_retriever import format_campaign_context, retrieve_campaign_knowledge
 from backend.core.rag.retriever import format_results_with_sources, retrieve_for_client
-from backend.core.database.connection import get_database
 
 ORCHESTRATOR_SYSTEM = {
     "zh": "你是资深Proposal架构师。根据策略方向设计PPT大纲结构。逻辑清晰，层层递进，先insight后策略后落地。通常12-20页。",
@@ -51,6 +52,7 @@ async def run_deck_orchestrator(
     project_id: str | None = None,
     budget: RequestBudget | None = None,
     output_language: str = "auto",
+    org_id: str | None = None,
 ) -> list[dict]:
     """Generate deck structure from specific strategy fields. Uses saved structure if available."""
     saved = await _lookup_deck_structure(client_id, project_id)
@@ -59,6 +61,15 @@ async def run_deck_orchestrator(
 
     lang = resolve_output_language(output_language, big_idea)
 
+    campaign_context = ""
+    if org_id:
+        campaign_results = await retrieve_campaign_knowledge(
+            query=f"{big_idea} deck structure proposal",
+            org_id=org_id,
+            profile_name="deck_reference",
+        )
+        campaign_context = format_campaign_context(campaign_results, max_records=2)
+
     channel_names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in channels]
     user_msg = (
         f"Big Idea: {big_idea}\n"
@@ -66,6 +77,8 @@ async def run_deck_orchestrator(
         f"KPIs: {', '.join(kpis)}\n\n"
         f"Brief:\n{json.dumps(brief, ensure_ascii=False)}"
     )
+    if campaign_context:
+        user_msg += f"\n\nHistorical deck references (for structure inspiration, not constraints):\n{campaign_context}"
     messages = [
         SystemMessage(content=ORCHESTRATOR_SYSTEM[lang]),
         HumanMessage(content=user_msg),

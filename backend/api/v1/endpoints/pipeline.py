@@ -44,6 +44,7 @@ async def start_pipeline(
         "client_id": request.client_id,
         "project_id": request.project_id,
         "proposal_id": pipeline_id,
+        "org_id": user.organization_id,
         "raw_brief": request.raw_brief,
         "output_language": request.output_language,
     }

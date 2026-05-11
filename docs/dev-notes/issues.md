@@ -337,3 +337,250 @@ rest = await asyncio.gather(*[generate_slide_content(s, ...) for s in structure[
 代价：增加一个 round-trip（~3s），总时间 ~6s。仍远优于串行 45s。
 
 **结论**：先做纯并行拿到延迟收益，Prompt Caching 作为后续 cost optimization 单独验证 API 行为后再加。需要实测确认 Anthropic cache 建立时机。
+
+---
+
+## Phase 4.5 问题
+
+---
+
+## 19. ParsedSegment 引入后 parse_file() 旧接口行为变化
+
+**问题**：Phase 4.5 重构 parser 为结构化输出（`ParsedDocument` with `ParsedSegment` list），每个 segment 有 `page_number` / `slide_index` 元数据。但 PPTX parser 不再在 segment text 里加 `[Slide 1]` 前缀（location 信息移到元数据字段）。
+
+旧的 `parse_file()` 函数作为兼容层调用新 parser 并返回 plain text，但测试 `test_parse_pptx()` 断言 `"[Slide 1]" in result` 失败了。
+
+**根因**：结构化 parser 正确地把位置信息提取为 metadata 而非文本前缀，但 legacy 兼容接口忘了从 metadata 重建旧格式。
+
+**解决**：`parse_file()` 兼容层在生成 plain text 时，从 segment 的 `slide_index` / `page_number` 元数据重建 `[Slide N]` / `[Page N]` 前缀：
+
+```python
+def parse_file(file_bytes, filename) -> str:
+    doc = parse_structured(file_bytes, filename)
+    parts = []
+    for seg in doc.segments:
+        prefix = ""
+        if seg.slide_index is not None:
+            prefix = f"[Slide {seg.slide_index}]\n"
+        elif seg.page_number is not None:
+            prefix = f"[Page {seg.page_number}]\n"
+        parts.append(f"{prefix}{seg.text}")
+    return "\n\n".join(parts)
+```
+
+**教训**：引入新抽象层时，如果保留旧接口做兼容，必须确保旧接口的语义（包括输出格式）完全不变。metadata 迁移 ≠ 删除旧格式输出。
+
+---
+
+## 20. semantic_chunk_with_metadata 测试用例 token 计算错误
+
+**问题**：测试 `test_semantic_chunk_with_metadata_uses_default_for_unknown_type` 试图验证"超过默认 512 token 时会分 chunk"。用了 `"Word " * 200` 作为输入，期望产生 >1 chunk。
+
+但 `"Word "` 在 tokenizer 里只有 1 token（常见英文单词），200 个重复 = 200 tokens，远小于 512 阈值。所以只产生 1 chunk，断言失败。
+
+**解决**：改为 `"This is a moderately long sentence for testing purposes. " * 200`，每次重复约 10 tokens，200 次 = ~2000 tokens，远超 512 阈值，稳定产生多个 chunk。
+
+**教训**：测试 token-based 逻辑时，不能用"字符数"或"单词数"直觉估算 token 数。常见短单词（Word, The, is）基本是 1 token/word，需要用复合短语才能可靠超过阈值。
+
+---
+
+## Phase 5 问题
+
+---
+
+## 21. 两套提取并存的过渡期设计
+
+**问题**：Phase 5 引入 `extract_campaign_record()`（3-call 并行结构化提取），与旧的 `extract_archive()`（单 call 浅提取）在 `archive_process.py` 中并行运行。同时 `_distribute_to_brand_style()` 仍在写策略文本到 brand_style namespace。
+
+这导致文档与代码不一致——ROADMAP 一度写"Archive Pipeline no longer writes to brand_style namespace"，但代码实际还在写。
+
+**根因**：CampaignRecord 虽然已提取并存入 MongoDB，但还没经过 human confirmation，也没有 proposition indexing。Agent 目前仍通过 brand_style namespace 获取策略参考。如果现在删 `_distribute_to_brand_style()`，agent 会丢失这部分上下文。
+
+**解决**：
+1. 明确这是有意为之的过渡期设计
+2. 文档对齐：ROADMAP 4.2 和 5.3 都注明两套共存，说明删除条件（5.5 proposition indexing 完成 + agents 切换到 campaign_knowledge namespace）
+3. 代码中 `_distribute_to_brand_style()` docstring 标注过渡期角色
+
+**删除条件**（所有条件满足后可安全移除）：
+- campaign_knowledge namespace 有足够的 confirmed records + propositions
+- Strategy P2 已集成 `retrieve_campaign_knowledge()`（已完成）
+- 其他 agents（Media Planning, Deck）也切换到 campaign_knowledge retrieval
+- 确认 brand_style namespace 不再被任何 agent query
+
+---
+
+## 22. CampaignRecord schema 命名歧义
+
+**问题**：`StrategyDecisions.rejected_directions` 和 `ClientLearnings.rejected_directions` 字段名相同但语义完全不同：
+
+```python
+# StrategyDecisions: 我们团队内部否定的策略方向
+rejected_directions: list[RejectedDirection]
+
+# ClientLearnings: 客户看了提案后否决的方向
+rejected_directions: list[str]
+```
+
+两者来源、含义、使用者都不同。同名会导致 agent prompt 混淆、跨模块查询时 key collision。
+
+**解决**：`ClientLearnings` 中改名为 `client_approved_directions` / `client_rejected_directions`，加 `client_` 前缀明确主语是客户。
+
+**教训**：跨模块的字段名如果语义不同必须加命名空间前缀。特别是当字段会被 LLM 提取/填写时，名称歧义直接导致提取错误。
+
+---
+
+## 23. phasing（传播节奏）信息在向量化和存储之间的归属问题
+
+**问题**：原始设计中 `CommunicationPlan.phasing: list[str]` 和 `ExecutionDetail.timeline_phases: list[str]` 都存"阶段"信息，但用途完全不同：
+
+```python
+# Communication 层：节奏模式（应该向量化，供跨项目检索）
+phasing: ["预热期", "引爆期", "长尾期"]
+
+# Execution 层：具体日期（只存 MongoDB，不向量化）
+timeline_phases: ["预热期：3月1-14日", "引爆期：3月15-20日"]
+```
+
+如果不区分，两者都被当作 ExecutionDetail 存储处理（只进 MongoDB 不向量化），导致传播节奏模式信息无法被未来项目检索到。
+
+**解决**：拆分为三个字段：
+- `CommunicationPlan.phasing_structure: str` — 阶段模式（"三阶段：预热/引爆/长尾"），向量化
+- `CommunicationPlan.phasing_rhythm: str` — 节奏逻辑（"首波引爆后5-7天跟进第二波"），向量化
+- `ExecutionDetail.actual_timeline: list[str]` — 具体执行日期，只存 MongoDB
+
+**教训**：同一概念在不同抽象层有不同的"信息保质期"。模式 pattern 跨项目有价值（向量化），具体日期只对当前项目有意义（纯存储）。Schema 设计时要按"这个信息将来还有用吗"来决定存储方式。
+
+---
+
+## 通用经验（续 4）
+
+| 场景 | 做法 |
+|------|------|
+| 新旧管道并存过渡 | 文档明确标注共存原因和删除条件，不要让代码和文档矛盾 |
+| 跨模块同名字段 | 加命名空间前缀消除歧义（client_rejected vs rejected） |
+| 同一概念不同抽象层 | 按"跨项目检索价值"决定向量化 vs 纯存储 |
+| Legacy 兼容层 | 必须完整复现旧接口的输出格式，不能只保留函数签名 |
+| Token 数量断言 | 用 tokenizer 实测，不凭直觉估算 |
+
+---
+
+## 系统设计决策（BQ 素材）
+
+---
+
+## D1. 知识库架构从混沌到五层体系的演进
+
+**Situation**：系统最初只有一个 `brand_history` Pinecone namespace，所有历史信息（策略决策、文案风格、KPI 数据、受众洞察）全部 chunk + embed 存进去。Agent 检索时拿到的内容质量不稳定——查"这个客户上次预算怎么分配"会返回一堆文案文本，查"品牌 tone"会返回 KPI 数字。
+
+**Problem**：根本原因是没区分"信息的性质"和"信息的消费者"。一锅端的 RAG 对简单 QA 够用，但当 6 个不同 agent 各有不同信息需求时，检索精度成为瓶颈。
+
+**Action**：
+1. 从 agent 消费端倒推——列出每个 agent 在生成时需要什么类型的知识（约束型/参考型/方法型/实时型/资源型）
+2. 按信息性质和生命周期分层：Brand Library（身份约束，静态）、Campaign Knowledge Base（项目经验，累积）、Methodology Library（方法论，半静态）、Industry Knowledge（市场情报，易腐）、Resource Library（执行资源，动态）
+3. 确立边界规则："信息的价值在措辞本身 → Brand Library；信息脱离措辞仍有价值 → Campaign KB"
+4. 每层选择最适合的存储方式（不是全部用向量存储：Methodology 直接在 prompt 里，Industry Knowledge 用实时搜索 + 短期缓存）
+
+**Result**：
+- Agent 检索精度显著提升（每个 agent 只查自己需要的 namespace/module）
+- 系统可维护性增强（新增知识类型时知道往哪里放）
+- 识别出 3/5 层其实不需要额外基础设施（避免了过度建设）
+
+**Key takeaway**：知识架构应该从"消费者需要什么"倒推，不从"有什么数据"正推。
+
+---
+
+## D2. Structured extraction vs shallow RAG — 为什么不直接 chunk + embed
+
+**Situation**：结案报告（20-40 页 PDF/PPTX）包含丰富的项目经验——策略决策、预算分配、执行细节、效果数据。最简单的做法是 parse → chunk → embed → Pinecone，跟现有 Brand Library pipeline 一样。
+
+**Problem**：试过之后发现三个致命问题：
+1. **信号稀释**：一条"KOC tier 占 10% 预算贡献 60% 互动"在 2000 token 的 chunk 里被淹没，语义搜索匹配不到
+2. **缺乏结构**：Agent 拿到文本 chunk 无法区分"这是决策"还是"这是结果"还是"这是被否定的方向"
+3. **无法做元信息过滤**：想查"美妆行业 200 万预算的 launch campaign"，纯向量搜索做不到精确过滤
+
+**Action**：设计三层处理：
+1. **结构化提取**：3 个并行 LLM 调用，各带领域专家 prompt（策略分析师 / media planner / 评估专家），提取到 50+ 字段的 `CampaignRecord`
+2. **Human confirmation gate**：LLM 提取结果标记 pending，人工审核后才进入检索池
+3. **Proposition indexing**：confirmed record 拆成 8-15 条原子命题，每条 baked-in 元信息前缀再 embed
+
+为什么 3 call 而非 1 call：单次 structured output 超过 ~30 字段质量下降严重。3 call 各专注 15-20 字段，且可并行（总延迟不增加）。
+
+**Result**：
+- 搜索"美妆 launch KOC 效果"直接命中精确命题，而非模糊相关的文本段
+- Agent 拿到的是结构化 JSON（strategy_decisions, media_plan, outcome），可以直接推理
+- 元信息过滤 + 语义搜索组合使用，precision 远高于纯 RAG
+
+**Key takeaway**：RAG 的上限不在检索技术，在于被检索内容的结构化程度。投入 effort 在 indexing 阶段做结构化，retrieval 阶段自然就精准。
+
+---
+
+## D3. 跨客户知识复用的隐私权衡
+
+**Situation**：广告公司同时服务 10+ 客户。Client A 的美妆 launch 经验对 Client B 的美妆 launch 极有参考价值。如果每个客户的知识完全隔离，知识积累速度 = 单客户项目数（很慢）。如果允许跨客户检索，积累速度 = 全公司项目数（10x+）。
+
+**Problem**：但客户间可能是竞品关系。不能让系统在给 Brand A 做策略时说"Brand B 上次这么做效果很好"。需要找到复用和隔离的平衡点。
+
+**Action**：
+1. **存储层隔离**：每条 CampaignRecord 明确属于一个 client_id（数据归属清晰）
+2. **检索层穿透**：按 industry + campaign_type + budget_tier 跨客户匹配（最大化复用）
+3. **响应层脱敏**：返回给 agent 的内容去除 client_name，只暴露 meta + decisions + outcomes
+4. **管理员逃生舱**：admin 可标记记录为 "client_only"（隔离竞品）
+
+同时明确记录当前方案的 known limitation：meta 字段组合在小众市场可能 re-identify（"汽车 | 50M | 新能源 | 家庭" 在中国可能只有 2-3 个品牌）。但对单一广告公司内部使用场景，所有用户本来就能接触所有客户资料，这个风险可接受。
+
+**Result**：
+- 知识积累速度 10x（跨客户）
+- 竞品隔离有明确机制（client_only flag）
+- 隐私边界记录在架构文档中，而非隐含假设
+
+**Key takeaway**：安全设计不是 all-or-nothing。明确 threat model（谁是攻击者？单公司内部 vs 多租户 SaaS），按实际风险做最小够用方案，把 known limitation 文档化而非假装不存在。
+
+---
+
+## D4. 新旧管道并存的渐进式迁移
+
+**Situation**：Phase 5 引入了 CampaignRecord 结构化提取，理论上可以替代旧的 `_distribute_to_brand_style()`（把策略文本存为 chunk 向量）。直觉是"新的更好，删掉旧的"。
+
+**Problem**：新管道有三个尚未闭环的环节：
+1. CampaignRecord 存入 MongoDB 后需要人工确认才能进检索池
+2. Proposition indexing（确认后向量化）刚实现，还没有真实数据验证质量
+3. Agent 侧刚接入 `campaign_knowledge` namespace，还没有全部切换
+
+如果现在删旧管道，Agent 会丢失策略参考上下文（brand_style namespace 不再有新内容，旧内容随时间过时）。
+
+**Action**：
+1. 保持两套并行运行——旧管道继续写 brand_style，新管道写 campaign_records
+2. 在代码和文档中标注"过渡期设计"，列出明确的删除条件清单
+3. 删除条件：campaign_knowledge 有足够 confirmed records + 所有 agent 切换完毕 + brand_style 不再被 query
+4. 不做 feature flag 或 A/B — 简单的代码共存，都跑，数据各走各的路径
+
+**Result**：
+- 零中断风险（旧路径确保 agent 始终有上下文）
+- 新路径可以在真实数据上逐步验证
+- 删除时机由数据就绪度决定，而非代码发布时间
+
+**Key takeaway**：数据管道迁移不能用 big bang。旧管道的"正确性"已验证，新管道的"正确性"需要真实数据证明。并行运行直到新路径证明自己，再切换。
+
+---
+
+## D5. Communication（怎么打）和 Media（买什么）的建模分离
+
+**Situation**：设计 CampaignRecord schema 时，最初把"渠道策略"和"媒介采买"放在同一个 `media_plan` 模块里。看起来都是"渠道相关"的信息。
+
+**Problem**：Review 时发现两个问题：
+1. **消费者不同**：Strategy P2 需要知道"小红书在这个 campaign 里的角色是种草引爆"（传播策略），不需要知道"买了 50 个 KOC 花了 20 万"（媒介执行）
+2. **一个反例暴露了边界**：线下 brand event — 如果是传播规划中的一个触点（引爆期的核心体验活动），属于 communication；如果是花钱买的场地/媒介资源，属于 media。同一个活动，两个不同的信息面。
+
+把它们混在一起会导致：Media Planning Agent 拿到一堆渠道角色描述（对它没用），Strategy P2 拿到一堆预算数字（对它没用）。
+
+**Action**：
+- `CommunicationPlan`：渠道角色（channel + role + content_direction）、传播节奏（phasing_structure/rhythm）、跨平台联动逻辑。消费者是 Strategy P2 和 Deck Orchestrator
+- `MediaPlan`：预算总额、渠道预算拆分、tier 结构（数量/金额/占比/选择标准）。消费者是 Media Planning Agent
+- 每个渠道加 `channel_type`（social/offline/pr/paid）显式标注，避免模糊地带
+
+**Result**：
+- 每个 agent 的 retrieval profile 可以精准选择需要的 module（不会信息溢出）
+- Extraction prompt 更专注（Call 1 专注战略层，Call 2 专注战术层）
+- Schema 反映了真实的业务认知分层（策略人 vs 媒介人看同一个项目的视角不同）
+
+**Key takeaway**：Schema 设计不是数据建模，是认知建模。问"谁用这个信息做什么决策"比"这个信息客观属于哪个类别"更重要。看起来相似的概念如果被不同角色以不同方式消费，就应该是不同的字段。

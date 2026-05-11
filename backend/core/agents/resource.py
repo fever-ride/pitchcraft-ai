@@ -7,6 +7,7 @@ from backend.core.database.connection import get_database
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import resolve_output_language
 from backend.core.models.resource import PLATFORM_ALIASES, ResourceStatus, normalize_platform, resource_namespace
+from backend.core.rag.campaign_retriever import format_campaign_context, retrieve_campaign_knowledge
 from backend.core.rag.retriever import retrieve
 
 SYSTEM_PROMPT = {
@@ -87,6 +88,7 @@ async def run_resource_agent(
     category: str = "",
     budget: RequestBudget | None = None,
     output_language: str = "auto",
+    org_id: str | None = None,
 ) -> ResourceResult | dict:
     """Match resources from DB based on typed strategy fields.
 
@@ -123,6 +125,16 @@ async def run_resource_agent(
 
     resource_context = "\n".join([r.text for r in all_results]) if all_results else "No resources found in database."
 
+    campaign_context = ""
+    if org_id:
+        campaign_query = f"{big_idea} {content_tone} resource execution"
+        campaign_results = await retrieve_campaign_knowledge(
+            query=campaign_query,
+            org_id=org_id,
+            profile_name="resource_reference",
+        )
+        campaign_context = format_campaign_context(campaign_results, max_records=3)
+
     channel_names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in channels]
     user_msg = (
         f"Big Idea: {big_idea}\n"
@@ -133,6 +145,8 @@ async def run_resource_agent(
         f"Required resource types: {', '.join(resource_types_needed)}\n\n"
         f"Resource database results:\n{resource_context}"
     )
+    if campaign_context:
+        user_msg += f"\n\nHistorical campaign references (for context, not constraints):\n{campaign_context}"
     messages = [
         SystemMessage(content=SYSTEM_PROMPT[lang]),
         HumanMessage(content=user_msg),

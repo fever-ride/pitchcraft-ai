@@ -1,12 +1,16 @@
 """Campaign Knowledge Base endpoints: review, confirm, and query campaign records."""
+import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
 from backend.core.database.connection import get_database
 from backend.core.models.campaign_record import ConfirmationStatus
+from backend.core.rag.campaign_index import index_campaign_propositions
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -103,9 +107,13 @@ async def get_campaign_record(
 async def confirm_campaign_record(
     record_id: str,
     body: ConfirmRequest,
+    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Human confirms a campaign record, optionally applying edits."""
+    """Human confirms a campaign record, optionally applying edits.
+
+    After confirmation, proposition extraction + vectorization runs in background.
+    """
     db = await get_database()
     doc = await db["campaign_records"].find_one({"_id": record_id})
     if not doc:
@@ -122,4 +130,21 @@ async def confirm_campaign_record(
 
     await db["campaign_records"].update_one({"_id": record_id}, {"$set": update})
 
+    # Fetch updated record for proposition extraction
+    confirmed_doc = await db["campaign_records"].find_one({"_id": record_id})
+    org_id = user.organization_id
+
+    background_tasks.add_task(
+        _index_propositions_safe, record_id, confirmed_doc, org_id
+    )
+
     return {"record_id": record_id, "status": "confirmed"}
+
+
+async def _index_propositions_safe(record_id: str, record: dict, org_id: str):
+    """Wrapper that catches errors so background task doesn't crash silently."""
+    try:
+        count = await index_campaign_propositions(record_id, record, org_id)
+        logger.info(f"Proposition indexing complete: {count} propositions for {record_id}")
+    except Exception as e:
+        logger.error(f"Proposition indexing failed for {record_id}: {e}")

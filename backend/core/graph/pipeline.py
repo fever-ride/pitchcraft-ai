@@ -70,7 +70,12 @@ def build_pipeline() -> StateGraph:
 
 async def brief_analyzer_node(state: PipelineState) -> dict:
     budget = state.get("request_budget")
-    result = await analyze_brief(state["raw_brief"], budget=budget)
+    result = await analyze_brief(
+        state["raw_brief"],
+        budget=budget,
+        client_id=state.get("client_id"),
+        org_id=state.get("org_id"),
+    )
     return {
         "structured_brief": result.structured_brief.model_dump(),
         "missing_fields": result.missing_fields,
@@ -126,6 +131,7 @@ async def strategy_phase2_node(state: PipelineState) -> dict:
         phase1_insight=state.get("strategy_insight", {}),
         research_result=state.get("research_result", {}),
         client_id=state.get("client_id"),
+        org_id=state.get("org_id"),
         budget=budget,
     )
     result_dict = result.model_dump()
@@ -169,6 +175,7 @@ async def resource_agent_node(state: PipelineState) -> dict:
         category=brief.get("category", ""),
         budget=budget,
         output_language=state.get("output_language", "auto"),
+        org_id=state.get("org_id"),
     )
     if isinstance(result, dict):
         return {"resource_result": result}
@@ -187,6 +194,7 @@ async def deck_orchestrator_node(state: PipelineState) -> dict:
         project_id=state.get("project_id"),
         budget=budget,
         output_language=state.get("output_language", "auto"),
+        org_id=state.get("org_id"),
     )
     return {"deck_structure": structure}
 
