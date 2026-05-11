@@ -48,6 +48,10 @@ class PipelineState(TypedDict, total=False):
     strategy_confirmed: bool
     strategy_feedback: str
 
+    # Media Plan
+    media_plan: dict  # Full MediaPlan as dict
+    media_plan_confirmed: bool
+
     # Resources
     resource_result: dict  # Full ResourceResult as dict
 

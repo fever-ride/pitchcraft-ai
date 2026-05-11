@@ -98,6 +98,10 @@ export const api = {
     return request<Record<string, unknown>>(`/api/v1/pipeline/${pipelineId}/strategy`);
   },
 
+  getMediaPlan(pipelineId: string) {
+    return request<Record<string, unknown>>(`/api/v1/pipeline/${pipelineId}/media-plan`);
+  },
+
   getSlides(pipelineId: string) {
     return request<{ slides: unknown[]; narrative_suggestions: unknown[]; deck_structure: unknown[] }>(`/api/v1/pipeline/${pipelineId}/slides`);
   },

@@ -29,6 +29,19 @@ def _resolve_channel_platform(channel_name: str) -> str | None:
     return None
 
 
+def _infer_resource_type(tier_label: str, channel_name: str) -> str:
+    """Infer resource type from tier label and channel context."""
+    tier_lower = tier_label.lower()
+    channel_lower = channel_name.lower()
+    if tier_lower == "media" or channel_lower in ("pr", "媒体"):
+        return "media"
+    if tier_lower in ("top", "mid", "tail"):
+        return "kol"
+    if tier_lower == "koc":
+        return "koc"
+    return "kol"
+
+
 def _build_metadata_filter(
     resource_type: str,
     channels: list[dict],
@@ -89,6 +102,7 @@ async def run_resource_agent(
     budget: RequestBudget | None = None,
     output_language: str = "auto",
     org_id: str | None = None,
+    media_plan: dict | None = None,
 ) -> ResourceResult | dict:
     """Match resources from DB based on typed strategy fields.
 
@@ -110,18 +124,40 @@ async def run_resource_agent(
     search_query = " ".join(query_parts)
 
     all_results = []
-    for rtype in resource_types_needed:
-        ns = resource_namespace(rtype, client_id)
-        meta_filter = _build_metadata_filter(rtype, channels)
-        results = await retrieve(
-            query=search_query,
-            namespaces=[ns],
-            top_k=8,
-            score_threshold=0.3,
-            metadata_filter=meta_filter,
-        )
-        if results:
-            all_results.extend(results)
+    if media_plan and media_plan.get("tiers"):
+        # Tiered retrieval: per-tier query with tier-specific criteria
+        for tier_spec in media_plan["tiers"]:
+            tier_query = tier_spec.get("selection_criteria", search_query)
+            tier_label = tier_spec.get("tier", "")
+            channel_name = tier_spec.get("channel", "")
+            rtype = _infer_resource_type(tier_label, channel_name)
+            ns = resource_namespace(rtype, client_id)
+            meta_filter = _build_metadata_filter(rtype, channels)
+            if tier_label:
+                meta_filter["tier"] = {"$eq": tier_label}
+            results = await retrieve(
+                query=tier_query,
+                namespaces=[ns],
+                top_k=tier_spec.get("count", 5) + 3,
+                score_threshold=0.25,
+                metadata_filter=meta_filter,
+            )
+            if results:
+                all_results.extend(results)
+    else:
+        # Fallback: generic retrieval per resource type (no media plan)
+        for rtype in resource_types_needed:
+            ns = resource_namespace(rtype, client_id)
+            meta_filter = _build_metadata_filter(rtype, channels)
+            results = await retrieve(
+                query=search_query,
+                namespaces=[ns],
+                top_k=8,
+                score_threshold=0.3,
+                metadata_filter=meta_filter,
+            )
+            if results:
+                all_results.extend(results)
 
     resource_context = "\n".join([r.text for r in all_results]) if all_results else "No resources found in database."
 
@@ -145,6 +181,17 @@ async def run_resource_agent(
         f"Required resource types: {', '.join(resource_types_needed)}\n\n"
         f"Resource database results:\n{resource_context}"
     )
+    if media_plan:
+        tiers = media_plan.get("tiers", [])
+        if tiers:
+            tier_lines = []
+            for t in tiers:
+                tier_lines.append(
+                    f"  - {t.get('channel', '?')} / {t.get('tier', '?')} tier: "
+                    f"count={t.get('count', '?')}, role={t.get('role', '?')}, "
+                    f"criteria: {t.get('selection_criteria', 'N/A')}"
+                )
+            user_msg += "\n\nMedia Plan (confirmed tier matrix — match resources to these requirements):\n" + "\n".join(tier_lines)
     if campaign_context:
         user_msg += f"\n\nHistorical campaign references (for context, not constraints):\n{campaign_context}"
     messages = [

@@ -154,6 +154,19 @@ async def get_strategy(
     }
 
 
+@router.get("/{pipeline_id}/media-plan")
+async def get_media_plan(
+    pipeline_id: str, user: CurrentUser = Depends(get_current_user)
+):
+    executor = PipelineExecutor(pipeline_id)
+    state = await executor.load_state()
+    if not state:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    return {
+        "media_plan": state.get("media_plan", {}),
+    }
+
+
 @router.get("/{pipeline_id}/slides")
 async def get_slides(
     pipeline_id: str, user: CurrentUser = Depends(get_current_user)

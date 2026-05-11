@@ -14,7 +14,7 @@ from backend.core.graph.state import BudgetExceeded, RequestBudget
 
 logger = logging.getLogger(__name__)
 
-HITL_NODES = {"hitl_brief", "hitl_strategy", "hitl_structure", "hitl_gallery"}
+HITL_NODES = {"hitl_brief", "hitl_strategy", "hitl_media", "hitl_structure", "hitl_gallery"}
 
 
 class PipelineExecutor:
@@ -179,6 +179,10 @@ class PipelineExecutor:
             else:
                 state["strategy_feedback"] = response.get("feedback", "")
                 state["rerun_refresh_research"] = response.get("refresh_research", False)
+        elif node == "hitl_media":
+            state["media_plan_confirmed"] = True
+            if response.get("edits") and "media_plan" in response["edits"]:
+                state["media_plan"] = response["edits"]["media_plan"]
         elif node == "hitl_structure":
             state["structure_confirmed"] = True
             if response.get("edits") and "deck_structure" in response["edits"]:
@@ -207,6 +211,8 @@ class PipelineExecutor:
                 "research_result": state.get("research_result", {}),
                 "brand_check_passed": state.get("brand_check_passed"),
             }
+        elif node == "hitl_media":
+            data = {"media_plan": state.get("media_plan", {})}
         elif node == "hitl_structure":
             data = {"deck_structure": state.get("deck_structure", [])}
         elif node == "hitl_gallery":

@@ -13,8 +13,10 @@ from backend.core.rag.indexer import upsert_vectors
 VALID_TYPES = {"kol", "koc", "media", "vendor", "placement"}
 
 KNOWN_COLUMNS = {
-    "name", "type", "platform", "followers", "categories", "content_style",
-    "audience_tags", "past_cpe", "tags", "pricing", "notes",
+    "name", "type", "tier", "platform", "followers", "categories",
+    "content_style", "production_level", "persona_type", "voice_style",
+    "audience_tags", "age_range", "gender_skew", "city_tier", "interest_tags",
+    "past_cpe", "tags", "pricing", "notes",
     "outlet_type", "beat", "service_type", "region",
     "placement_type", "location", "audience_reach",
 }
@@ -24,6 +26,8 @@ HEADER_ALIASES = {
     "名称": "name",
     "资源名称": "name",
     "类型": "type",
+    "层级": "tier",
+    "达人层级": "tier",
     "平台": "platform",
     "粉丝数": "followers",
     "粉丝": "followers",
@@ -31,8 +35,16 @@ HEADER_ALIASES = {
     "擅长品类": "categories",
     "内容风格": "content_style",
     "风格": "content_style",
+    "制作水平": "production_level",
+    "人设类型": "persona_type",
+    "表达风格": "voice_style",
     "受众": "audience_tags",
     "受众标签": "audience_tags",
+    "年龄段": "age_range",
+    "受众年龄": "age_range",
+    "性别倾向": "gender_skew",
+    "城市级别": "city_tier",
+    "兴趣标签": "interest_tags",
     "历史cpe": "past_cpe",
     "cpe": "past_cpe",
     "标签": "tags",
@@ -110,10 +122,35 @@ def parse_resource_excel(file_bytes: bytes) -> ImportParseResult:
             record["platform_normalized"] = normalize_platform(record.get("platform", ""))
             record["status"] = ResourceStatus.ACTIVE.value
             record["last_verified_at"] = datetime.utcnow()
-            for list_field in ("categories", "audience_tags", "tags"):
+            for list_field in ("categories", "audience_tags", "tags", "interest_tags"):
                 val = record.get(list_field, "")
                 if isinstance(val, str):
                     record[list_field] = [t.strip() for t in val.split(",") if t.strip()]
+            # Assemble structured content_style_v2 from individual columns
+            cs_v2 = {}
+            for cs_field in ("production_level", "persona_type", "voice_style"):
+                val = record.pop(cs_field, None)
+                if val:
+                    cs_v2[cs_field] = val
+            if cs_v2:
+                record["content_style_v2"] = cs_v2
+            # Assemble structured audience_demographics from individual columns
+            ad = {}
+            for ad_field in ("age_range", "gender_skew", "city_tier"):
+                val = record.pop(ad_field, None)
+                if val:
+                    ad[ad_field] = val
+            interest = record.pop("interest_tags", [])
+            if interest:
+                ad["interest_tags"] = interest
+            if ad:
+                record["audience_demographics"] = ad
+            # Normalize tier
+            tier_val = record.get("tier", "")
+            if tier_val and tier_val.lower() in ("top", "mid", "tail", "koc"):
+                record["tier"] = tier_val.lower()
+            else:
+                record.pop("tier", None)
             resources.append(record)
 
     wb.close()
@@ -126,6 +163,8 @@ def _resource_to_text(r: dict) -> str:
         f"Name: {r.get('name', '')}",
         f"Type: {r.get('type', '')}",
     ]
+    if r.get("tier"):
+        parts.append(f"Tier: {r['tier']}")
     if r.get("platform"):
         parts.append(f"Platform: {r['platform']}")
     if r.get("followers"):
@@ -133,9 +172,35 @@ def _resource_to_text(r: dict) -> str:
     if r.get("categories"):
         cats = r["categories"]
         parts.append(f"Categories: {', '.join(cats) if isinstance(cats, list) else cats}")
-    if r.get("content_style"):
+    # Structured content style (v2)
+    cs = r.get("content_style_v2")
+    if isinstance(cs, dict):
+        style_parts = []
+        if cs.get("production_level"):
+            style_parts.append(f"production:{cs['production_level']}")
+        if cs.get("persona_type"):
+            style_parts.append(f"persona:{cs['persona_type']}")
+        if cs.get("voice_style"):
+            style_parts.append(f"voice:{cs['voice_style']}")
+        if style_parts:
+            parts.append(f"Content Style: {', '.join(style_parts)}")
+    elif r.get("content_style"):
         parts.append(f"Content Style: {r['content_style']}")
-    if r.get("audience_tags"):
+    # Structured audience demographics
+    ad = r.get("audience_demographics")
+    if isinstance(ad, dict):
+        demo_parts = []
+        if ad.get("age_range"):
+            demo_parts.append(f"age:{ad['age_range']}")
+        if ad.get("gender_skew"):
+            demo_parts.append(ad["gender_skew"])
+        if ad.get("city_tier"):
+            demo_parts.append(ad["city_tier"])
+        if ad.get("interest_tags"):
+            demo_parts.extend(ad["interest_tags"])
+        if demo_parts:
+            parts.append(f"Audience: {', '.join(demo_parts)}")
+    elif r.get("audience_tags"):
         tags = r["audience_tags"]
         parts.append(f"Audience: {', '.join(tags) if isinstance(tags, list) else tags}")
     if r.get("past_cpe"):
@@ -179,6 +244,7 @@ async def refresh_resource_embedding(doc: dict, client_id: str):
     extra_meta = {
         "name": doc.get("name", ""),
         "type": doc.get("type", rtype),
+        "tier": doc.get("tier", ""),
         "platform": normalize_platform(doc.get("platform", "")),
         "status": doc.get("status", ResourceStatus.ACTIVE.value),
         "followers_count": doc.get("followers_count") or 0,

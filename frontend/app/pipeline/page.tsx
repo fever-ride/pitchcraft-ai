@@ -10,6 +10,7 @@ import { BriefInput } from "@/components/pipeline/BriefInput";
 import { HitlBrief } from "@/components/pipeline/HitlBrief";
 import { HitlStrategy } from "@/components/pipeline/HitlStrategy";
 import { HitlStructure } from "@/components/pipeline/HitlStructure";
+import { HitlMedia } from "@/components/pipeline/HitlMedia";
 import { GalleryView } from "@/components/gallery/GalleryView";
 import { PipelineProgress } from "@/components/pipeline/PipelineProgress";
 
@@ -72,6 +73,13 @@ export default function PipelinePage() {
             pipelineId={pipelineId}
             onConfirm={() => handleConfirm("hitl_strategy")}
             onRevise={(fb) => handleRevise("hitl_strategy", fb)}
+          />
+        )}
+
+        {currentNode === "hitl_media" && (
+          <HitlMedia
+            pipelineId={pipelineId}
+            onConfirm={(edits) => handleConfirm("hitl_media", edits)}
           />
         )}
 

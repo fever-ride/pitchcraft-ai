@@ -11,6 +11,7 @@ class StructuredBrief(BaseModel):
     audience: str = Field(default="not provided", description="Target audience or 'not provided'")
     channels: list[str] = Field(default_factory=list, description="Channel list")
     budget: str = Field(default="not provided", description="Budget range or 'not provided'")
+    budget_split: dict[str, str] = Field(default_factory=dict, description="Channel-level budget split if specified by client, e.g. {'social': '60%', 'PR': '25%'}. Empty if not specified.")
     timeline: str = Field(default="not provided", description="Timeline or 'not provided'")
     objective: str = Field(default="not provided", description="Campaign objective or 'not provided'")
 

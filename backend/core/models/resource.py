@@ -17,6 +17,34 @@ class ResourceStatus(str, Enum):
     INACTIVE = "inactive"
 
 
+class ResourceTier(str, Enum):
+    TOP = "top"
+    MID = "mid"
+    TAIL = "tail"
+    KOC = "koc"
+
+
+class ProductionLevel(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ContentStyle(BaseModel):
+    """Multi-dimensional content style for media planning matching."""
+    production_level: ProductionLevel | None = None  # high / medium / low
+    persona_type: str | None = None  # expert / relatable / aspirational / entertaining
+    voice_style: str | None = None  # educational / conversational / emotional / humorous
+
+
+class AudienceDemographics(BaseModel):
+    """Structured audience profile for tier-based retrieval matching."""
+    age_range: str | None = None  # e.g. "18-24", "25-35"
+    gender_skew: str | None = None  # "female", "male", "balanced"
+    city_tier: str | None = None  # "tier_1", "tier_2_3", "all"
+    interest_tags: list[str] = Field(default_factory=list)
+
+
 class Pricing(BaseModel):
     min: float | None = None
     max: float | None = None
@@ -51,10 +79,15 @@ class Resource(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_verified_at: datetime | None = None
 
+    # Tier classification (for media planning matrix matching)
+    tier: ResourceTier | None = None
+
     # Profile fields (semantic — used in embedding text for similarity matching)
     categories: list[str] = []
-    content_style: str | None = None
-    audience_tags: list[str] = []
+    content_style: str | None = None  # legacy freeform field, kept for backward compat
+    content_style_v2: ContentStyle | None = None  # structured multi-dimensional style
+    audience_tags: list[str] = []  # legacy flat list, kept for backward compat
+    audience_demographics: AudienceDemographics | None = None  # structured audience profile
     past_cpe: str | None = None
 
     # KOL/KOC specific

@@ -44,14 +44,21 @@ Brief Input
            │              └───────────────────────────────────────────┘
            ▼
 ┌──────────────────────┐  ┌───────────────────────────────────────────┐
-│   Resource Agent      │  │  CONDITIONAL: reads state["resource_types_ │
-│                       │  │  needed"] (typed list from Strategy P2).    │
-│  (may skip entirely)  │  │  If empty → clean skip, zero LLM calls.    │
-└──────────┬───────────┘  │  If multiple types → parallel Pinecone      │
-           │              │  queries across namespaces.                  │
+│  Media Planning Agent │  │  Transforms strategy into tier-level media │
+│                       │  │  matrix. Per-tier: role, count, budget %,  │
+└──────────┬───────────┘  │  selection_criteria for Resource retrieval. │
+           │              │  Retrieves historical media plans (top_k=15)│
+           │  ← HITL Node 3  → editable table (count + budget %)       │
            │              └───────────────────────────────────────────┘
            ▼
-┌──────────────────────┐  ← HITL Node 3: confirm/edit structure
+┌──────────────────────┐  ┌───────────────────────────────────────────┐
+│   Resource Agent      │  │  Per-tier retrieval: selection_criteria as │
+│                       │  │  query + tier as metadata filter.          │
+│  (may skip entirely)  │  │  Fallback: generic per-type retrieval when │
+└──────────┬───────────┘  │  no media_plan present.                    │
+           │              └───────────────────────────────────────────┘
+           ▼
+┌──────────────────────┐  ← HITL Node 4: confirm/edit structure
 │  Deck Orchestrator    │  (three-tier lookup: project → client → LLM)
 └──────────┬───────────┘
            │
@@ -63,13 +70,13 @@ Brief Input
 │ (coherence advisor)   │  │  slide generation. Outputs suggestions    │
 └──────────┬───────────┘  │  with page references, never blocks flow.  │
            │              └───────────────────────────────────────────┘
-           │  ← HITL Node 4: Gallery Review (batch mark + regenerate)
+           │  ← HITL Node 5: Gallery Review (batch mark + regenerate)
            ▼
 ┌──────────────────────┐
 │     PPT Builder       │ → .pptx download + web preview
 └──────────┬───────────┘
            │
-           │  ← HITL Node 5: Client feedback
+           │  ← HITL Node 6: Client feedback
            │
            │    ┌──────────────────────────────────────────────────┐
            └───▶│  FEEDBACK-DRIVEN RERUN                            │
@@ -185,21 +192,23 @@ Every pipeline completion (initial or rerun) triggers an automatic version save:
 | **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily > DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN uses Chanmama/Feigua, Global uses CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
 | **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
 | **Strategy P2** | `research_result` + `strategy_insight` + rejected directions + campaign_knowledge (strategy_decisions, communication_plan, outcome) | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. References historical campaign outcomes. |
-| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]` + campaign_knowledge (execution, outcome) | `ResourceResult` (Pydantic) | Reads typed fields directly from state. No re-detection. Hybrid retrieval: Pinecone metadata filter (status=active, platform from channels) + vector similarity in one query. Multi-type parallel retrieval across namespaces. Conditional skip when empty. Post-validation: verifies every LLM recommendation exists in MongoDB, filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). Campaign history provides past execution patterns for reference. |
+| **Media Planner** | `big_idea`, `channels`, `budget_allocation`, `audience_insight`, `content_tone`, `kpis` + campaign_knowledge (media_plan, execution, outcome) | `MediaPlan` (tiers[], rationale, historical_references) | Transforms strategy language into media requirements. Designs tier matrix (top/mid/koc/media) with role, count, and budget per tier. `selection_criteria` fields drive downstream Resource Agent retrieval. `_compute_absolute_budgets()` calculates tier amounts from channel-level budget. |
+| **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]`, `state["media_plan"]` + campaign_knowledge (execution, outcome) | `ResourceResult` (Pydantic) | With media_plan: per-tier retrieval using selection_criteria as query + tier as metadata filter. Without: generic per-type retrieval (backward compatible). Pinecone metadata filter (status=active, platform, tier). Post-validation: verifies every LLM recommendation exists in MongoDB, filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). |
 | **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG + campaign_knowledge (deck_info, communication_plan) | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project > client > LLM generation). Campaign history provides past deck structures for inspiration. Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
 | **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
 
 ### Human-in-the-Loop (HITL)
 
-Five pause points. At each one the executor checkpoints state, publishes a WebSocket event, blocks on Redis pub/sub, and resumes when the user responds.
+Six pause points. At each one the executor checkpoints state, publishes a WebSocket event, blocks on Redis pub/sub, and resumes when the user responds.
 
 | Node | What the User Sees | What They Can Do | What Happens Next |
 |------|-------------------|------------------|-------------------|
 | 1 | Parsed brief fields + clarification questions | Confirm / edit fields | Pipeline continues to parallel phase |
 | 2 | Strategy result + research summary + brand check status | Confirm / reject / request research refresh | If rejected: re-executes strategy with feedback. If refresh: re-runs research first. |
-| 3 | Proposed slide structure (titles, ordering) | Add / remove / reorder slides | Deck generation uses modified structure |
-| 4 | Full slide gallery + narrative suggestions panel | Mark slides for regeneration (batch) | Flagged slides re-generated, others preserved |
-| 5 | Final proposal + feedback form | Tag feedback target + directions | Triggers targeted rerun from appropriate node |
+| 3 | Media plan matrix (channel × tier table with count + budget %) | Edit count / budget % per tier, confirm | Resource Agent retrieves per confirmed tier matrix |
+| 4 | Proposed slide structure (titles, ordering) | Add / remove / reorder slides | Deck generation uses modified structure |
+| 5 | Full slide gallery + narrative suggestions panel | Mark slides for regeneration (batch) | Flagged slides re-generated, others preserved |
+| 6 | Final proposal + feedback form | Tag feedback target + directions | Triggers targeted rerun from appropriate node |
 
 ### Client Feedback Loop (Learning System)
 
@@ -739,8 +748,8 @@ pitchcraft/
 ├── backend/
 │   ├── api/v1/endpoints/         # REST endpoints (auth, files, pipeline, resources, research, proposals)
 │   ├── core/
-│   │   ├── agents/               # brief_analyzer.py, research.py, strategy.py, resource.py, deck.py,
-│   │   │                         # campaign_extract.py, schemas.py (Pydantic output models),
+│   │   ├── agents/               # brief_analyzer.py, research.py, strategy.py, media_planner.py,
+│   │   │                         # resource.py, deck.py, campaign_extract.py, schemas.py,
 │   │   │                         # social_data.py, visual_analysis.py
 │   │   ├── graph/                # pipeline.py (LangGraph nodes), executor.py (run/rerun),
 │   │   │                         # state.py (PipelineState)
@@ -750,7 +759,7 @@ pitchcraft/
 │   │   │                         # visual_style.py, visual_process.py, feedback_embedder.py
 │   │   ├── language/             # router.py (language detection), prompts.py (CN/EN templates)
 │   │   ├── stability/            # budget.py (RequestBudget), fallback.py (FallbackChain)
-│   │   ├── models/               # resource.py, feedback.py, pipeline.py, campaign_record.py
+│   │   ├── models/               # resource.py, media_plan.py, feedback.py, campaign_record.py
 │   │   └── database/             # connection.py, repositories (mongo collections)
 │   ├── tests/                    # 105 unit tests + integration suite + load tests
 │   └── Dockerfile                # Python 3.11 + LibreOffice headless + poppler-utils
@@ -841,7 +850,7 @@ cd backend && pytest tests/ -v
 
 ## Current Status
 
-**Phase 1 (Core Pipeline)**: Complete. End-to-end flow from brief to PPT download with all 5 HITL checkpoints.
+**Phase 1 (Core Pipeline)**: Complete. End-to-end flow from brief to PPT download with all HITL checkpoints.
 
 **Phase 2 (Research & Resource Enhancement)**: Complete. Multimodal research, multi-type resources, client feedback loop, visual reference processing.
 
@@ -849,7 +858,9 @@ cd backend && pytest tests/ -v
 
 **Phase 4 (Resource Intelligence & Project Archive)**: Complete. Resource profile enrichment, archive pipeline, progressive accumulation, contextual embedding, source location tracking, adaptive chunking all done. Remaining: external social data API integration (low priority), HITL UI for source citations (frontend).
 
-**Phase 5 (Campaign Knowledge Base)**: In progress. Schema design (5-dimension CampaignRecord), 3-call parallel extraction pipeline, confirmation API, proposition indexing, and per-agent retrieval integration (5.6) all implemented. All pipeline agents (Strategy P2, Resource Agent, Deck Orchestrator, Brief Analyzer) now query campaign_knowledge with agent-specific profiles. Remaining: Media Planning integration (blocked on Phase 6), retrieval quality feedback (5.7), self-verification (5.8), distilled insights (5.9). See ROADMAP.md for full design.
+**Phase 5 (Campaign Knowledge Base)**: Core complete. Schema design (5-dimension CampaignRecord), 3-call parallel extraction pipeline, confirmation API, proposition indexing, and per-agent retrieval integration all implemented. All pipeline agents now query campaign_knowledge with agent-specific profiles. Remaining: retrieval quality feedback (5.7), self-verification (5.8), distilled insights (5.9).
+
+**Phase 6 (Media Planning Intelligence)**: Complete. New Media Planning Agent sits between Strategy P2 and Resource Agent. Transforms strategy output into structured tier-level media matrix (top/mid/koc/media) with per-tier budget allocation. Resource data model enhanced with `tier`, multi-dimensional `content_style_v2`, and structured `audience_demographics`. Resource Agent now performs per-tier retrieval using `selection_criteria` as query + `tier` as metadata filter. HITL editable table for matrix confirmation. Budget flows: Brief → Strategy (channel-level) → Media Planner (tier-level) → Resource Agent (execution).
 
 See [ROADMAP.md](./ROADMAP.md) for detailed progress.
 

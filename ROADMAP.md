@@ -818,12 +818,16 @@ Upgrade the Resource Agent from a retrieval tool into a media planning system. C
 
 Sits between Strategy P2 and Resource Agent. Transforms strategy output into a structured media plan.
 
-- [ ] Strategy interpretation: convert strategy language into media requirements (e.g. "tech + emotional resonance + Gen-Z" becomes "relatable creator style, life-integrated tech narrative, audience-matching voice")
-- [ ] Resource matrix design: define tier structure (top-tier for awareness, mid-tier for amplification, KOC for UGC, media for credibility) with quantity and role per tier
-- [ ] Per-tier budget allocation: split the media budget (from Strategy P2's `budget_allocation`) across tiers with rationale
-- [ ] Output schema: `MediaPlan` (Pydantic) with `tiers[]`, each tier containing `role`, `count`, `budget_share`, `selection_criteria`, `rationale`
-- [ ] HITL checkpoint: user confirms/edits matrix before Resource Agent executes retrieval
-- [ ] RAG context: retrieves top 3 similar CampaignRecords from Phase 5 knowledge base, includes their media_plan and outcome sections in prompt
+- [x] Strategy interpretation: convert strategy language into media requirements (e.g. "tech + emotional resonance + Gen-Z" becomes "relatable creator style, life-integrated tech narrative, audience-matching voice")
+- [x] Resource matrix design: define tier structure (top-tier for awareness, mid-tier for amplification, KOC for UGC, media for credibility) with quantity and role per tier
+- [x] Per-tier budget allocation: split the media budget (from Strategy P2's `budget_allocation`) across tiers with rationale
+- [x] Output schema: `MediaPlan` (Pydantic) with `tiers[]`, each tier containing `role`, `count`, `budget_percentage`, `selection_criteria`, `platform_rationale`
+- [x] HITL checkpoint: user confirms/edits matrix before Resource Agent executes retrieval
+- [x] RAG context: retrieves top 3 similar CampaignRecords from Phase 5 knowledge base, includes their media_plan and outcome sections in prompt
+
+Implementation: `backend/core/agents/media_planner.py`, `backend/core/models/media_plan.py`
+Pipeline: `hitl_strategy → media_planner → hitl_media → resource_agent`
+Frontend: `HitlMedia.tsx` (editable table with count + budget % adjustment)
 
 **Knowledge sources for matrix design:**
 
@@ -838,38 +842,49 @@ Sits between Strategy P2 and Resource Agent. Transforms strategy output into a s
 
 Tiered retrieval requires richer resource profiles.
 
-- [ ] `tier` field: explicit tier label per resource (top/mid/tail/koc). Definitions vary by platform; cannot rely solely on follower count.
-- [ ] `content_style` restructured into dimensions:
+- [x] `tier` field: explicit tier label per resource (top/mid/tail/koc). Definitions vary by platform; cannot rely solely on follower count.
+- [x] `content_style` restructured into dimensions:
   - `production_level`: high / medium / low (distinguishes polished from raw/authentic)
   - `persona_type`: expert / relatable / aspirational / entertaining
   - `voice_style`: educational / conversational / emotional / humorous
-- [ ] `audience_demographics`: structured object (age_range, gender_skew, city_tier, interest_tags) replacing flat `audience_tags` list
-- [ ] Decide: which new dimensions become metadata filters (discrete, exact match) vs remain in embedding text (semantic, fuzzy match)
+- [x] `audience_demographics`: structured object (age_range, gender_skew, city_tier, interest_tags) replacing flat `audience_tags` list
+- [x] Decide: which new dimensions become metadata filters (discrete, exact match) vs remain in embedding text (semantic, fuzzy match)
+  - Decision: `tier` → Pinecone metadata filter (discrete). `content_style_v2` dimensions + `audience_demographics` → embedding text (semantic matching).
 - [ ] Migration path for existing resources: backfill strategy for new structured fields from existing freeform data
+
+Implementation: `backend/core/models/resource.py` (ResourceTier, ContentStyle, AudienceDemographics)
+Excel import: new CN aliases (层级, 制作水平, 人设类型, 表达风格, 年龄段, 性别倾向, 城市级别, 兴趣标签)
+Embedding: `_resource_to_text()` updated to include structured fields
 
 ### 6.3 Tiered Retrieval Strategy
 
 Resource Agent executes separate retrieval per tier with tier-appropriate parameters.
 
-- [ ] Per-tier query construction: different weight on followers_count, content_style dimensions, audience match
-- [ ] Top-tier: high followers + high relevance + verified recently
-- [ ] Mid-tier: moderate followers + high category match + good past performance
-- [ ] KOC: low followers + high authenticity (production_level=low) + audience demographic match
-- [ ] Media: beat match + outlet credibility + publish frequency
-- [ ] Results grouped by tier in output, matching the matrix structure from Media Planning Agent
+- [x] Per-tier query construction: uses `selection_criteria` from each MediaTier as semantic query (LLM writes tier-specific, queryable criteria)
+- [x] Tier metadata filter: `tier` field used as Pinecone filter during per-tier retrieval
+- [x] `_infer_resource_type()` maps tier label + channel to correct Pinecone namespace (kol/koc/media)
+- [x] Fallback: when no media_plan present, reverts to generic per-type retrieval (backward compatible)
+- [ ] Top/Mid/KOC/Media tier-specific scoring weights (currently relies on selection_criteria specificity + tier filter)
+- [ ] Results explicitly grouped by tier in agent output schema (currently LLM groups in response text)
 
 ### 6.4 Budget Integration
 
-- [ ] Strategy P2 outputs channel-level budget split (social 60%, PR 25%, event 15%)
-- [ ] Media Planning Agent further splits per-channel budget into tier allocations
-- [ ] User override: HITL allows manual budget adjustment at both levels
-- [ ] If user specifies budget split in brief, Brief Analyzer extracts it; Strategy P2 respects it
+- [x] Strategy P2 outputs channel-level budget split (social 60%, PR 25%, event 15%)
+- [x] Media Planning Agent further splits per-channel budget into tier allocations (`budget_percentage` + `_compute_absolute_budgets()`)
+- [x] User override: HITL allows manual budget adjustment at tier level (count + budget %)
+- [x] If user specifies budget split in brief, Brief Analyzer extracts it (`StructuredBrief.budget_split`); Strategy P2 sees it in prompt context and respects it
 
-### Design Decisions (to be discussed)
+### Design Decisions
 
-- `content_style` dimensions: how many are enough without creating data entry burden? Current thinking: 3 dimensions (production_level, persona_type, voice_style) cover 80% of media planning decisions.
-- Tier definitions: platform-specific thresholds (Xiaohongshu 100k+ = top, Bilibili 100k+ = mid). Store as configurable rules or let LLM infer from follower_count + engagement_rate?
-- Embedding architecture: when content_style becomes multi-dimensional, do we keep one embedding per resource or create multiple embeddings per resource (one per dimension)?
+**Decided:**
+- `content_style` dimensions: 3 dimensions (production_level, persona_type, voice_style). Kept as `ContentStyle` sub-model. Old freeform `content_style` field retained for backward compat.
+- Metadata vs embedding: `tier` is discrete → Pinecone metadata filter. Style dimensions and audience demographics are semantic → included in embedding text for fuzzy matching.
+- Budget boundary: Strategy P2 owns channel-level allocation. Media Planning Agent owns tier-level split within each channel. No duplication.
+- Single embedding per resource: structured fields concatenated into one embedding text string. Avoids complexity of multi-vector-per-resource.
+
+**Open:**
+- Tier definitions: platform-specific thresholds (Xiaohongshu 100k+ = top, Bilibili 100k+ = mid). Currently manual `tier` label on each resource. May add auto-classification based on follower_count + platform rules.
+- Resource backfill: existing resources have no `tier`, `content_style_v2`, or `audience_demographics`. Need a migration script (LLM-assisted inference from existing freeform fields).
 
 ---
 

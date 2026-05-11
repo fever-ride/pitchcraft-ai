@@ -10,6 +10,7 @@ from backend.core.agents.deck import (
     run_deck_orchestrator,
     run_narrative_check,
 )
+from backend.core.agents.media_planner import run_media_planner
 from backend.core.agents.ppt_builder import build_pptx
 from backend.core.agents.research import run_research
 from backend.core.agents.resource import run_resource_agent
@@ -31,6 +32,8 @@ def build_pipeline() -> StateGraph:
     graph.add_node("strategy_phase2", strategy_phase2_node)
     graph.add_node("brand_check", brand_check_node)
     graph.add_node("hitl_strategy", hitl_strategy_node)
+    graph.add_node("media_planner", media_planner_node)
+    graph.add_node("hitl_media", hitl_media_node)
     graph.add_node("resource_agent", resource_agent_node)
     graph.add_node("deck_orchestrator", deck_orchestrator_node)
     graph.add_node("hitl_structure", hitl_structure_node)
@@ -52,7 +55,9 @@ def build_pipeline() -> StateGraph:
     graph.add_edge("strategy_phase2", "brand_check")
     graph.add_edge("brand_check", "hitl_strategy")
 
-    graph.add_edge("hitl_strategy", "resource_agent")
+    graph.add_edge("hitl_strategy", "media_planner")
+    graph.add_edge("media_planner", "hitl_media")
+    graph.add_edge("hitl_media", "resource_agent")
     graph.add_edge("resource_agent", "deck_orchestrator")
     graph.add_edge("deck_orchestrator", "hitl_structure")
 
@@ -162,6 +167,26 @@ async def hitl_strategy_node(state: PipelineState) -> dict:
     return {}
 
 
+async def media_planner_node(state: PipelineState) -> dict:
+    budget = state.get("request_budget")
+    result = await run_media_planner(
+        big_idea=state.get("big_idea", ""),
+        channels=state.get("channels", []),
+        budget_allocation=state.get("budget_allocation", {}),
+        audience_insight=state.get("audience_insight", ""),
+        content_tone=state.get("content_tone", ""),
+        kpis=state.get("kpis"),
+        budget=budget,
+        output_language=state.get("output_language", "auto"),
+        org_id=state.get("org_id"),
+    )
+    return {"media_plan": result.model_dump()}
+
+
+async def hitl_media_node(state: PipelineState) -> dict:
+    return {}
+
+
 async def resource_agent_node(state: PipelineState) -> dict:
     budget = state.get("request_budget")
     brief = state.get("structured_brief", {})
@@ -176,6 +201,7 @@ async def resource_agent_node(state: PipelineState) -> dict:
         budget=budget,
         output_language=state.get("output_language", "auto"),
         org_id=state.get("org_id"),
+        media_plan=state.get("media_plan"),
     )
     if isinstance(result, dict):
         return {"resource_result": result}
