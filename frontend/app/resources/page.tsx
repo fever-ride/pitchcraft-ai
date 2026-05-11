@@ -1,79 +1,58 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
+import { useDispatch, useSelector } from "react-redux";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import type { AppDispatch, RootState } from "@/store/store";
+import {
+  fetchResources,
+  importExcel,
+  setClientId,
+  setTypeFilter,
+  clearImportResult,
+} from "@/store/resourcesSlice";
+import { addToast } from "@/store/toastSlice";
 
-interface Resource {
-  _id: string;
-  name: string;
-  type: string;
-  platform?: string;
-  tags?: string[];
-  pricing?: string;
-  followers?: string;
-  outlet_type?: string;
-  service_type?: string;
-  placement_type?: string;
-}
+const typeLabel = (type: string) => {
+  const colors: Record<string, string> = {
+    kol: "bg-purple-100 text-purple-700",
+    koc: "bg-pink-100 text-pink-700",
+    media: "bg-blue-100 text-blue-700",
+    vendor: "bg-orange-100 text-orange-700",
+    placement: "bg-green-100 text-green-700",
+  };
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded ${colors[type] || "bg-gray-100 text-gray-700"}`}>
+      {type}
+    </span>
+  );
+};
 
 export default function ResourcesPage() {
-  const [clientId, setClientId] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [resources, setResources] = useState<Resource[]>([]);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<string | null>(null);
-
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-  const loadResources = async () => {
-    if (!clientId) return;
-    const params = new URLSearchParams({ client_id: clientId });
-    if (typeFilter) params.set("type", typeFilter);
-    const res = await fetch(`${API_BASE}/api/v1/resources?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    setResources(await res.json());
-  };
+  const dispatch = useDispatch<AppDispatch>();
+  const { resources, loading, importing, importResult, clientId, typeFilter } = useSelector(
+    (state: RootState) => state.resources
+  );
 
   useEffect(() => {
-    if (clientId) loadResources();
-  }, [clientId, typeFilter]);
+    if (clientId) {
+      dispatch(fetchResources({ clientId, typeFilter }));
+    }
+  }, [dispatch, clientId, typeFilter]);
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    if (importResult) {
+      dispatch(addToast({ message: importResult, type: "success" }));
+      dispatch(clearImportResult());
+      dispatch(fetchResources({ clientId, typeFilter }));
+    }
+  }, [importResult]);
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !clientId) return;
-
-    setImporting(true);
-    setImportResult(null);
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("client_id", clientId);
-
-    const res = await fetch(`${API_BASE}/api/v1/resources/import`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData,
-    });
-    const data = await res.json();
-    setImporting(false);
-    setImportResult(`Imported ${data.imported || 0} resources`);
-    loadResources();
-  };
-
-  const typeLabel = (type: string) => {
-    const colors: Record<string, string> = {
-      kol: "bg-purple-100 text-purple-700",
-      koc: "bg-pink-100 text-pink-700",
-      media: "bg-blue-100 text-blue-700",
-      vendor: "bg-orange-100 text-orange-700",
-      placement: "bg-green-100 text-green-700",
-    };
-    return (
-      <span className={`text-xs px-2 py-0.5 rounded ${colors[type] || "bg-gray-100 text-gray-700"}`}>
-        {type}
-      </span>
-    );
+    dispatch(importExcel({ file, clientId }));
+    e.target.value = "";
   };
 
   return (
@@ -84,13 +63,13 @@ export default function ResourcesPage() {
         <input
           type="text"
           value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
+          onChange={(e) => dispatch(setClientId(e.target.value))}
           placeholder="Client ID"
           className="border rounded px-3 py-2 text-sm w-48"
         />
         <select
           value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
+          onChange={(e) => dispatch(setTypeFilter(e.target.value))}
           className="border rounded px-3 py-2 text-sm"
         >
           <option value="">All Types</option>
@@ -110,12 +89,15 @@ export default function ResourcesPage() {
             disabled={importing || !clientId}
           />
         </label>
-        {importResult && <span className="text-sm text-green-600">{importResult}</span>}
       </div>
 
-      {resources.length === 0 ? (
+      {loading && <p className="text-gray-500 text-sm">Loading...</p>}
+
+      {!loading && resources.length === 0 && (
         <p className="text-gray-500 text-sm">No resources found. Enter a Client ID or import an Excel file.</p>
-      ) : (
+      )}
+
+      {!loading && resources.length > 0 && (
         <div className="space-y-2">
           {resources.map((r) => (
             <div key={r._id} className="border rounded p-3 flex items-center gap-4">

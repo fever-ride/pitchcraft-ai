@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/store/providers";
 import { Nav } from "@/components/layout/Nav";
+import { ToastContainer } from "@/components/ui/Toast";
 
 export const metadata: Metadata = {
   title: "Pitchcraft",
@@ -19,6 +20,7 @@ export default function RootLayout({
         <Providers>
           <Nav />
           {children}
+          <ToastContainer />
         </Providers>
       </body>
     </html>

@@ -11,6 +11,7 @@ import {
   setEdit,
   clearCurrentRecord,
 } from "@/store/campaignsSlice";
+import { addToast } from "@/store/toastSlice";
 
 type ModuleName =
   | "meta"
@@ -228,6 +229,7 @@ export default function CampaignDetailPage() {
   const handleConfirm = async () => {
     const result = await dispatch(confirmRecord({ recordId, edits }));
     if (confirmRecord.fulfilled.match(result)) {
+      dispatch(addToast({ message: "Record confirmed. Proposition indexing started.", type: "success" }));
       router.push("/campaigns");
     }
   };
