@@ -22,6 +22,32 @@ type ModuleName =
   | "client_learnings"
   | "deck_info";
 
+const CAMPAIGN_TYPES = ["launch", "branding", "conversion", "event", "crisis", "always_on", "other"];
+const BUDGET_TIERS = ["under_100k", "100k_500k", "500k_2m", "2m_5m", "above_5m"];
+
+const ENUM_FIELDS: Record<string, string[]> = {
+  "meta.campaign_type": CAMPAIGN_TYPES,
+  "meta.budget_tier": BUDGET_TIERS,
+};
+
+function StarRating({ value, onChange, readonly }: { value: number | null; onChange?: (v: number) => void; readonly?: boolean }) {
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          disabled={readonly}
+          onClick={() => onChange?.(star)}
+          className={`text-lg ${star <= (value || 0) ? "text-yellow-400" : "text-gray-300"} ${readonly ? "cursor-default" : "cursor-pointer hover:text-yellow-500"}`}
+        >
+          ★
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const MODULE_LABELS: Record<ModuleName, string> = {
   meta: "Campaign Meta",
   strategy_decisions: "Strategy Decisions",
@@ -101,6 +127,29 @@ function ModuleSection({
             const editKey = `${name}.${field}`;
             const currentValue = edits[editKey] !== undefined ? edits[editKey] : value;
             const isEdited = edits[editKey] !== undefined;
+
+            // Enum fields: render as dropdown
+            const enumOptions = ENUM_FIELDS[editKey];
+            if (enumOptions && isPending) {
+              return (
+                <div key={field} className="text-sm">
+                  <label className="text-xs text-gray-500 block mb-1">
+                    {field.replace(/_/g, " ")}
+                    {isEdited && <span className="ml-1 text-blue-500">(edited)</span>}
+                  </label>
+                  <select
+                    value={String(currentValue ?? "")}
+                    onChange={(e) => onEdit(editKey, e.target.value)}
+                    className="w-full border rounded px-2 py-1 text-sm"
+                  >
+                    <option value="">-- select --</option>
+                    {enumOptions.map((opt) => (
+                      <option key={opt} value={opt}>{opt.replace(/_/g, " ")}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            }
 
             if (Array.isArray(value) || (typeof value === "object" && value !== null)) {
               return (
@@ -249,10 +298,19 @@ export default function CampaignDetailPage() {
 
       {isPending && (
         <div className="sticky bottom-0 bg-white border-t p-4 -mx-8 flex items-center justify-between">
-          <div className="text-sm text-gray-500">
-            {Object.keys(edits).length > 0
-              ? `${Object.keys(edits).length} field(s) edited`
-              : "Review complete? Confirm to enable retrieval."}
+          <div className="flex items-center gap-4">
+            <div>
+              <span className="text-xs text-gray-500 block mb-1">Overall Rating</span>
+              <StarRating
+                value={edits["outcome.overall_rating"] as number | null}
+                onChange={(v) => handleEdit("outcome.overall_rating", v)}
+              />
+            </div>
+            <div className="text-sm text-gray-500">
+              {Object.keys(edits).length > 0
+                ? `${Object.keys(edits).length} field(s) edited`
+                : "Review complete? Confirm to enable retrieval."}
+            </div>
           </div>
           <button
             onClick={handleConfirm}
