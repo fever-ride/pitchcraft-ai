@@ -850,7 +850,7 @@ Tiered retrieval requires richer resource profiles.
 - [x] `audience_demographics`: structured object (age_range, gender_skew, city_tier, interest_tags) replacing flat `audience_tags` list
 - [x] Decide: which new dimensions become metadata filters (discrete, exact match) vs remain in embedding text (semantic, fuzzy match)
   - Decision: `tier` → Pinecone metadata filter (discrete). `content_style_v2` dimensions + `audience_demographics` → embedding text (semantic matching).
-- [ ] Migration path for existing resources: backfill strategy for new structured fields from existing freeform data
+- [x] Migration path for existing resources: `scripts/backfill_resource_profiles.py` — LLM batch inference of tier/content_style_v2/audience_demographics from existing freeform fields, updates MongoDB + refreshes Pinecone embeddings. Supports --dry-run, --client-id, --batch-size.
 
 Implementation: `backend/core/models/resource.py` (ResourceTier, ContentStyle, AudienceDemographics)
 Excel import: new CN aliases (层级, 制作水平, 人设类型, 表达风格, 年龄段, 性别倾向, 城市级别, 兴趣标签)
@@ -884,7 +884,6 @@ Resource Agent executes separate retrieval per tier with tier-appropriate parame
 
 **Open:**
 - Tier definitions: platform-specific thresholds (Xiaohongshu 100k+ = top, Bilibili 100k+ = mid). Currently manual `tier` label on each resource. May add auto-classification based on follower_count + platform rules.
-- Resource backfill: existing resources have no `tier`, `content_style_v2`, or `audience_demographics`. Need a migration script (LLM-assisted inference from existing freeform fields).
 
 ---
 

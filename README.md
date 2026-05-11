@@ -14,7 +14,7 @@ Account teams at agencies spend 3 to 5 days per pitch doing largely repeatable w
 
 ### Multi-Agent Pipeline
 
-Six specialized AI agents orchestrated via LangGraph with **parallel execution**, **conditional branching**, **5 HITL checkpoints**, and **feedback-driven rerun** from any upstream node:
+Eight specialized AI agents orchestrated via LangGraph with **parallel execution**, **conditional branching**, **6 HITL checkpoints**, and **feedback-driven rerun** from any upstream node:
 
 ```
 Brief Input
@@ -124,11 +124,12 @@ The most architecturally interesting piece. After pipeline completion:
 
 ```python
 RERUN_SUGGESTIONS = {
-    FeedbackTarget.STRATEGY:  "strategy_phase2",    # re-derive Big Idea + channels
-    FeedbackTarget.STRUCTURE: "deck_orchestrator",  # re-plan slide structure
-    FeedbackTarget.SLIDE:     "slide_content",      # regenerate slide copy
-    FeedbackTarget.RESOURCE:  "resource_agent",     # re-match resources
-    FeedbackTarget.OVERALL:   "parallel_research_strategy",  # full redo
+    FeedbackTarget.STRATEGY:   "strategy_phase2",    # re-derive Big Idea + channels
+    FeedbackTarget.MEDIA_PLAN: "media_planner",      # re-plan tier matrix + budget split
+    FeedbackTarget.STRUCTURE:  "deck_orchestrator",  # re-plan slide structure
+    FeedbackTarget.SLIDE:      "slide_content",      # regenerate slide copy
+    FeedbackTarget.RESOURCE:   "resource_agent",     # re-match resources
+    FeedbackTarget.OVERALL:    "parallel_research_strategy",  # full redo
 }
 ```
 
@@ -471,9 +472,9 @@ Typical scenario: Chinese brief → Chinese strategy (internal HITL review)
 - BGE-M3 natively handles cross-lingual embeddings. Chinese and English documents in the same Pinecone namespace are retrievable by queries in either language.
 - Semantic chunking splits on token count + punctuation boundaries, independent of language-specific tokenizers.
 
-### Resource Matching: Strategy → Profile Similarity
+### Resource Matching: Media Plan → Tiered Retrieval → Profile Similarity
 
-The Resource Agent connects LLM-generated strategy fields to human-curated resource profiles via embedding cosine similarity. The two sides are independently produced and matched at retrieval time:
+The Resource Agent connects the confirmed media plan to human-curated resource profiles. With a media plan present, retrieval is per-tier: each tier's `selection_criteria` becomes the semantic query, and `tier` serves as a metadata filter. Without a media plan, it falls back to generic strategy-driven retrieval.
 
 **Strategy side (LLM-generated, per pipeline run):**
 
@@ -499,27 +500,43 @@ These are concatenated into a semantic query: `big_idea + content_tone + audienc
 
 These fields are rendered into an embedding text: `"Name: X | Type: Y | Categories: A, B | Content Style: Z | Audience: ..."` and stored as vectors in Pinecone.
 
-**Matching mechanism:**
+**Matching mechanism (with media plan):**
 
 ```
-Strategy LLM output                    Resource profile (human-curated)
-─────────────────                      ────────────────────────────────
-"youthful brand refresh,               "Name: Alice Wang | Categories: beauty, fashion |
- energetic, Gen-Z female,               Content Style: fresh natural | Audience: Gen-Z, female"
- beauty"
+Media Plan tier                        Resource profile (human-curated)
+───────────────                        ────────────────────────────────
+tier: "mid"                            "Name: Alice Wang | Tier: mid |
+channel: "小红书"                        Platform: xiaohongshu |
+selection_criteria:                     Categories: beauty, fashion |
+  "50K-200K粉丝美妆垂类,                  Content Style: production:medium,
+   生活化内容风格,                           persona:relatable, voice:conversational |
+   近3个月有品牌合作"                        Audience: age:18-24, female, tier_1"
         │                                           │
         ▼                                           ▼
    BGE-M3 embed                                BGE-M3 embed
         │                                           │
-        └──────── cosine similarity ────────────────┘
-                         0.82 ✓
+        └──── cosine similarity (pre-filtered by tier=mid + platform) ────┘
+                         0.85 ✓
+```
+
+**Fallback matching (no media plan):**
+
+```
+Strategy fields concatenated:          Resource embedding text:
+  big_idea + content_tone +              Name + Type + Categories +
+  audience_insight + category            Content Style + Audience + Tags
+        │                                           │
+        └──── cosine similarity (filtered by status=active + platform) ──┘
 ```
 
 Key design choices:
-- Semantic fields (categories, content_style, audience_tags) use embedding similarity. "cosmetics" matches "beauty" via vector proximity.
-- Discrete fields (status, platform) use Pinecone metadata filter for exact match. Pre-filters before similarity ranking.
-- Progressive enrichment: each completed project adds its category to matched resources via `$addToSet`. Improves future matching accuracy without manual curation.
-- Embedding refresh: any write (archive extraction, accumulation, manual update) triggers re-embed + Pinecone upsert to keep vectors consistent with MongoDB state.
+- `tier` is a discrete metadata filter. Pre-filters resources to only the relevant tier before similarity ranking.
+- `content_style_v2` (production_level, persona_type, voice_style) and `audience_demographics` are included in embedding text for semantic fuzzy matching.
+- Legacy freeform fields (`content_style`, `audience_tags`) retained for backward compatibility. New structured fields take priority in embedding text when present.
+- Discrete fields (status, platform, tier) use Pinecone metadata filter for exact match. Semantic fields use vector similarity on the filtered subset.
+- Progressive enrichment: each completed project adds its category to matched resources via `$addToSet`. Improves future matching without manual curation.
+- Embedding refresh: any write (archive extraction, backfill, manual update) triggers re-embed + Pinecone upsert to keep vectors consistent with MongoDB state.
+- Backfill migration: `scripts/backfill_resource_profiles.py` uses LLM batch inference to classify existing resources into tier/content_style_v2/audience_demographics from their freeform fields.
 
 ### Stability & Guardrails
 
@@ -775,11 +792,12 @@ pitchcraft/
 │   │   └── analytics/            # Analytics dashboard (KPIs, stage perf, feedback stats)
 │   ├── components/
 │   │   ├── gallery/              # GalleryView, SlideThumbnail, SlidePreview, NarrativePanel
-│   │   ├── hitl/                 # HITL confirmation components (Nodes 1-4)
-│   │   ├── feedback/             # FeedbackPanel (Node 5)
+│   │   ├── pipeline/             # BriefInput, HitlBrief, HitlStrategy, HitlMedia, HitlStructure, PipelineProgress
+│   │   ├── feedback/             # FeedbackPanel (Node 6)
 │   │   ├── versions/             # VersionPanel (history, diff, rollback)
-│   │   ├── pipeline/             # Pipeline execution status view
+│   │   ├── ui/                   # Toast
 │   │   └── layout/               # Nav, shell
+│   ├── store/                    # Redux Toolkit (pipelineSlice, campaignsSlice, resourcesSlice, toastSlice)
 │   ├── hooks/                    # useWebSocket, usePipeline
 │   └── lib/                      # api.ts (HTTP client), ws.ts (WebSocket)
 ├── infrastructure/
@@ -787,7 +805,9 @@ pitchcraft/
 │   │   └── docker-compose.yml    # 8 services with healthchecks
 │   └── terraform/                # AWS deployment (ECS Fargate + ALB + ElastiCache + CloudWatch)
 ├── scripts/
-│   └── generate_templates.py     # PPT template generator (5 types)
+│   ├── generate_templates.py     # PPT template generator (5 types)
+│   ├── migrate_vectors.py        # Re-embed files with contextual prefix
+│   └── backfill_resource_profiles.py  # LLM-infer tier/style/audience for existing resources
 ├── .github/workflows/ci.yml      # pytest + lint + frontend build (3 parallel jobs)
 ├── docs/dev-notes/               # Development notes and issue tracking
 ├── PRD.md                        # Product requirements document
