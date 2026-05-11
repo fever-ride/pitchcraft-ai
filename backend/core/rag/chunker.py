@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import tiktoken
 
 from backend.core.models.file import FileType
+
+if TYPE_CHECKING:
+    from backend.core.rag.parser import ParsedSegment
 
 _enc = tiktoken.get_encoding("cl100k_base")
 
@@ -97,7 +103,7 @@ def semantic_chunk(
 
 
 def semantic_chunk_with_metadata(
-    segments: list["ParsedSegment"],
+    segments: list[ParsedSegment],
     file_type: str | None = None,
 ) -> list[ChunkMeta]:
     """Chunk parsed segments with adaptive sizing and source location tracking.
@@ -105,7 +111,6 @@ def semantic_chunk_with_metadata(
     Each output ChunkMeta carries the page_number or slide_index from the
     source segment that contributed the majority of its text.
     """
-    from backend.core.rag.parser import ParsedSegment
 
     max_tokens, overlap_tokens = CHUNK_PROFILES.get(
         file_type, (DEFAULT_MAX_TOKENS, DEFAULT_OVERLAP_TOKENS)
