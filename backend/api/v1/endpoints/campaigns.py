@@ -126,7 +126,12 @@ async def confirm_campaign_record(
     }
 
     if body.edits:
-        update.update(body.edits)
+        for module, fields in body.edits.items():
+            if isinstance(fields, dict):
+                for field, value in fields.items():
+                    update[f"{module}.{field}"] = value
+            else:
+                update[module] = fields
 
     await db["campaign_records"].update_one({"_id": record_id}, {"$set": update})
 
