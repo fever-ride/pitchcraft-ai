@@ -1,6 +1,7 @@
 from backend.api.v1.endpoints import (
     analytics,
     auth,
+    campaigns,
     clients,
     files,
     pipeline,

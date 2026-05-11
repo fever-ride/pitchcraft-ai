@@ -454,12 +454,12 @@ Layer 2: Distilled insights (Phase 5.9, feeds back into Methodology Library)
 
 ### 5.2 CampaignRecord Schema Design
 
-Each archived project produces one structured record. Fields organized by consuming agent:
+Each archived project produces one structured record. Fields organized by five knowledge dimensions, each consumed by different agents:
 
 ```
 CampaignRecord:
-  meta:                              ← used for retrieval matching
-    campaign_type                      (launch / branding / conversion / event / crisis)
+  meta:                              ← used for retrieval matching (all agents filter by this)
+    campaign_type                      (launch / branding / conversion / event / crisis / always_on)
     industry                           (beauty, automotive, tech, F&B, fashion, ...)
     budget_tier                        (under_100k / 100k_500k / 500k_2m / 2m_5m / above_5m)
     target_audience_summary            (one-line description)
@@ -467,26 +467,40 @@ CampaignRecord:
     channels_used[]                    (xiaohongshu, douyin, weibo, pr, event, ...)
     client_id                          (tenant isolation)
 
-  strategy_decisions:                ← Strategy P2 references
+  strategy_decisions:                ← Strategy P2 references ("what direction was chosen and why")
+    industry_insight
+    audience_insight
+    strategy_framework
     big_idea
+    big_idea_rationale
     positioning
-    communication_logic
     rejected_directions[]              (what was tried and didn't work)
-    client_feedback_summary            (what the client said about the strategy)
+    rejection_reasons[]                (why each direction was dropped)
 
-  media_plan:                        ← Media Planning Agent references
+  communication_plan:                ← Strategy P2 + Deck Orchestrator ("how to fight")
+    channel_mix[]:                     (strategic channel roles, NOT media buying)
+      channel
+      role                             (引爆/种草/转化/沉淀 or ignite/seed/convert/sustain)
+      content_direction
+      target_audience_segment
+    phasing[]                          (communication phases: teaser/launch/sustain)
+    cross_platform_logic               (how channels interact)
+    content_themes[]                   (thematic pillars across channels)
+
+  media_plan:                        ← Media Planning Agent ("what to buy and how much to spend")
     total_media_budget
     channel_budget_split{}             (channel -> amount or percentage)
-    tier_breakdown[]:
+    tier_breakdown[]:                  (only paid/purchased resources)
       tier                             (top / mid / tail / koc / media)
+      platform
       count
       budget_allocated
+      budget_percentage
       role                             (awareness / amplification / ugc / credibility)
-      platform
       selection_criteria               (why this tier got this allocation)
     rationale                          (overall media plan reasoning)
 
-  execution:                         ← Resource Agent references
+  execution:                         ← Resource Agent ("how it was actually done")
     resources_used[]:
       name
       type                             (kol / koc / media / vendor)
@@ -495,35 +509,40 @@ CampaignRecord:
       cost
       deliverables                     (post count, content type)
     content_formats[]                  (video, carousel, article, live stream)
+    vendors_used[]
+    timeline_phases[]
 
   deck_info:                         ← Deck Orchestrator references
     slide_count
     chapter_structure[]                (section titles in order)
     presentation_style                 (data-heavy, visual, storytelling)
-    visual_style:                      (DEFERRED — optional enrichment, high implementation cost)
-      color_palette[]                  (hex values: primary, secondary, accent, background)
-      layout_patterns[]                (e.g. "full-bleed image", "left-right split", "centered title")
-      typography_style                 (serif/sans-serif, weight hierarchy)
-      image_to_text_ratio              (percentage estimate)
-      design_keywords[]                (e.g. "minimal", "corporate", "bold typography")
 
-  outcome:                           ← all agents reference
+  outcome:                           ← all agents reference ("what happened")
     kpi_results{}                      (metric -> actual value)
     best_performing_tier
     best_performing_channel
     underperforming_areas[]
-    lessons_learned[]
-    reusable_insights[]                (transferable takeaways)
+    lessons_learned[]                  (project-specific takeaways)
+    reusable_insights[]                (transferable patterns for other projects)
     overall_rating                     (1-5 scale, set during human confirmation)
 
   metadata:
-    created_at
-    confirmed_by                       (user who reviewed and confirmed)
+    status                             (pending_confirmation / confirmed)
     confidence                         (high / partial / low, based on source data completeness)
     source_archive_id                  (link back to raw archive upload)
+    created_at
+    confirmed_by                       (user who reviewed and confirmed)
+    confirmed_at
 ```
 
-Most fields are optional. LLM extracts what it can. User confirms and fills gaps.
+**Communication vs Media distinction:**
+- Communication plan = strategic ("怎么打"): channel roles, content direction, phasing, cross-platform interaction
+- Media plan = tactical ("买什么花多少"): budget allocation, tier breakdown, only paid/purchased resources
+- Example: offline event as a communication touchpoint (brand event in launch phase) → communication_plan. Offline event as a purchased venue/media slot → media_plan.
+
+All fields are optional. LLM extracts what it can. User confirms and fills gaps.
+
+Implementation: `backend/core/models/campaign_record.py`
 
 ### 5.3 Extraction Pipeline (extends existing archive)
 
@@ -532,20 +551,52 @@ Current flow (unchanged):
   upload → parse → extract_archive() → ArchiveExtraction
     → _distribute_to_resources() (collaboration_history updates)
 
-New addition:
-  extract_archive() → also produces CampaignRecord (new schema fields)
-    → _distribute_to_campaign_records():
-        1. Store full record in MongoDB campaign_records collection
-        2. After confirmation: proposition extraction → Pinecone campaign_knowledge_{client_id}
-    → Mark status as "pending_confirmation"
+New parallel flow (added):
+  upload → parse → extract_campaign_record() → CampaignRecord
+    → _store_campaign_record() → MongoDB campaign_records (status: pending_confirmation)
+    → After human confirmation: proposition extraction → Pinecone campaign_knowledge_{org_id}
 ```
 
 Note: Archive Pipeline no longer writes text chunks to brand_style namespace. Strategy decisions, budget data, and outcomes belong in CampaignRecord (structured), not as raw text chunks. Style/tone reference is handled by Brand Library Pipeline from dedicated brand document uploads.
 
-**LLM extraction prompt design:**
-- Single extraction call produces both ArchiveExtraction (existing) and CampaignRecord (new)
-- Prompt includes schema definition with field descriptions
-- LLM marks each section's confidence (high if numbers are explicit in report, low if inferred)
+**Three parallel LLM extraction calls** (split by information distribution in reports):
+
+```
+Call 1: ExtractionBackground (meta + strategy_decisions + communication_plan + deck_info)
+  → Report sections: project background, strategy rationale, planning chapters
+  → System prompt focuses on "what direction was chosen and why" + "how to fight"
+
+Call 2: ExtractionExecution (media_plan + execution)
+  → Report sections: budget tables, resource lists, execution summaries
+  → System prompt focuses on "what to buy" + "how it was done"
+
+Call 3: ExtractionOutcome (outcome)
+  → Report sections: results, post-campaign analysis, team retrospective
+  → System prompt focuses on "what happened" + "what to learn"
+
+Merge: results combined, confidence = min(call1, call2, call3)
+Partial failure: if one call fails, others still contribute (graceful degradation)
+```
+
+**Why 3 calls instead of 1:**
+- Information distribution: recap reports scatter strategy in early pages, execution in mid-section, results at the end. A single call must attend to all sections simultaneously.
+- Schema complexity: CampaignRecord has 50+ fields across 5 dimensions. Single-call structured output degrades in quality past ~30 fields.
+- Prompt specialization: each call gets domain-specific extraction guidance (strategy analyst, media planner, evaluation expert).
+- Parallel execution: 3 concurrent calls complete faster than 1 serial call with 3x the output.
+
+Implementation: `backend/core/agents/campaign_extract.py`
+
+**Confirmation API endpoints:**
+
+```
+GET  /api/v1/campaigns          — list records (filter by client_id, status)
+GET  /api/v1/campaigns/pending  — records awaiting confirmation
+GET  /api/v1/campaigns/search   — metadata-based search (confirmed records only)
+GET  /api/v1/campaigns/:id      — single record for review
+PUT  /api/v1/campaigns/:id/confirm — human confirms, optionally applies edits
+```
+
+Implementation: `backend/api/v1/endpoints/campaigns.py`
 - Fields not found in source are left null, not hallucinated
 
 **Visual style extraction (PPTX archives only) — DEFERRED, optional:**

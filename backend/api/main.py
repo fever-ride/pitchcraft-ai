@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api.v1.endpoints import (
     analytics,
     auth,
+    campaigns,
     clients,
     files,
     pipeline,
@@ -36,6 +37,7 @@ app.include_router(proposals.router, prefix="/api/v1/proposals", tags=["proposal
 app.include_router(resources.router, prefix="/api/v1/resources", tags=["resources"])
 app.include_router(research.router, prefix="/api/v1/research", tags=["research"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
+app.include_router(campaigns.router, prefix="/api/v1/campaigns", tags=["campaigns"])
 app.include_router(ws_router)
 
 

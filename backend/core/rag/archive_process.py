@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from backend.core.agents.archive import extract_archive
+from backend.core.agents.campaign_extract import extract_campaign_record
 from backend.core.database.connection import get_database
 from backend.core.rag.chunker import semantic_chunk
 from backend.core.rag.embedder import embed_texts
@@ -61,13 +62,35 @@ async def _process_archive(
     extraction = await extract_archive(report_text)
     extraction_dict = extraction.model_dump()
 
+    # Campaign Knowledge Base: structured record extraction (Phase 5)
+    campaign_record = await extract_campaign_record(report_text, source_archive_id=archive_id)
+    campaign_dict = campaign_record.model_dump()
+
     await collection.update_one(
         {"_id": archive_id},
         {"$set": {"status": "done", "extraction": extraction_dict}},
     )
 
+    # Store campaign record for human review
+    await _store_campaign_record(campaign_dict, client_id, project_id, archive_id)
+
     await _distribute_to_brand_style(report_text, extraction, client_id, archive_id)
     await _distribute_to_resources(extraction, client_id)
+
+
+async def _store_campaign_record(
+    campaign_dict: dict,
+    client_id: str,
+    project_id: str,
+    archive_id: str,
+):
+    """Persist campaign record to MongoDB for human review."""
+    db = await get_database()
+    campaign_dict["client_id"] = client_id
+    campaign_dict["project_id"] = project_id
+    campaign_dict["source_archive_id"] = archive_id
+    await db["campaign_records"].insert_one(campaign_dict)
+    logger.info(f"Campaign record stored for archive {archive_id}")
 
 
 async def _distribute_to_brand_style(
