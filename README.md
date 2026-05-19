@@ -28,7 +28,7 @@ Brief Input
     ▼         ▼           │  LangGraph fan-out: two agents run        │
 ┌────────┐ ┌───────────┐ │  concurrently via asyncio.gather().       │
 │Research│ │Strategy P1 │ │  P1 uses only Brief + Brand Library;      │
-│  Agent │ │(no research│ │  Research uses web + internal RAG.        │
+│  Agent │ │(no research│ │  Research uses web search only.           │
 │        │ │  needed)   │ │  Fan-in barrier: both must finish before  │
 └───┬────┘ └─────┬─────┘ │  Phase 2 can start.                       │
     │            │        └───────────────────────────────────────────┘
@@ -190,7 +190,7 @@ Every pipeline completion (initial or rerun) triggers an automatic version save:
 | Agent | Inputs | Outputs | Key Behaviors |
 |-------|--------|---------|---------------|
 | **Brief Analyzer** | Raw text brief + campaign_knowledge (client_learnings) | `structured_brief{}` | Extracts fields (client, theme, audience, channels, budget, timeline, objective). Detects missing fields → generates clarification questions. Retrieves client history to inform gap detection. |
-| **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily > DuckDuckGo fallback) + internal RAG + social data APIs (locale-aware: CN uses Chanmama/Feigua, Global uses CreatorIQ) + multimodal competitor screenshots via Claude Vision. Cached 30 days. |
+| **Research Agent** | `structured_brief`, `client_id` | `research_result{}` | Web search (Tavily > DuckDuckGo fallback) + multimodal competitor screenshots via Claude Vision. Cached 30 days. Internal RAG and social data removed — brand/project context handled by Strategy P1, KOL discovery handled by Resource Agent. |
 | **Strategy P1** | `structured_brief`, brand_spec RAG | `strategy_insight{}` | Audience segments, brand direction, emotional hooks. Runs **without** waiting for research. |
 | **Strategy P2** | `research_result` + `strategy_insight` + rejected directions + campaign_knowledge (strategy_decisions, communication_plan, outcome) | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. References historical campaign outcomes. |
 | **Media Planner** | `big_idea`, `channels`, `budget_allocation`, `audience_insight`, `content_tone`, `kpis` + campaign_knowledge (media_plan, execution, outcome) | `MediaPlan` (tiers[], rationale, historical_references) | Transforms strategy language into media requirements. Designs tier matrix (top/mid/koc/media) with role, count, and budget per tier. `selection_criteria` fields drive downstream Resource Agent retrieval. `_compute_absolute_budgets()` calculates tier amounts from channel-level budget. |

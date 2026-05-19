@@ -50,7 +50,6 @@ class ResearchResult(BaseModel):
     content_trends: list[ContentTrend] = Field(default_factory=list)
     opportunities: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
-    internal_references: list[str] = Field(default_factory=list)
     recommended_approach: str = ""
 
 

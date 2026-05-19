@@ -1,4 +1,4 @@
-"""Research Agent: web search + social data + internal history with caching and fallback."""
+"""Research Agent: web search + competitor visual analysis with caching and fallback."""
 import json
 import time
 
@@ -6,17 +6,15 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from backend.core.agents.llm import invoke_llm_structured
 from backend.core.agents.schemas import ResearchResult
-from backend.core.agents.social_data import SocialDataResult, fetch_social_data
 from backend.core.config import settings
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import detect_language
 from backend.core.rag.cache import SemanticCache
-from backend.core.rag.retriever import format_results_with_sources, retrieve_for_client
 from backend.core.stability.fallback import FallbackChain
 
 SYSTEM_PROMPT = {
-    "zh": "你是资深市场研究员。基于brief信息、网络调研、社交数据和内部资料，整合出有用的竞品和市场洞察。",
-    "en": "You are a senior market researcher. Based on the brief, web research, social data, and internal materials, synthesize competitor and market insights.",
+    "zh": "你是资深市场研究员。基于brief信息和网络调研，整合出有用的竞品和市场洞察。",
+    "en": "You are a senior market researcher. Based on the brief and web research, synthesize competitor and market insights.",
 }
 
 cache = SemanticCache()
@@ -38,19 +36,6 @@ async def _search_duckduckgo(query: str) -> list[dict]:
     return [{"title": r["title"], "content": r["body"], "url": r["href"]} for r in results]
 
 
-async def _search_internal_only(query: str, client_id: str, project_id: str | None) -> list[dict]:
-    rag_results = await retrieve_for_client(query, client_id, project_id, top_k=5)
-    return [{"title": r.source_location or "Internal", "content": r.text, "url": ""} for r in rag_results]
-
-
-def _detect_locale(brief: dict) -> str:
-    """Infer locale from brief content for social data source selection."""
-    text = json.dumps(brief, ensure_ascii=False).lower()
-    cn_signals = {"中国", "中文", "国内", "小红书", "抖音", "微博", "微信", "bilibili", "天猫", "京东"}
-    if any(s in text for s in cn_signals):
-        return "cn"
-    return "global"
-
 
 async def run_research(
     brief: dict,
@@ -64,7 +49,6 @@ async def run_research(
     theme = brief.get("theme", "")
     search_query = f"{client_name} {theme} marketing campaign competitor"
     lang = detect_language(search_query)
-    locale = _detect_locale(brief)
 
     if not force_refresh:
         cached = await cache.get(client_id, search_query[:50])
@@ -80,25 +64,11 @@ async def run_research(
     web_results, _ = await web_chain.execute(
         primary_fn=lambda: _search_tavily(search_query),
         secondary_fn=lambda: _search_duckduckgo(search_query),
-        fallback_fn=lambda: _search_internal_only(search_query, client_id, project_id),
+        fallback_fn=lambda: [],
     )
     web_results = web_results or []
 
-    # 2. Social data (locale-aware)
-    social_results: list[SocialDataResult] = []
-    social_query = f"{client_name} {theme}"
-    if social_query.strip():
-        social_results = await fetch_social_data(social_query, locale=locale)
-
-    social_context = "\n".join([r.to_text() for r in social_results]) if social_results else ""
-
-    # 3. Internal RAG
-    rag_results = await retrieve_for_client(
-        search_query, client_id, project_id, top_k=5
-    )
-    internal_context = format_results_with_sources(rag_results)
-
-    # 4. Visual competitor analysis (if screenshots provided)
+    # 2. Visual competitor analysis (if screenshots provided)
     visual_context = ""
     if competitor_screenshots:
         from backend.core.agents.visual_analysis import analyze_competitor_batch
@@ -114,14 +84,8 @@ async def run_research(
 Web research results:
 {web_context}
 
-Social media data:
-{social_context or "No social data available."}
-
 Visual competitor analysis:
-{visual_context or "No visual analysis available."}
-
-Internal project history:
-{internal_context}"""
+{visual_context or "No visual analysis available."}"""
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT[lang]),
@@ -135,7 +99,6 @@ Internal project history:
     result = structured.model_dump()
     result["fetched_at"] = time.time()
     result["from_cache"] = False
-    result["social_data_source"] = locale
     result["has_visual_analysis"] = bool(competitor_screenshots)
 
     await cache.set(client_id, search_query[:50], result)

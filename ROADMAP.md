@@ -30,8 +30,8 @@ End-to-end flow from brief input to PPT download with human oversight at every c
 ### 1.4 Research Agent (Basic)
 
 - [x] Web search via Tavily (competitor news, brand positioning, public reports)
-- [x] Internal history search via Pinecone (project namespace)
-- [x] Deterministic fallback: Tavily → DuckDuckGo → internal only
+- [x] ~~Internal history search via Pinecone (project namespace)~~ → Removed in 3.8 (duplicates Strategy P1's brand RAG)
+- [x] Deterministic fallback: Tavily → DuckDuckGo → empty (internal RAG fallback removed in 3.8)
 - [x] Result timestamping (research_fetched_at in PipelineState)
 - [x] Semantic response cache (Redis, 30-day TTL, keyed by client_id:competitor:date_bucket)
 
@@ -92,9 +92,9 @@ Deeper research, expanded resource types, client feedback loop.
 ### 2.1 Research Agent Enhancement
 
 - [x] Multimodal competitor analysis (uploaded screenshots → Claude Vision → structured JSON)
-- [x] Third-party social data APIs (locale-specific: Chanmama/Feigua for China, CreatorIQ for global)
+- [x] ~~Third-party social data APIs (locale-specific: Chanmama/Feigua for China, CreatorIQ for global)~~ → Removed from Research Agent in 3.8 (KOL profile discovery belongs in Resource Agent; social_data.py module retained for future reuse)
 - [x] Richer competitor reports: social_presence, content_trends, risks, recommended_approach
-- [x] Locale-aware source selection (auto-detect CN vs global from brief content)
+- [x] ~~Locale-aware source selection (auto-detect CN vs global from brief content)~~ → Removed in 3.8 (tied to social data feature)
 - [x] API endpoint: POST /research/competitor-screenshots (batch visual analysis)
 
 ### 2.2 Resource Agent Expansion
@@ -215,6 +215,93 @@ Version control, analytics, deployment infrastructure.
 - [ ] Batch operations (run pipeline for multiple projects)
 - [ ] PDF export as alternative to .pptx
 - [x] Token refresh interceptor in frontend API client (auto-refresh on 401, queued retries, redirect to login on failure)
+
+### 3.7 Brief Analyzer Refinement
+
+Schema and retrieval improvements for Brief Analyzer, addressing downstream type safety and retrieval precision.
+
+**Schema improvements:**
+
+- [ ] `category` → Enum (`CampaignCategory`: beauty_launch, tech_launch, fmcg_brand_refresh, luxury_event, food_seasonal, OTHER) + `category_detail: str` fallback for OTHER
+  - Enables Campaign KB metadata filter (exact match instead of fuzzy semantic)
+  - Enum values derived from Campaign Knowledge Base's `meta.campaign_type` taxonomy
+  - JSON Schema `enum` constraint forces LLM to pick from predefined list
+- [ ] `budget` → `BudgetRange` nested model (`min_amount`, `max_amount`, `currency`, `raw_text`)
+  - Eliminates try/except in Media Planner's `_compute_absolute_budgets()`
+  - `raw_text` preserves original brief wording for human review
+- [ ] Field `description` enrichment: add boundary cases and fill-rules to each field's Pydantic description (directly improves LLM extraction accuracy via tool schema)
+
+**Campaign KB retrieval redesign:**
+
+- [ ] Two-step retrieval: (1) run basic extraction without campaign context → get `category`; (2) use `category` as metadata filter for precise Campaign KB query
+  - Current: blind query before extraction, injects possibly irrelevant context
+  - New: category-filtered query returns only same-type historical campaigns
+- [ ] Ablation validation: compare `clarification_questions` quality with vs without campaign context on 20 real briefs (blind evaluation by team)
+  - If delta is negligible → remove Campaign KB from Brief Analyzer entirely (reduce latency + token cost)
+  - If helpful → keep two-step approach
+
+**Frontend UX:**
+
+- [ ] `client_id` input: replace text field with searchable dropdown (existing clients from MongoDB) + "Create new client" option
+  - Reduces typo-caused retrieval failures
+  - Ensures Pinecone namespace consistency
+
+**Priority order:** category enum → budget struct → frontend dropdown → two-step retrieval → ablation → description enrichment
+
+### 3.8 Research Agent Overhaul
+
+Current Research Agent has structural issues: single query, functional misplacement, dead features, and brittle caching. This section tracks the redesign.
+
+**Remove: Internal RAG** ✅
+
+- [x] Remove `retrieve_for_client()` call from Research Agent
+  - Reason: Strategy P1 already searches brand_spec + brand_style + project namespaces; Campaign KB retrieval (Phase 5.6) handles historical case references. Research Agent duplicating this adds noise without value.
+  - `internal_references` field removed from ResearchResult schema
+  - Fallback chain no longer falls back to internal RAG; returns empty results on web search failure
+
+**Remove/Relocate: Social data (find-KOL logic)** ✅
+
+- [x] Remove `fetch_social_data()` from Research Agent
+  - Previous behavior: searched Chanmama/Feigua/CreatorIQ for influencer profiles (followers, engagement_rate) — this is resource discovery, not market research
+  - Belongs in: Resource Agent's retrieval phase (or a dedicated social listening module if we later add brand-level SOV/sentiment analysis)
+  - `social_data.py` module retained for future use by Resource Agent or a dedicated social listening feature
+
+**Fix: Single query → multi-dimensional search**
+
+- [ ] Replace single `f"{client_name} {theme} marketing campaign competitor"` with LLM-generated query set:
+  - Competitor activity: `"{competitor_name} 近期 campaign 2024"`
+  - Category trends: `"{category} 行业趋势 {year}"`
+  - Platform trends: `"{channel} {category} 爆款内容"` (per channel from brief)
+  - Audience behavior: `"{audience} 消费行为 偏好"`
+- [ ] Multi-round: after first-pass identifies competitor names, do follow-up searches per competitor
+- [ ] Information sufficiency check: LLM self-evaluates whether results are adequate before synthesis
+
+**Fix: Competitor screenshot analysis not wired into pipeline**
+
+- [ ] Wire `competitor_screenshots` into `research_agent_node` from PipelineState
+  - Currently: `run_research()` accepts the param but pipeline node never passes it
+  - Option A: allow file/image upload at `hitl_brief` node, store in state, pass to research
+  - Option B: reference files already uploaded to project namespace (file records in MongoDB)
+- [ ] Consider expanding to general "supplementary materials" (competitor PDFs, articles, text notes) — not just screenshots
+
+**Fix: Output consumption by Strategy P2**
+
+- [ ] Replace `json.dumps(research_result)[:3000]` truncation with structured summary
+  - Current: downstream sees arbitrary first 3000 chars of a JSON blob
+  - Improved: Research Agent outputs a prioritized `executive_summary` (500 tokens max) + full structured data. Strategy P2 reads summary + specific fields it needs (competitors, opportunities)
+
+**Fix: Cache key collision**
+
+- [ ] Cache key uses `search_query[:50]` which can collide across different briefs for same client
+  - Fix: hash the full query string (or structured_brief hash) instead of truncating
+  - Also: `_make_key` param is named `competitor_name` but receives query text — rename for clarity
+  - Consider: cache per-query (multiple keys per pipeline run) instead of caching the entire merged result
+
+**Not yet planned (future consideration):**
+
+- Multi-turn research with iterative deepening (agent decides when to stop)
+- Structured competitor comparison matrix output (positioning / pricing / channels / content style)
+- Platform-specific trend APIs (Xiaohongshu trending topics, Douyin challenge data)
 
 ### 3.6 Cost Optimization
 

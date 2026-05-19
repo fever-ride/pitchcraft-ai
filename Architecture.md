@@ -178,8 +178,8 @@ graph.add_edge("strategy_phase1", "strategy_phase2")
     │  - Web search    │         │  - Audience      │
     │  - Competitor    │         │    insights      │
     │    analysis      │         │  - Brand         │
-    │  - History       │         │    direction     │
-    │    retrieval     │         │  (no competitor  │
+    │  - Visual        │         │    direction     │
+    │    analysis      │         │  (no competitor  │
     │                  │         │   dependency)    │
     └────────┬─────────┘         └────────┬─────────┘
               │                            │
@@ -278,7 +278,7 @@ Pinecone Index: pitchcraft
 ├── namespace: project_{project_id}
 │       Project-level files, archived after project ends
 │       Requirements docs, client brief, meeting notes, competitor materials
-│       Retrieval purpose: brief context, Research Agent past competitor lookup
+│       Retrieval purpose: brief context, Strategy Phase 1 project reference
 │       Chunk size: 384 tokens
 │       Lifecycle: project duration, marked archived on completion
 │
@@ -306,7 +306,6 @@ Pinecone Index: pitchcraft
 |----------|-------|-----------|----------------|
 | Brand consistency check | After Strategy Agent | brand_spec_{client_id} | Strategy keywords vs brand spec semantic similarity |
 | Copy style reference | Slide Content Agent | brand_history_{client_id} | Tone descriptors retrieve historical copy styles |
-| Past competitor lookup | Research Agent | project_{project_id} | Competitor name checks for existing analysis |
 | KOL matching | Resource Agent | resource_kol | Audience profile + content direction vectors |
 | Media matching | Resource Agent | resource_media | Industry + audience trait vectors |
 | Vendor matching | Resource Agent | resource_vendor | Event type + region vectors |
@@ -466,8 +465,7 @@ Every external dependency has an ordered degradation path. No single failure blo
 ```
 Tavily search fails
     → Fall back to DuckDuckGo
-    → Fall back to internal history only
-    → Mark Research result as "internal data only"
+    → Return empty web results (Research proceeds with brief context only)
 
 Pinecone fails
     → Fall back to MongoDB full-text search
@@ -485,20 +483,23 @@ python-pptx generation fails
 
 ### 4.3 Semantic Response Cache
 
-Caches Research Agent results to avoid redundant searches for the same competitor:
+Caches Research Agent web search results to avoid redundant searches:
 
 ```
-Cache key: {client_id}:{competitor_name}:{date_bucket}
-date_bucket: 30-day buckets (reuse competitor data within 30 days)
+Cache key: {client_id}:{search_query_prefix}:{date_bucket}
+date_bucket: 30-day buckets (reuse research data within 30 days)
 
 Hit conditions:
 - Same client_id
-- Exact competitor name match
-- Within 30 days of last search
+- Same search query prefix (first 50 chars)
+- Within same 30-day bucket
 
 On hit: return cached Research result
         Label result as "source: cache ({date})"
         Let user decide whether to force refresh
+
+Known limitation: query prefix truncation can cause cache collisions
+across different briefs for the same client (tracked in ROADMAP 3.8)
 ```
 
 Storage: Redis, TTL = 30 days
@@ -843,7 +844,7 @@ Server → Client:
 {
   "event": "fallback_triggered",
   "agent": "research_agent",
-  "reason": "Tavily unavailable, switched to internal history"
+  "reason": "Tavily unavailable, switched to DuckDuckGo"
 }
 
 Client → Server:
