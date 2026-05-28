@@ -136,6 +136,7 @@ async def archive_project(
         filename=file.filename,
         client_id=client_id,
         project_id=project_id,
+        org_id=user.organization_id,
     )
 
     return {"archive_id": archive_id, "status": "processing"}

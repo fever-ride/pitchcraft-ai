@@ -28,7 +28,7 @@ async def list_campaign_records(
 ):
     """List campaign records, optionally filtered by client or status."""
     db = await get_database()
-    query: dict = {}
+    query: dict = {"org_id": user.organization_id}
     if client_id:
         query["client_id"] = client_id
     if status_filter:
@@ -48,7 +48,10 @@ async def list_pending_records(
 ):
     """List records awaiting human confirmation."""
     db = await get_database()
-    query: dict = {"status": ConfirmationStatus.PENDING.value}
+    query: dict = {
+        "org_id": user.organization_id,
+        "status": ConfirmationStatus.PENDING.value,
+    }
     if client_id:
         query["client_id"] = client_id
 
@@ -73,7 +76,10 @@ async def search_campaign_records(
     This endpoint provides basic metadata-based filtering for now.
     """
     db = await get_database()
-    mongo_query: dict = {"status": ConfirmationStatus.CONFIRMED.value}
+    mongo_query: dict = {
+        "org_id": user.organization_id,
+        "status": ConfirmationStatus.CONFIRMED.value,
+    }
 
     if client_id:
         mongo_query["client_id"] = client_id
@@ -96,7 +102,10 @@ async def get_campaign_record(
 ):
     """Get a single campaign record for review."""
     db = await get_database()
-    doc = await db["campaign_records"].find_one({"_id": record_id})
+    doc = await db["campaign_records"].find_one({
+        "_id": record_id,
+        "org_id": user.organization_id,
+    })
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     doc["id"] = str(doc.pop("_id"))
@@ -115,7 +124,11 @@ async def confirm_campaign_record(
     After confirmation, proposition extraction + vectorization runs in background.
     """
     db = await get_database()
-    doc = await db["campaign_records"].find_one({"_id": record_id})
+    org_id = user.organization_id
+    doc = await db["campaign_records"].find_one({
+        "_id": record_id,
+        "org_id": org_id,
+    })
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
 
@@ -137,7 +150,6 @@ async def confirm_campaign_record(
 
     # Fetch updated record for proposition extraction
     confirmed_doc = await db["campaign_records"].find_one({"_id": record_id})
-    org_id = user.organization_id
 
     background_tasks.add_task(
         _index_propositions_safe, record_id, confirmed_doc, org_id

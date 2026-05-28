@@ -1,6 +1,7 @@
 """Project archive processing: parse report → extract → distribute to multiple stores."""
 import asyncio
 import logging
+import uuid
 from pathlib import Path
 
 from backend.core.agents.archive import extract_archive
@@ -21,10 +22,11 @@ def process_archive_task(
     filename: str,
     client_id: str,
     project_id: str,
+    org_id: str = "",
 ):
     """Celery task: parse recap report → LLM extraction → distribute results."""
     try:
-        asyncio.run(_process_archive(archive_id, storage_path, filename, client_id, project_id))
+        asyncio.run(_process_archive(archive_id, storage_path, filename, client_id, project_id, org_id))
     except Exception as exc:
         logger.error(f"Archive processing failed for {archive_id}: {exc}")
         asyncio.run(_mark_status(archive_id, "failed", str(exc)))
@@ -37,6 +39,7 @@ async def _process_archive(
     filename: str,
     client_id: str,
     project_id: str,
+    org_id: str = "",
 ):
     db = await get_database()
     collection = db["project_archives"]
@@ -61,7 +64,7 @@ async def _process_archive(
 
     # Campaign Knowledge Base: structured record extraction (Phase 5)
     campaign_record = await extract_campaign_record(report_text, source_archive_id=archive_id)
-    campaign_dict = campaign_record.model_dump()
+    campaign_dict = campaign_record.model_dump(by_alias=True)
 
     await collection.update_one(
         {"_id": archive_id},
@@ -69,7 +72,7 @@ async def _process_archive(
     )
 
     # Store campaign record for human review
-    await _store_campaign_record(campaign_dict, client_id, project_id, archive_id)
+    await _store_campaign_record(campaign_dict, client_id, project_id, archive_id, org_id)
 
     await _distribute_to_resources(extraction, client_id)
 
@@ -79,11 +82,16 @@ async def _store_campaign_record(
     client_id: str,
     project_id: str,
     archive_id: str,
+    org_id: str = "",
 ):
     """Persist campaign record to MongoDB for human review."""
     db = await get_database()
+    # Assign explicit string _id so API can query by string record_id.
+    # model_dump(by_alias=True) sets _id=None; override with a real UUID.
+    campaign_dict["_id"] = str(uuid.uuid4())
     campaign_dict["client_id"] = client_id
     campaign_dict["project_id"] = project_id
+    campaign_dict["org_id"] = org_id
     campaign_dict["source_archive_id"] = archive_id
     await db["campaign_records"].insert_one(campaign_dict)
     logger.info(f"Campaign record stored for archive {archive_id}")

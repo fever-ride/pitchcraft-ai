@@ -47,6 +47,17 @@ class Confidence(str, Enum):
     LOW = "low"
 
 
+class RecordType(str, Enum):
+    PROPOSAL = "proposal"   # 提案：有策略，无执行结果
+    CAMPAIGN = "campaign"   # 结案：有执行，有结果数据
+
+
+class PitchOutcome(str, Enum):
+    WON = "won"         # 中标
+    LOST = "lost"       # 未中标
+    UNKNOWN = "unknown" # 未标注（默认）
+
+
 # --- Sub-models: Strategy Layer ---
 
 class RejectedDirection(BaseModel):
@@ -133,6 +144,9 @@ class ExecutionDetail(BaseModel):
     vendors_used: list[str] = Field(default_factory=list)
     actual_timeline: list[str] = Field(
         default_factory=list)  # concrete dates, MongoDB only
+    # PR / event / integrated activities that don't fit the resource model.
+    # Free-form strings, e.g. "媒体沟通会 30家到场", "专家背书 3位KOL", "线下快闪 上海新天地"
+    activities: list[str] = Field(default_factory=list)
 
 
 # --- Sub-models: Outcome Layer ---
@@ -233,7 +247,10 @@ class ExtractionExecution(BaseModel):
 
 
 class ExtractionOutcome(BaseModel):
-    """Third extraction call: results, learnings, and client decision patterns."""
+    """Third extraction call: campaign results and learnings.
+
+    client_learnings is excluded — that knowledge lives in the AE's head,
+    not in recap reports. It is filled manually via the confirmation UI.
+    """
     outcome: Outcome = Field(default_factory=Outcome)
-    client_learnings: ClientLearnings = Field(default_factory=ClientLearnings)
     confidence: Confidence = Confidence.PARTIAL

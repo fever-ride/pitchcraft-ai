@@ -1,14 +1,27 @@
-"""Campaign Knowledge Base retrieval (Phase 5.6).
+"""Campaign Knowledge Base retrieval (Phase 5.6 + 5.8).
 
 Two-level retrieval: propositions for matching precision, full structured
 modules for agent context. Each agent gets a retrieval profile that controls
 what it receives.
-"""
-from dataclasses import dataclass, field
 
+5.8 Self-verification: after retrieval, an LLM judge evaluates whether the
+matched campaigns are actually relevant enough to use. Insufficient matches
+are dropped so agents don't blindly consume irrelevant historical data.
+"""
+import logging
+from dataclasses import dataclass, field
+from enum import Enum
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel
+
+from backend.core.agents.llm import invoke_llm_structured
 from backend.core.database.connection import get_database
+from backend.core.language.detector import detect_language
 from backend.core.rag.embedder import embed_query
 from backend.core.rag.retriever import _get_index
+
+logger = logging.getLogger(__name__)
 
 
 # --- Retrieval profiles (per-agent) ---
@@ -53,6 +66,84 @@ class CampaignRetrievalResult:
     modules: dict
     meta: dict
     top_score: float
+    sufficiency_note: str = ""  # populated when verdict is "partial"
+
+
+# --- 5.8 Self-verification ---
+
+class SufficiencyVerdict(str, Enum):
+    SUFFICIENT = "sufficient"
+    PARTIAL = "partial"
+    INSUFFICIENT = "insufficient"
+
+
+class SufficiencyCheck(BaseModel):
+    verdict: SufficiencyVerdict
+    reason: str
+
+
+_VERIFICATION_PROMPT = {
+    "zh": """判断这批历史案例对当前项目的参考价值。
+
+当前需求：
+{query}
+
+检索到的历史案例：
+{campaigns_summary}
+
+判断标准：
+- sufficient：案例与当前项目在行业、campaign类型、预算档位、目标受众中至少3项高度匹配，可直接参考
+- partial：有2项匹配，有参考价值但存在明显差异，参考时需注意局限
+- insufficient：匹配度低，强行参考可能导致误导，不建议使用
+
+reason控制在一句话内。""",
+    "en": """Judge whether these historical campaigns are relevant enough to inform the current project.
+
+Current query:
+{query}
+
+Retrieved campaigns:
+{campaigns_summary}
+
+Criteria:
+- sufficient: campaigns match on at least 3 of — industry, campaign type, budget tier, target audience. Safe to reference directly.
+- partial: 2 dimensions match. Some reference value but notable differences exist. Use with caution.
+- insufficient: low match across dimensions. Using these as reference risks misleading the output.
+
+Keep reason to one sentence.""",
+}
+
+
+def _summarise_results(results: list[CampaignRetrievalResult]) -> str:
+    lines = []
+    for i, r in enumerate(results, 1):
+        meta = r.meta
+        parts = [
+            meta.get("industry", "—"),
+            meta.get("campaign_type", "—"),
+            meta.get("budget_tier", "—"),
+            meta.get("target_audience_summary", "—"),
+        ]
+        lines.append(f"{i}. {' | '.join(parts)}")
+    return "\n".join(lines)
+
+
+async def verify_retrieval_sufficiency(
+    query: str,
+    results: list[CampaignRetrievalResult],
+) -> SufficiencyCheck:
+    """Ask LLM whether retrieved campaigns are relevant enough to use."""
+    lang = detect_language(query)
+    prompt = _VERIFICATION_PROMPT[lang].format(
+        query=query,
+        campaigns_summary=_summarise_results(results),
+    )
+    return await invoke_llm_structured(
+        [SystemMessage(content=prompt)],
+        output_schema=SufficiencyCheck,
+        temperature=0,
+        max_tokens=200,
+    )
 
 
 async def retrieve_campaign_knowledge(
@@ -60,6 +151,7 @@ async def retrieve_campaign_knowledge(
     org_id: str,
     profile_name: str,
     metadata_filter: dict | None = None,
+    verify: bool = True,
 ) -> list[CampaignRetrievalResult]:
     """Retrieve relevant campaign records using proposition-level matching.
 
@@ -132,6 +224,22 @@ async def retrieve_campaign_knowledge(
         ))
 
     results.sort(key=lambda r: r.top_score, reverse=True)
+
+    if not results or not verify:
+        return results
+
+    # 5.8 Self-verification: drop or flag results that aren't relevant enough.
+    try:
+        check = await verify_retrieval_sufficiency(query, results)
+        if check.verdict == SufficiencyVerdict.INSUFFICIENT:
+            logger.info(f"Campaign retrieval deemed insufficient: {check.reason}")
+            return []
+        if check.verdict == SufficiencyVerdict.PARTIAL:
+            logger.info(f"Campaign retrieval partial: {check.reason}")
+            results[0].sufficiency_note = check.reason
+    except Exception as e:
+        logger.warning(f"Sufficiency verification failed, returning results unfiltered: {e}")
+
     return results
 
 
@@ -164,6 +272,9 @@ def format_campaign_context(
 
         header = f"[Historical Campaign: {meta_str}]" if meta_str else "[Historical Campaign]"
         sections = [header]
+
+        if r.sufficiency_note:
+            sections.append(f"  [参考局限: {r.sufficiency_note}]")
 
         for module_name, module_data in r.modules.items():
             module_text = json.dumps(module_data, ensure_ascii=False, default=str)

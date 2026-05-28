@@ -15,6 +15,7 @@ _enc = tiktoken.get_encoding("cl100k_base")
 
 DEFAULT_MAX_TOKENS = 512
 DEFAULT_OVERLAP_TOKENS = 64
+MIN_CHUNK_TOKENS = 20
 
 CHUNK_PROFILES: dict[str, tuple[int, int]] = {
     FileType.BRAND_SPEC: (800, 200),
@@ -125,11 +126,12 @@ def semantic_chunk_with_metadata(
 
         chunk_texts = semantic_chunk(text, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
         for ct in chunk_texts:
-            results.append(ChunkMeta(
-                text=ct,
-                page_number=segment.page_number,
-                slide_index=segment.slide_index,
-            ))
+            if count_tokens(ct) >= MIN_CHUNK_TOKENS:
+                results.append(ChunkMeta(
+                    text=ct,
+                    page_number=segment.page_number,
+                    slide_index=segment.slide_index,
+                ))
 
     return results
 

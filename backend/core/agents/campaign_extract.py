@@ -53,42 +53,50 @@ Key distinctions:
 }
 
 EXECUTION_PROMPT = {
-    "zh": """你是资深media planner。从结案报告中提取【媒介计划+执行细节】信息。
+    "zh": """你是资深整合营销执行专家。从结案报告中提取【媒介计划+执行细节】信息。
+
+项目可能是纯广告投放、纯公关传播、或两者混合——请根据报告实际内容提取，不要遗漏任何一类执行内容。
 
 提取规则：
 1. 只提取报告中明确提到的信息，不要推测
-2. media_plan关注"买什么花多少"：预算分配、tier结构、选择标准
-3. execution关注实际执行：用了哪些资源、什么内容形式、哪些供应商
-4. tier_breakdown中每个tier应有平台、数量、预算占比（budget_allocated或budget_percentage至少填一个）
+2. media_plan关注付费采买：KOL/KOC投放预算、媒介购买、tier结构和选择标准
+3. execution.resources_used记录具体合作资源（KOL、媒体、供应商等）
+4. execution.activities记录不属于付费采买的执行动作，例如：
+   - 公关活动：媒体沟通会、新闻发布会、专家背书、媒体探店
+   - 线下活动：快闪店、发布会、品鉴会、快闪活动
+   - 内容合作：联名、跨界、UGC征集
+   - 其他：直播、话题营销、危机公关处理
 5. budget数字保持原文单位（万/k/M），不要转换
-6. resources_used只记录付费/合作资源，不含自有渠道
-7. actual_timeline记录具体执行日期（如"预热期：3月1-14日"），不是传播节奏模式
+6. actual_timeline记录具体执行日期，不是传播节奏模式
 
-注意区分：
-- media_plan是"花钱买的东西"（paid media + KOL/KOC采买）
-- execution是"实际怎么做的"（包含media_plan的落地 + 自有执行）
-- 如果线下活动是花钱购买的渠道资源 → media_plan
-- 如果线下活动是自己执行的brand event → execution""",
-    "en": """You are a senior media planner. Extract [media plan + execution details] from this recap report.
+注意：
+- 广告投放项目：media_plan字段内容丰富，activities可能较少
+- 公关项目：activities字段内容丰富，media_plan可能较少
+- 整合项目：两者都填""",
+    "en": """You are a senior integrated marketing execution expert. Extract [media plan + execution details] from this recap report.
+
+The campaign may be pure advertising, pure PR, or an integrated mix — extract all execution content present in the report without skipping any category.
 
 Rules:
 1. Only extract explicitly stated information — do not speculate
-2. media_plan: focus on "what to buy and how much to spend" — budget splits, tier structure, selection criteria
-3. execution: focus on actual delivery — resources used, content formats, vendors
-4. Each tier in tier_breakdown should have platform, count, and budget (budget_allocated or budget_percentage — at least one)
+2. media_plan: focus on paid purchases — KOL/KOC spend, media buys, tier structure and selection criteria
+3. execution.resources_used: specific partners (KOLs, media outlets, vendors)
+4. execution.activities: execution actions that are NOT paid purchases, e.g.:
+   - PR activities: media briefings, press conferences, expert endorsements, media visits
+   - Offline events: pop-ups, launch events, tastings, experiential activations
+   - Content collaborations: co-branding, crossovers, UGC campaigns
+   - Other: livestreams, hashtag campaigns, crisis response
 5. Keep budget numbers in original units (万/k/M) — do not convert
-6. resources_used: only paid/partnered resources, not owned channels
-7. actual_timeline: concrete execution dates (e.g. "Teaser: Mar 1-14"), NOT phase patterns
+6. actual_timeline: concrete execution dates, NOT phase patterns
 
-Key distinctions:
-- media_plan = "money spent on purchases" (paid media + KOL/KOC procurement)
-- execution = "how it was actually done" (media plan delivery + owned execution)
-- Offline event as a purchased channel resource → media_plan
-- Offline event as a self-run brand event → execution""",
+Note:
+- Advertising-heavy campaigns: media_plan will be rich, activities may be sparse
+- PR-heavy campaigns: activities will be rich, media_plan may be sparse
+- Integrated campaigns: fill both""",
 }
 
 OUTCOME_PROMPT = {
-    "zh": """你是资深campaign评估专家。从结案报告中提取【结果+经验教训+客户决策模式】信息。
+    "zh": """你是资深campaign评估专家。从结案报告中提取【活动结果+经验教训】信息。
 
 提取规则：
 1. 只提取报告中明确提到的信息，不要推测
@@ -100,15 +108,8 @@ OUTCOME_PROMPT = {
 
 区分lessons_learned和reusable_insights：
 - lessons_learned: 这个项目特有的教训（如"预热期太短导致爆发力不足"）
-- reusable_insights: 可迁移的通用规律（如"美妆品类小红书种草最佳发布时间为周三晚8点"）
-
-client_learnings提取规则：
-- decision_style：客户在这个项目中体现的决策风格（如"偏保守，需要数据支撑"、"重视创意突破"）
-- client_approved_directions：客户明确认可的方向或元素
-- client_rejected_directions：客户明确否决的方向或元素
-- kpi_priorities：客户最关注的KPI指标（按优先级排列）
-- communication_notes：与客户沟通的注意事项（如"汇报时先说结论"、"不接受纯英文方案"）""",
-    "en": """You are a senior campaign evaluation expert. Extract [results + lessons learned + client decision patterns] from this recap report.
+- reusable_insights: 可迁移的通用规律（如"美妆品类小红书种草最佳发布时间为周三晚8点"）""",
+    "en": """You are a senior campaign evaluation expert. Extract [campaign results + lessons learned] from this recap report.
 
 Rules:
 1. Only extract explicitly stated information — do not speculate
@@ -120,17 +121,52 @@ Rules:
 
 Distinguish lessons_learned vs reusable_insights:
 - lessons_learned: project-specific takeaways (e.g. "teaser phase too short, hurt launch impact")
-- reusable_insights: transferable patterns (e.g. "beauty category Xiaohongshu optimal posting time is Wed 8PM")
-
-client_learnings extraction rules:
-- decision_style: how this client makes decisions (e.g. "conservative, needs data backing", "values creative breakthrough")
-- client_approved_directions: directions or elements the client explicitly approved
-- client_rejected_directions: directions or elements the client explicitly vetoed
-- kpi_priorities: KPIs the client cares about most (in priority order)
-- communication_notes: things to remember when communicating with this client""",
+- reusable_insights: transferable patterns (e.g. "beauty category Xiaohongshu optimal posting time is Wed 8PM")""",
 }
 
-MAX_REPORT_CHARS = 12000
+# Call 1 & 2: strategy and execution info is front-loaded in most reports.
+FRONT_MAX_CHARS = 40000
+
+# Call 3: outcome data lives at the end of the report.
+OUTCOME_TAIL_CHARS = 20000
+
+# If Call 3 returns empty outcome fields, retry with the section just before the tail.
+OUTCOME_MIDDLE_CHARS = 20000
+
+
+def _slice_for_outcome(text: str) -> str:
+    """Return the tail of the report where KPI results and retrospectives live."""
+    return text[-OUTCOME_TAIL_CHARS:]
+
+
+def _outcome_is_empty(outcome: ExtractionOutcome) -> bool:
+    """True when all three key outcome fields came back empty."""
+    return (
+        not outcome.outcome.kpi_results
+        and not outcome.outcome.lessons_learned
+        and not outcome.outcome.reusable_insights
+    )
+
+
+async def _retry_outcome_with_middle(
+    report_text: str,
+    lang: str,
+) -> ExtractionOutcome:
+    """Retry Call 3 on the section just before the tail that was skipped."""
+    tail_start = max(0, len(report_text) - OUTCOME_TAIL_CHARS)
+    middle_start = max(0, tail_start - OUTCOME_MIDDLE_CHARS)
+    middle = report_text[middle_start:tail_start]
+    logger.info("Outcome fields empty after tail pass — retrying with preceding section")
+    result = await invoke_llm_structured(
+        [
+            SystemMessage(content=OUTCOME_PROMPT[lang]),
+            HumanMessage(content=middle),
+        ],
+        output_schema=ExtractionOutcome,
+        temperature=0,
+        max_tokens=2000,
+    )
+    return result
 
 
 async def extract_campaign_record(
@@ -139,12 +175,14 @@ async def extract_campaign_record(
 ) -> CampaignRecord:
     """Run 3 parallel extraction calls and merge into a single CampaignRecord."""
     lang = detect_language(report_text)
-    truncated = report_text[:MAX_REPORT_CHARS]
+
+    front_text = report_text[:FRONT_MAX_CHARS]
+    outcome_text = _slice_for_outcome(report_text)
 
     background_task = invoke_llm_structured(
         [
             SystemMessage(content=BACKGROUND_PROMPT[lang]),
-            HumanMessage(content=truncated),
+            HumanMessage(content=front_text),
         ],
         output_schema=ExtractionBackground,
         temperature=0,
@@ -154,7 +192,7 @@ async def extract_campaign_record(
     execution_task = invoke_llm_structured(
         [
             SystemMessage(content=EXECUTION_PROMPT[lang]),
-            HumanMessage(content=truncated),
+            HumanMessage(content=front_text),
         ],
         output_schema=ExtractionExecution,
         temperature=0,
@@ -164,7 +202,7 @@ async def extract_campaign_record(
     outcome_task = invoke_llm_structured(
         [
             SystemMessage(content=OUTCOME_PROMPT[lang]),
-            HumanMessage(content=truncated),
+            HumanMessage(content=outcome_text),
         ],
         output_schema=ExtractionOutcome,
         temperature=0,
@@ -175,6 +213,19 @@ async def extract_campaign_record(
         background_task, execution_task, outcome_task,
         return_exceptions=True,
     )
+
+    # If the report was long enough that head+tail slicing skipped the middle,
+    # and Call 3 came back empty, retry once with the middle section.
+    report_has_middle = len(report_text) > OUTCOME_TAIL_CHARS
+    if (
+        isinstance(outcome, ExtractionOutcome)
+        and _outcome_is_empty(outcome)
+        and report_has_middle
+    ):
+        try:
+            outcome = await _retry_outcome_with_middle(report_text, lang)
+        except Exception as e:
+            logger.error(f"Outcome middle-section retry failed: {e}")
 
     # Handle partial failures — merge whatever succeeded
     record_data: dict = {}
