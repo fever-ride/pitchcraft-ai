@@ -306,6 +306,7 @@ Pinecone Index: pitchcraft
 |----------|-------|-----------|----------------|
 | Brand consistency check | After Strategy Agent | brand_spec_{client_id} | Strategy keywords vs brand spec semantic similarity |
 | Copy style reference | Slide Content Agent | brand_history_{client_id} | Tone descriptors retrieve historical copy styles |
+| Historical campaign reference | Strategy P2, Media Planning, Resource, Deck, Brief Analyzer | campaign_knowledge_{org_id} | Proposition vectors + self-verification quality gate; per-agent retrieval profiles control top_k and module whitelist |
 | KOL matching | Resource Agent | resource_kol | Audience profile + content direction vectors |
 | Media matching | Resource Agent | resource_media | Industry + audience trait vectors |
 | Vendor matching | Resource Agent | resource_vendor | Event type + region vectors |
@@ -576,7 +577,7 @@ Based on stage_metrics data:
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | Primary database | MongoDB Atlas | Clients, projects, proposals, feedback, metrics |
-| Vector database | Pinecone | RAG retrieval (namespace isolated) |
+| Vector database | Pinecone | RAG retrieval (namespace isolated); namespaces: brand_spec_{client_id}, brand_history_{client_id}, resource_{type}, campaign_knowledge_{org_id} |
 | Cache | Redis | Celery broker + semantic cache |
 
 ### 6.3 Frontend
@@ -716,17 +717,46 @@ collections:
 │   ├── rerun_from_node             # strategy / resource / deck_structure / slide / null
 │   └── created_at
 │
-└── stage_metrics                   # Per-stage execution metrics (separate collection for aggregation)
+├── stage_metrics                   # Per-stage execution metrics (separate collection for aggregation)
+│   ├── _id
+│   ├── proposal_id
+│   ├── project_id
+│   ├── client_id
+│   ├── brief_analyzer              # { clarification_triggered, missing_fields }
+│   ├── brand_consistency_check     # { triggered_revision, issues_found }
+│   ├── research_agent              # { sources_used, cache_hit, search_count }
+│   ├── narrative_agent             # { suggestions_count, suggestions_accepted, suggestions_ignored }
+│   ├── resource_agent              # { triggered, resource_types, matched_count }
+│   ├── request_budget              # { llm_calls_used, search_calls_used, total_seconds }
+│   └── created_at
+│
+│  ── Campaign Knowledge Base ────────────────────────────────────
+│
+├── campaign_records                # Structured extraction of past campaigns and proposals
+│   ├── _id                         # Explicit string ID
+│   ├── org_id                      # Org-level tenant isolation
+│   ├── client_id                   # FK → clients
+│   ├── project_id                  # FK → projects (optional)
+│   ├── record_type                 # "campaign" | "proposal" (LLM auto-detected)
+│   ├── status                      # pending_confirmation | confirmed
+│   ├── confidence                  # high | partial | low (worst of participating LLM calls)
+│   ├── pitch_outcome               # won | lost | unknown (proposals only; set manually at confirmation)
+│   ├── meta                        # { campaign_type, campaign_subtype, industry, budget_tier,
+│   │                               #   target_audience_summary, client_name, channels_used[], ... }
+│   ├── strategy_decisions          # { big_idea, positioning, rejected_directions[], ... }
+│   ├── communication_plan          # { channel_mix[], phasing_structure, phasing_rhythm }
+│   ├── media_plan                  # { budget_total, channel_budget_split[], tier_structure[] }
+│   ├── execution                   # { kol_list[], pr_activities[], event_details[], ... }
+│   ├── outcome                     # { kpi_results[], lessons_learned, overall_rating }
+│   ├── deck_info                   # { slide_count, deck_structure_type, key_slides[] }
+│   ├── client_learnings            # { decision_style, approved_directions[], rejected_directions[] }
+│   └── created_at
+│
+└── campaign_propositions           # Atomic insight statements extracted from confirmed records
     ├── _id
-    ├── proposal_id
-    ├── project_id
-    ├── client_id
-    ├── brief_analyzer              # { clarification_triggered, missing_fields }
-    ├── brand_consistency_check     # { triggered_revision, issues_found }
-    ├── research_agent              # { sources_used, cache_hit, search_count }
-    ├── narrative_agent             # { suggestions_count, suggestions_accepted, suggestions_ignored }
-    ├── resource_agent              # { triggered, resource_types, matched_count }
-    ├── request_budget              # { llm_calls_used, search_calls_used, total_seconds }
+    ├── campaign_record_id          # FK → campaign_records
+    ├── org_id
+    ├── text                        # "[industry | subtype | budget | audience] <insight>"
     └── created_at
 ```
 

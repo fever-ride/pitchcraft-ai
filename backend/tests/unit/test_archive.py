@@ -76,3 +76,39 @@ def test_resource_performance_with_metrics():
     )
     assert rp.metrics["cpe"] == "3.5"
     assert rp.recommendation == "recommend"
+
+
+def test_campaign_meta_client_name():
+    """client_name stores advertiser name as free text; client_id is not in CampaignMeta."""
+    from backend.core.models.campaign_record import CampaignMeta
+    meta = CampaignMeta(client_name="一汽解放")
+    assert meta.client_name == "一汽解放"
+    assert not hasattr(meta, "client_id") or meta.model_fields.get("client_id") is None
+
+
+def test_campaign_meta_budget_tier_nullable():
+    """budget_tier must be null when not explicitly stated in document."""
+    from backend.core.models.campaign_record import CampaignMeta
+    meta = CampaignMeta()
+    assert meta.budget_tier is None
+
+
+def test_extraction_background_has_record_type():
+    """ExtractionBackground includes record_type for auto-detection."""
+    from backend.core.models.campaign_record import ExtractionBackground, RecordType
+    bg = ExtractionBackground()
+    assert bg.record_type == RecordType.CAMPAIGN  # default
+    bg_proposal = ExtractionBackground(record_type=RecordType.PROPOSAL)
+    assert bg_proposal.record_type == RecordType.PROPOSAL
+
+
+def test_campaign_meta_subtype():
+    """campaign_subtype is free text; campaign_type is enum for filtering."""
+    from backend.core.models.campaign_record import CampaignMeta, CampaignType
+    meta = CampaignMeta(
+        campaign_type=CampaignType.EVENT,
+        campaign_subtype="员工家属开放日",
+        industry="汽车制造",
+    )
+    assert meta.campaign_type == CampaignType.EVENT
+    assert meta.campaign_subtype == "员工家属开放日"

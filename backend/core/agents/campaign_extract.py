@@ -13,6 +13,7 @@ from backend.core.models.campaign_record import (
     ExtractionBackground,
     ExtractionExecution,
     ExtractionOutcome,
+    RecordType,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,36 +21,50 @@ logger = logging.getLogger(__name__)
 # --- Prompts ---
 
 BACKGROUND_PROMPT = {
-    "zh": """你是资深campaign分析师。从结案报告中提取【项目背景+策略+传播规划+deck结构】信息。
+    "zh": """你是资深campaign分析师。从文档中提取【项目背景+策略+传播规划+deck结构】信息。
 
 提取规则：
-1. 只提取报告中明确提到的信息，不要推测
-2. meta字段用于检索匹配，尽量填完整
-3. strategy_decisions关注"选了什么方向、为什么"
-4. communication_plan关注"怎么打"：渠道角色分配、内容方向、传播节奏
-5. channel_mix中每个渠道应有明确的角色定义（引爆/种草/转化/沉淀等），并标注channel_type（social/offline/pr/paid）
-6. phasing_structure是传播阶段模式（如"三阶段：预热/引爆/长尾"），phasing_rhythm是节奏逻辑（如"首波引爆后5-7天跟进第二波"）
-7. deck_info如果报告提到了提报结构就填
+1. 只提取文档中明确提到的信息，不要推测
+2. record_type判断：
+   - "proposal"：提案/方案/计划书/活动方案——描述将要做什么，尚未执行
+   - "campaign"：结案/复盘/总结报告——描述已执行的项目，包含实际结果
+3. meta字段用于检索匹配，尽量填完整
+   - campaign_type：选最接近的枚举大类（launch/branding/conversion/event/crisis/always_on/other）
+   - campaign_subtype：用2-6字描述具体活动类型（如"员工家属开放日"、"新品发布会"、"618促销"、"品牌代言活动"），比campaign_type更具体
+   - budget_tier：【重要】只在文档中明确出现预算金额时填写，否则必须留null
+   - client_name：填写文档中服务的品牌/广告主名称（如"一汽解放"），不是代理公司名称
+4. strategy_decisions关注"选了什么方向、为什么"
+5. communication_plan关注"怎么打"：渠道角色分配、内容方向、传播节奏
+6. channel_mix中每个渠道应有明确的角色定义（引爆/种草/转化/沉淀等），并标注channel_type（social/offline/pr/paid）
+7. phasing_structure是传播阶段模式（如"三阶段：预热/引爆/长尾"），phasing_rhythm是节奏逻辑（如"首波引爆后5-7天跟进第二波"）
+8. deck_info如果文档提到了提报结构就填
 
 注意区分：
 - communication_plan是策略层（渠道怎么配合），不是执行层（具体买了什么）
 - rejected_directions每条必须包含direction（方向名称），reason可选（放弃原因）
-- 只记录报告中明确提到"曾考虑但放弃"的方向""",
-    "en": """You are a senior campaign analyst. Extract [project background + strategy + communication plan + deck structure] from this recap report.
+- 只记录文档中明确提到"曾考虑但放弃"的方向""",
+    "en": """You are a senior campaign analyst. Extract [project background + strategy + communication plan + deck structure] from this document.
 
 Rules:
 1. Only extract explicitly stated information — do not speculate
-2. Fill meta fields as completely as possible (used for retrieval matching)
-3. strategy_decisions: focus on "what direction was chosen and why"
-4. communication_plan: focus on "how to fight" — channel roles, content direction, phasing
-5. Each channel in channel_mix should have a clear role (ignite/seed/convert/sustain) and a channel_type (social/offline/pr/paid)
-6. phasing_structure = phase pattern (e.g. "three phases: teaser/launch/sustain"), phasing_rhythm = tempo logic (e.g. "second wave 5-7 days after initial burst")
-7. Fill deck_info only if the report mentions presentation structure
+2. record_type detection:
+   - "proposal": pitch deck / activity plan / proposal — describes what will be done, not yet executed
+   - "campaign": recap report / post-mortem / summary — describes an executed project with actual results
+3. Fill meta fields as completely as possible (used for retrieval matching)
+   - campaign_type: use closest enum (launch/branding/conversion/event/crisis/always_on/other)
+   - campaign_subtype: 2-6 word specific description (e.g. "employee family day", "product launch event", "618 sales campaign") — more specific than campaign_type
+   - budget_tier: [IMPORTANT] only fill if a budget amount is explicitly stated in the document, otherwise must be null
+   - client_name: the brand / advertiser being served (e.g. "一汽解放"), NOT the agency name
+4. strategy_decisions: focus on "what direction was chosen and why"
+5. communication_plan: focus on "how to fight" — channel roles, content direction, phasing
+6. Each channel in channel_mix should have a clear role (ignite/seed/convert/sustain) and a channel_type (social/offline/pr/paid)
+7. phasing_structure = phase pattern (e.g. "three phases: teaser/launch/sustain"), phasing_rhythm = tempo logic (e.g. "second wave 5-7 days after initial burst")
+8. Fill deck_info only if the document mentions presentation structure
 
 Key distinctions:
 - communication_plan is strategic (how channels work together), NOT tactical (what was bought)
 - rejected_directions: each entry must have a direction (name), reason is optional (why it was dropped)
-- Only record directions the report explicitly says were considered and dropped""",
+- Only record directions the document explicitly says were considered and dropped""",
 }
 
 EXECUTION_PROMPT = {
@@ -172,12 +187,22 @@ async def _retry_outcome_with_middle(
 async def extract_campaign_record(
     report_text: str,
     source_archive_id: str | None = None,
+    page_count: int | None = None,
 ) -> CampaignRecord:
-    """Run 3 parallel extraction calls and merge into a single CampaignRecord."""
-    lang = detect_language(report_text)
+    """Extract a CampaignRecord from document text.
 
+    Runs Background + Execution calls in parallel always.
+    Outcome call is skipped for proposals (no results to extract).
+    record_type is auto-detected by the Background call.
+
+    Args:
+        report_text: full document text
+        source_archive_id: upstream archive ID for traceability
+        page_count: total page/slide count from the file parser,
+                    used to set deck_info.slide_count when LLM doesn't extract it
+    """
+    lang = detect_language(report_text)
     front_text = report_text[:FRONT_MAX_CHARS]
-    outcome_text = _slice_for_outcome(report_text)
 
     background_task = invoke_llm_structured(
         [
@@ -199,33 +224,48 @@ async def extract_campaign_record(
         max_tokens=3000,
     )
 
-    outcome_task = invoke_llm_structured(
-        [
-            SystemMessage(content=OUTCOME_PROMPT[lang]),
-            HumanMessage(content=outcome_text),
-        ],
-        output_schema=ExtractionOutcome,
-        temperature=0,
-        max_tokens=2000,
-    )
-
-    background, execution, outcome = await asyncio.gather(
-        background_task, execution_task, outcome_task,
+    # Run Background + Execution in parallel first.
+    # We need Background result to know record_type before deciding on Outcome.
+    background, execution = await asyncio.gather(
+        background_task, execution_task,
         return_exceptions=True,
     )
 
-    # If the report was long enough that head+tail slicing skipped the middle,
-    # and Call 3 came back empty, retry once with the middle section.
-    report_has_middle = len(report_text) > OUTCOME_TAIL_CHARS
-    if (
-        isinstance(outcome, ExtractionOutcome)
-        and _outcome_is_empty(outcome)
-        and report_has_middle
-    ):
+    # Detect record_type from Background result
+    detected_record_type = RecordType.CAMPAIGN
+    if isinstance(background, ExtractionBackground):
+        detected_record_type = background.record_type
+
+    # Outcome call only makes sense for campaign recaps, not proposals
+    outcome: ExtractionOutcome | BaseException | None = None
+    if detected_record_type == RecordType.CAMPAIGN:
+        outcome_text = _slice_for_outcome(report_text)
         try:
-            outcome = await _retry_outcome_with_middle(report_text, lang)
+            outcome = await invoke_llm_structured(
+                [
+                    SystemMessage(content=OUTCOME_PROMPT[lang]),
+                    HumanMessage(content=outcome_text),
+                ],
+                output_schema=ExtractionOutcome,
+                temperature=0,
+                max_tokens=2000,
+            )
+            # Middle-section fallback if tail came back empty
+            report_has_middle = len(report_text) > OUTCOME_TAIL_CHARS
+            if (
+                isinstance(outcome, ExtractionOutcome)
+                and _outcome_is_empty(outcome)
+                and report_has_middle
+            ):
+                try:
+                    outcome = await _retry_outcome_with_middle(report_text, lang)
+                except Exception as e:
+                    logger.error(f"Outcome middle-section retry failed: {e}")
         except Exception as e:
-            logger.error(f"Outcome middle-section retry failed: {e}")
+            logger.error(f"Outcome extraction failed: {e}")
+            outcome = e
+    else:
+        logger.info(f"Detected record_type=proposal — skipping outcome call")
 
     # Handle partial failures — merge whatever succeeded
     record_data: dict = {}
@@ -246,10 +286,10 @@ async def extract_campaign_record(
     if isinstance(outcome, ExtractionOutcome):
         record_data.update(outcome.model_dump())
         confidences.append(outcome.confidence)
-    else:
+    elif outcome is not None:
         logger.error(f"Outcome extraction failed: {outcome}")
 
-    # Overall confidence = worst of the three
+    # Overall confidence = worst of contributing calls
     if not confidences:
         overall_confidence = Confidence.LOW
     elif Confidence.LOW in confidences:
@@ -259,12 +299,20 @@ async def extract_campaign_record(
     else:
         overall_confidence = Confidence.HIGH
 
-    # Remove per-call confidence fields before merging
+    # Remove per-call confidence and record_type before merging into CampaignRecord
     record_data.pop("confidence", None)
+    extracted_record_type = record_data.pop("record_type", detected_record_type)
 
-    return CampaignRecord(
+    record = CampaignRecord(
         **record_data,
+        record_type=extracted_record_type,
         confidence=overall_confidence,
         status=ConfirmationStatus.PENDING,
         source_archive_id=source_archive_id,
     )
+
+    # Use file page count for slide_count if LLM didn't extract it
+    if page_count is not None and record.deck_info.slide_count is None:
+        record.deck_info.slide_count = page_count
+
+    return record

@@ -198,7 +198,22 @@ Integrates competitor research to generate the full strategy:
 
 ---
 
+### 2.4.5 Media Planning Agent
+
+Runs immediately after Strategy Phase 2 is confirmed. Translates the strategic channel mix into a concrete media plan:
+
+- Channel budget allocation (percentage split across channels)
+- KOL/KOC tier structure (how many at each tier, budget per tier, selection criteria)
+- Media placement recommendations (based on audience and channel strategy)
+- Overall budget breakdown
+
+Uses Campaign Knowledge Base (`media_planning` retrieval profile) to reference how similar past campaigns structured their media plans.
+
+---
+
 ### 2.5 Resource Agent (Pluggable)
+
+**Note**: Media Planning Agent (2.4.5) runs before Resource Agent. Media Planning generates the plan structure; Resource Agent matches specific vendors, KOLs, and placements from the database to fill that structure.
 
 Different project types require different external resources. KOLs are one type; PR projects need media outlets, offline events need vendors, ad campaigns need media placements. Resource matching is designed as an independent, pluggable agent rather than hardcoded into the pipeline.
 
@@ -468,6 +483,10 @@ Brief Analyzer processes
     [Node 2: User confirms strategy] ← most critical checkpoint
     Shows research data with timestamp + [Refresh] button
     Rerun options: strategy only / refresh research + strategy
+              ↓
+    Media Planning Agent
+    Generates media plan (channel budget split, KOL tier structure, placement recommendations)
+    based on the confirmed strategy and channel mix
               ↓
     Resource Agent (optional)
     ├── Social → KOL/KOC matching

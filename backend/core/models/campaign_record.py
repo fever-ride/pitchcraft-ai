@@ -187,12 +187,13 @@ class DeckInfo(BaseModel):
 class CampaignMeta(BaseModel):
     """Fields used for retrieval matching. All indexed for filtering."""
     campaign_type: CampaignType | None = None
+    campaign_subtype: str | None = None  # free-text, e.g. "员工家属开放日" / "新品发布会"
     industry: str | None = None
     budget_tier: BudgetTier | None = None
     target_audience_summary: str | None = None
     duration_days: int | None = None
     channels_used: list[str] = Field(default_factory=list)
-    client_id: str | None = None
+    client_name: str | None = None  # advertiser/brand name extracted from document
 
 
 # --- Top-level record ---
@@ -218,6 +219,8 @@ class CampaignRecord(BaseModel):
     deck_info: DeckInfo = Field(default_factory=DeckInfo)
 
     # Metadata
+    record_type: RecordType = RecordType.CAMPAIGN
+    pitch_outcome: PitchOutcome = PitchOutcome.UNKNOWN  # only meaningful for proposals
     status: ConfirmationStatus = ConfirmationStatus.PENDING
     confidence: Confidence = Confidence.PARTIAL
     source_archive_id: str | None = None
@@ -236,6 +239,7 @@ class ExtractionBackground(BaseModel):
     communication_plan: CommunicationPlan = Field(
         default_factory=CommunicationPlan)
     deck_info: DeckInfo = Field(default_factory=DeckInfo)
+    record_type: RecordType = RecordType.CAMPAIGN  # auto-detected from document
     confidence: Confidence = Confidence.PARTIAL
 
 

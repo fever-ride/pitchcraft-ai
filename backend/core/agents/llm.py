@@ -21,11 +21,11 @@ T = TypeVar("T", bound=BaseModel)
 MODEL_CONFIGS = {
     "sonnet": {
         "provider": "anthropic",
-        "model": "claude-sonnet-4-6-20250514",
+        "model": "claude-sonnet-4-5",
     },
     "haiku": {
         "provider": "anthropic",
-        "model": "claude-haiku-4-5-20251001",
+        "model": "claude-haiku-4-5",
     },
     "gpt-4o-mini": {
         "provider": "openai",

@@ -367,7 +367,7 @@ Richer resource profiles, knowledge accumulation from completed projects.
 - [x] Built on existing file upload + RAG pipeline, extended with extraction + routing
 - [x] `GET /api/v1/projects/{id}/archive` to check extraction status and results
 
-> **Phase 5 migration complete:** `_distribute_to_brand_style()` has been removed from archive pipeline. Strategy learnings and audience insights now route exclusively through CampaignRecord → proposition indexing → `campaign_knowledge_{org_id}`. The `brand_style_{client_id}` namespace is now sourced only by Pipeline 1 (Brand Library uploads: `BRAND_HISTORY_PROPOSAL`, `BRAND_HISTORY_COPY`) — it stores copywriting tone/style reference text, not strategy content.
+> **Phase 5 migration complete:** `_distribute_to_brand_style()` has been removed from archive pipeline (code-confirmed clean 2026-05-29: zero occurrences in `backend/`). Strategy learnings and audience insights now route exclusively through CampaignRecord → proposition indexing → `campaign_knowledge_{org_id}`. The `brand_style_{client_id}` namespace is now sourced only by Pipeline 1 (Brand Library uploads: `BRAND_HISTORY_PROPOSAL`, `BRAND_HISTORY_COPY`) — it stores copywriting tone/style reference text, not strategy content.
 
 ### 4.3 Progressive Resource Accumulation
 
@@ -429,6 +429,21 @@ Different document types have different information density. Adjust chunk parame
 - [x] Define chunk profiles as config dict keyed by file_type (`CHUNK_PROFILES` in chunker.py)
 - [x] Chunker selects profile based on file record metadata
 - [x] Unknown types fall back to current default parameters (512 tokens, 64 overlap)
+
+**4.5.4 Document Cleaning**
+
+Low-cost noise removal applied before chunking. Targets the most common quality issues in internal business documents (brand specs, decks, recap reports).
+
+*Boilerplate / header-footer removal (PDF only):*
+- [x] Lines appearing on >30% of pages are detected as boilerplate and stripped (company names, confidentiality notices repeated on every page)
+- [x] Page-number patterns removed: handles both Chinese (`第 3 页`, `第3P`) and English (`Page 3`, `3 / 20`, bare numerals) formats
+- [x] Detection uses normalised line-level frequency across all pages; single-page documents skipped
+
+*Minimum chunk token threshold:*
+- [x] Chunks below 20 tokens discarded after splitting (covers section headers, stray labels, single-word fragments that add no retrieval value)
+- [x] Threshold constant `MIN_CHUNK_TOKENS = 20` in `chunker.py`
+
+*Language note:* Chinese business documents routinely mix Chinese prose with English industry terms (KOL, ROI, CPE, TVC, OOH). Cleaning preserves all English terms as-is; only structural noise (page numbers, repeated headers) is removed.
 
 ---
 
@@ -550,7 +565,7 @@ CampaignRecord:
     target_audience_summary            (one-line description)
     duration_days                      (campaign length)
     channels_used[]                    (xiaohongshu, douyin, weibo, pr, event, ...)
-    client_id                          (tenant isolation)
+    client_name                        (LLM-extracted brand/advertiser name from document, e.g. "安踏"; not a DB FK — the real FK is campaign_records.client_id, passed from project context by archive_process.py)
 
   strategy_decisions:                ← Strategy P2 references ("what direction was chosen and why")
     industry_insight
@@ -612,7 +627,7 @@ CampaignRecord:
     chapter_structure[]                (section titles in order)
     presentation_style                 (data-heavy, visual, storytelling)
 
-  outcome:                           ← all agents reference ("what happened")
+  outcome:                           ← all agents reference ("what happened"; campaigns only)
     kpi_results{}                      (metric -> actual value)
     best_performing_tier
     best_performing_channel
@@ -622,6 +637,8 @@ CampaignRecord:
     overall_rating                     (1-5 scale, set during human confirmation)
 
   metadata:
+    record_type                        (proposal / campaign) — see note below
+    pitch_outcome                      (won / lost / unknown) — proposals only, set manually at confirmation
     status                             (pending_confirmation / confirmed)
     confidence                         (high / partial / low, based on source data completeness)
     source_archive_id                  (link back to raw archive upload)
@@ -630,12 +647,35 @@ CampaignRecord:
     confirmed_at
 ```
 
+**record_type design:**
+
+The same schema handles both proposal decks and recap reports. `record_type` distinguishes them:
+
+```
+record_type = "proposal"
+  → extraction covers: meta, strategy_decisions, communication_plan, deck_info
+  → outcome / execution fields are empty (not yet run)
+  → pitch_outcome: won / lost / unknown (set manually at confirmation)
+
+record_type = "campaign"
+  → full extraction: all dimensions including execution and outcome
+  → pitch_outcome: not applicable (always "unknown")
+```
+
+The product output IS a proposal. Past proposals are the most directly relevant reference — they show what strategic thinking won client approval. Campaign records provide outcome validation. Both are needed; agents weight them differently by profile.
+
+**client_learnings — manual input only:**
+
+`client_learnings` fields are NOT extracted by LLM. Recap reports contain formal KPI data, not informal notes about a client's decision style. This knowledge lives in the AE's memory. The confirmation UI provides a dedicated section for AEs to fill these fields manually after reviewing the extracted record.
+
 **Communication vs Media distinction:**
 - Communication plan = strategic ("怎么打"): channel roles, content direction, phasing, cross-platform interaction
 - Media plan = tactical ("买什么花多少"): budget allocation, tier breakdown, only paid/purchased resources
 - Example: offline event as a communication touchpoint (brand event in launch phase) → communication_plan. Offline event as a purchased venue/media slot → media_plan.
 
 All fields are optional. LLM extracts what it can. User confirms and fills gaps.
+
+**Language note:** Schema field values are stored in whatever language the source document uses (Chinese, English, or mixed). LLM prompts are bilingual (zh/en); language is auto-detected per document via `detect_language()`. Industry terms that are conventionally English even in Chinese documents (KOL, ROI, CPE, KOC, OOH) are preserved as-is.
 
 Implementation: `backend/core/models/campaign_record.py`
 
@@ -658,25 +698,39 @@ Note: `_distribute_to_brand_style()` has been removed. All agents now query `cam
 
 ```
 Call 1: ExtractionBackground (meta + strategy_decisions + communication_plan + deck_info)
-  → Report sections: project background, strategy rationale, planning chapters
-  → System prompt focuses on "what direction was chosen and why" + "how to fight"
+  → Text window: first 40,000 chars (strategy is front-loaded in most reports)
+  → Role: 资深campaign分析师 / senior campaign analyst
+  → Focus: "what direction was chosen and why" + "how to fight"
 
 Call 2: ExtractionExecution (media_plan + execution)
-  → Report sections: budget tables, resource lists, execution summaries
-  → System prompt focuses on "what to buy" + "how it was done"
+  → Text window: first 40,000 chars (budget tables and execution details are in the first half)
+  → Role: 资深整合营销执行专家 / senior integrated marketing execution expert
+  → Focus: paid media procurement (KOL/KOC tiers, budgets) + all other execution activities
+  → Scope: advertising campaigns (media_plan-heavy), PR campaigns (activities-heavy), or mixed
+  → execution.activities: PR events, press conferences, offline activations, UGC campaigns —
+    anything that is NOT paid media procurement
 
-Call 3: ExtractionOutcome (outcome + client_learnings)
-  → Report sections: results, post-campaign analysis, team retrospective, client feedback
-  → System prompt focuses on "what happened" + "what to learn" + "how this client decides"
+Call 3: ExtractionOutcome (outcome only — no client_learnings)
+  → Text window: last 20,000 chars (KPI results and retrospectives are back-loaded)
+  → Role: 资深campaign评估专家 / senior campaign evaluation expert
+  → Focus: "what happened" + "what to learn"
+  → Fallback: if key outcome fields are empty AND report is long enough to have a skipped
+    middle section, retry once with the preceding 20,000-char section
 
 Merge: results combined, confidence = min(call1, call2, call3)
 Partial failure: if one call fails, others still contribute (graceful degradation)
 ```
 
+**client_learnings excluded from extraction:**
+Recap reports contain formal KPI data, not informal notes about a client's decision style. Attempting LLM extraction of client_learnings from a report produces generic or fabricated content. These fields are filled manually by the AE at the confirmation step.
+
 **Why 3 calls instead of 1:**
-- Information distribution: recap reports scatter strategy in early pages, execution in mid-section, results at the end. A single call must attend to all sections simultaneously.
+- Information distribution: strategy in early pages, execution in mid-section, results at the end. A single call must attend to all sections simultaneously.
 - Schema complexity: CampaignRecord has 50+ fields across 5 dimensions. Single-call structured output degrades in quality past ~30 fields.
-- Prompt specialization: each call gets domain-specific extraction guidance (strategy analyst, media planner, evaluation expert).
+- Prompt specialization: each call gets a domain-specific role and text window optimised for where that information lives in the document.
+
+**Language adaptation:**
+All three prompts are bilingual (zh/en dict). Language is auto-detected once per document via `detect_language()` and applied to all three calls. Mixed-language content (Chinese reports with English terms like KOL, ROI, CPE) is handled naturally — Chinese prompts accept and preserve English industry terms in output fields.
 - Parallel execution: 3 concurrent calls complete faster than 1 serial call with 3x the output.
 
 Implementation: `backend/core/agents/campaign_extract.py`
@@ -719,7 +773,9 @@ Extracted CampaignRecord is not immediately available for retrieval. Requires us
 - [x] On confirmation: triggers background proposition indexing (5.5) automatically
 - [x] UI: campaign list page (pending/all tabs), detail page with module-by-module editable form
 - [x] Low-confidence records show warning banner, confidence badge on list and detail views
-- [ ] UX polish: guided wizard flow, inline field-level confidence indicators, overall_rating selector
+- [x] `pitch_outcome` selector on confirmation page (won / lost / unknown) — proposals only; defaults to unknown; sets retrieval priority signal
+- [x] `client_learnings` manual input section on confirmation page — AE fills post-hoc; not LLM-extracted
+- [ ] UX polish: guided wizard flow, inline field-level confidence indicators
 
 ### 5.5 Proposition Indexing & Contextual Embedding
 
@@ -748,8 +804,10 @@ Each proposition is:
 - [x] LLM-based proposition extraction from confirmed CampaignRecord (8-15 atomic propositions per record)
 - [x] Each proposition stored in MongoDB `campaign_propositions` collection with campaign_record_id back-reference
 - [x] Each proposition embedded with meta prefix (contextual embedding) and upserted to `campaign_knowledge_{org_id}` Pinecone namespace
-- [x] Metadata on each vector: campaign_record_id, module, campaign_type, industry, budget_tier
+- [x] Metadata on each vector: campaign_record_id, campaign_type, industry, budget_tier, **record_type**, **pitch_outcome**
 - [x] Fallback: if proposition extraction fails, embed full module text with meta prefix
+
+**Language note:** Propositions are generated in the language of the source document (zh or en). The proposition prompt is bilingual; language is auto-detected. Propositions from Chinese documents contain Chinese text with embedded English terms (KOL, ROI, etc.) preserved as-is — this is intentional, as mixed-language propositions match better against real queries from Chinese-speaking users who naturally mix languages.
 
 **Why contextual embedding matters:**
 
@@ -812,9 +870,24 @@ Step 5: Assemble agent context
 - [x] Resource Agent integrated: queries campaign_knowledge with "resource_reference" profile
 - [x] Deck Orchestrator integrated: queries campaign_knowledge with "deck_reference" profile
 - [x] Brief Analyzer integrated: queries campaign_knowledge with "brief_reference" profile
+- [x] **Same-project deduplication**: if both proposal and campaign for the same `project_id` are retrieved, campaign is returned as primary; proposal is demoted to secondary with note "同一项目已有结案数据，此提案仅供策略思路参考，数字为预估值"
+- [x] **Context headers label source type**: `[历史结案: ...]` / `[历史提案·中标: ...]` / `[历史提案·未中标: ...]` / `[历史提案·结果未知: ...]` — agents receive clear provenance signal without relying on prompt instructions
+- [x] Lost proposals labeled `[历史提案·未中标]` with note "未中标方案，可作为对比参考"
 - [ ] Media Planning profile uses cross-encoder rerank (heavier but highest precision needed)
 - [ ] Media Planning agent integrated (blocked on Phase 6 Media Planning Agent)
 - [ ] Rerank implementation for media_planning profile
+
+**Per-agent profile × record_type guidance:**
+
+| Agent | Proposal | Campaign |
+|---|---|---|
+| Strategy P2 | ✅ strategy thinking, big idea | ✅ validated strategy + outcome |
+| Deck Orchestrator | ✅ primary — pitch structure reference | ⚠️ secondary — recap structure differs from pitch |
+| Media Planning | ⚠️ estimated budgets only, not validated | ✅ primary — real allocation + outcome data |
+| Resource Agent | ⚠️ proposed resources, may not have been used | ✅ actual resources used + performance |
+| Brief Analyzer | ✅ client_learnings (manual), meta | ✅ client_learnings (manual), meta |
+
+**Language note:** Retrieval queries are typically generated by agents in Chinese (or mixed zh/en). `detect_language()` selects the verification prompt language. Pinecone semantic search handles cross-language matching naturally — a Chinese query will match Chinese propositions with embedded English terms (e.g. "KOC tier 效果" matches "[美妆 | launch] KOC tier drove 60% engagement").
 
 Implementation: `backend/core/rag/campaign_retriever.py`
 
@@ -853,13 +926,19 @@ Media Planning Agent retrieves 3 historical campaigns → produces media plan
 
 ### 5.8 Self-Verification (retrieval sufficiency check)
 
-Prevent agents from blindly using irrelevant historical data.
+Prevent agents from blindly using irrelevant historical data. Critical when the knowledge base is sparse (first 5–10 records): Pinecone always returns top-k matches regardless of actual relevance, so without a quality gate the weakest early records would be cited as reference for every new project.
 
-- [ ] After retrieval, LLM judges: "Are these historical campaigns similar enough to inform the current plan?" (sufficient / partial / insufficient)
-- [ ] If sufficient: agent uses full retrieved context
-- [ ] If partial: agent uses retrieved context but adds explicit caveat ("limited historical data for this scenario, falling back to industry frameworks")
-- [ ] If insufficient: agent falls back entirely to prompt-embedded industry knowledge. No historical references cited.
-- [ ] Prevents: "We did a beauty launch before so here's the plan" when the retrieved campaign was actually a beauty branding campaign with completely different objectives
+- [x] After retrieval, LLM judges: "Are these historical campaigns similar enough to inform the current plan?" (sufficient / partial / insufficient)
+- [x] Criteria: match on at least 3 of — industry, campaign type, budget tier, target audience → sufficient; 2 → partial; <2 → insufficient
+- [x] If sufficient: agent uses full retrieved context
+- [x] If partial: context returned with `sufficiency_note` injected into formatted output ("参考局限: ..."); agents read this note and adjust confidence accordingly
+- [x] If insufficient: returns empty list; agent falls back entirely to prompt-embedded industry knowledge; no historical references cited
+- [x] Verification failure (LLM error / timeout): returns original results unfiltered — verification is best-effort, not a hard gate
+- [x] Prevents: retrieving a beauty branding campaign and citing it as reference for a tech product launch just because both mention "年轻用户"
+
+Implementation: `verify_retrieval_sufficiency()` in `backend/core/rag/campaign_retriever.py`
+
+**Language note:** Verification prompt is bilingual (zh/en). Language detected from the query string. Matching criteria are language-agnostic (comparing structured meta fields, not text). A Chinese query against Chinese propositions works identically to an English query against English propositions.
 
 ### 5.9 Distilled Insights (Methodology Library auto-evolution)
 

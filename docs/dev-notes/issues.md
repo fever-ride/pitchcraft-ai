@@ -655,6 +655,8 @@ if TYPE_CHECKING:
 
 **教训**：迁移的"可以停止写入旧路径"和"可以停止读取旧路径"是两个不同的决策点。前者条件更松（新路径 ready + 旧写入无新消费者），后者条件更严（新路径数据充足 + 质量验证通过）。
 
+**后续确认（2026-05-29）**：`grep -r "_distribute_to_brand_style" backend/` 返回零结果。函数已从代码中彻底删除，不存在残留调用。ROADMAP 4.2 注记已更新为 "code-confirmed clean"。
+
 ---
 
 ## D6. 前端状态管理的分层决策
@@ -682,4 +684,213 @@ if TYPE_CHECKING:
 - 5 个页面用 local state（analytics, clients×2, research, proposals），都是自包含展示
 - 没有"全部 Redux 化"的过度工程，也没有"全 local state"的状态混乱
 
+---
+
+## Phase 5 首次端到端测试
+
+---
+
+## 27. 首次真实文档测试暴露的五个提取问题
+
+**背景**：用一汽解放家属日活动方案（109页 PDF）跑端到端提取，发现5个问题。
+
+---
+
+**问题 A：`record_type` 默认 "campaign"，实为 "proposal"**
+
+提案文档被提取为 `record_type = "campaign"`，因为默认值是 campaign 且 LLM 未被要求判断。
+
+**解决**：将 `record_type` 判断加入 Background extraction call 的 prompt，LLM 根据文档内容自动判断 proposal/campaign。`ExtractionBackground` 增加 `record_type: RecordType` 字段。
+
+---
+
+**问题 B：`budget_tier` 在无预算信息时产生幻觉**
+
+文档未提及任何预算数字，但 LLM 填入 `"100k_500k"`。
+
+**解决**：BACKGROUND_PROMPT 加明确指令："只在文档中明确出现预算金额时填写，否则必须留 null"。
+
+---
+
+**问题 C：提案的 `confidence` 被空的 outcome 拖到 "low"**
+
+原逻辑：overall confidence = worst of 3 calls。Outcome call 对提案必然为空 → confidence 被拖低为 low，即使前两路提取质量很高。
+
+**解决**：检测到 `record_type = proposal` 后跳过 outcome call。Confidence 只根据参与的 call 计算。结果：同一文档 confidence 从 low 升至 high。
+
+---
+
+**问题 D：`slide_count` 未从文件页数继承**
+
+LLM 无法从文本中可靠判断幻灯片数量，`slide_count` 返回 null。
+
+**解决**：`extract_campaign_record()` 增加 `page_count: int | None = None` 参数。文件解析时将页数传入，若 LLM 未提取则直接赋值。
+
+---
+
+**问题 E：`CampaignMeta.client_id` 语义混乱**
+
+LLM 将 `client_id` 填入客户名称字符串（"一汽解放本部中重型车产品线"），但 `client_id` 在系统其他地方是指向 `clients` 表的外键。两种用法同名导致混淆。
+
+**分析**：`archive_process.py` 已在顶层字段 `campaign_dict["client_id"]` 存入真实外键（来自项目上下文）。`CampaignMeta.client_id` 是多余的，且 LLM 填的是名字字符串而非 ID。
+
+**解决**：`CampaignMeta.client_id` 重命名为 `client_name`，语义明确为"LLM 从文档提取的广告主/品牌名称"，不是数据库 ID。真正的客户关联由 `archive_process.py` 从项目上下文传入，存在 `campaign_records` 顶层 `client_id` 字段。
+
+**结论**：`client_id`（外键，数据库层）和 `client_name`（展示名，提取层）是两件不同的事，不应同名。
+
+---
+
+**通用经验**
+
+| 场景 | 做法 |
+|---|---|
+| 提案 vs 结案的提取路径 | 用 LLM 自动检测 record_type，提案跳过 outcome call |
+| LLM 无明确依据时填字段 | Prompt 明确写"无则留 null"，否则 LLM 会猜 |
+| Confidence 计算 | 只纳入实际运行的 call，不让"预期为空"的 call 拖低整体评分 |
+| 外键 vs 展示名 | 不同语义的字段必须不同命名，即使暂时只用字符串存储 |
+| 文件元数据（页数）传递 | 解析阶段就能拿到的信息不要让 LLM 再猜，直接传参 |
+
 **Key takeaway**：状态管理工具不是 all-or-nothing 的选择。按页面的实际交互复杂度选择。一个项目里同时用两种方式是正常的——前提是标准清晰且一致。
+
+---
+
+## Phase 5 第二轮测试 — 安踏24Q3结案
+
+---
+
+## 28. `campaign_type` 枚举不够细——`campaign_subtype` 双字段方案
+
+**背景**：用安踏24Q3奥运结案测试时，LLM 提取的 `campaign_type` 在两次运行间分别输出 `"event"` 和 `"branding"`。同一份文档，相同 prompt，类型不稳定。
+
+**根因**：枚举只有 7 个值（launch / branding / conversion / event / crisis / always_on / other），边界模糊。"奥运营销"同时有品牌建设（branding）和活动推广（event）的特征，LLM 每次判断角度不同。
+
+**影响**：Pinecone 的 `campaign_type` metadata filter 依赖枚举的稳定性；如果存储值不一致，精确过滤会漏掉相关结果。
+
+**解决**：双字段分离职责：
+- `campaign_type`：宽枚举，仅供 metadata 过滤（7 个标准值，容忍粗粒度分类）
+- `campaign_subtype`：2-6 字自由文本，供语义检索（"奥运营销"、"618促销"、"员工家属开放日"）
+
+`_build_meta_prefix()` 优先用 `campaign_subtype`（更具体），fallback 到 `campaign_type`，确保向量化前缀稳定且信息丰富。
+
+**测试结果**：安踏文档中 `campaign_subtype` 稳定输出 "奥运营销"，即使 `campaign_type` 不同次输出有差异，向量化前缀因 subtype 优先而保持一致。
+
+---
+
+## 29. pydantic-settings v2 `.env` 文件被空 shell env var 覆盖
+
+**背景**：本地运行测试脚本，API 调用报认证失败（"Could not resolve authentication method"）。
+
+**排查过程**：
+1. `.env` 文件存在 ✓，内容正确 ✓
+2. `dotenv_values('.env')` 能正确读取 ✓
+3. `pydantic-settings` 的 `DotEnvSettingsSource` 单独调用也能读取 ✓
+4. 但 `Settings()` 实例的 `anthropic_api_key` 始终为空 ✗
+
+**根因**：`os.environ.get('ANTHROPIC_API_KEY')` 返回 `''`（空字符串，不是 None）。shell 中设置了 `ANTHROPIC_API_KEY=`（无值），pydantic-settings 的 source 优先级是：`env vars > .env file`。空字符串 env var 覆盖了 `.env` 中的真实值。
+
+**解决**：测试脚本入口处手动解析 `.env`，用 `os.environ[key] = value` 覆盖空壳变量，在任何 backend import 发生之前完成。
+
+```python
+# 必须在所有 backend import 之前执行
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    with open(_env_file) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ[_k.strip()] = _v.strip()
+```
+
+**教训**：pydantic-settings 的 `.env` 加载不是"merge"而是"fallback"——env var 始终优先。如果 CI 或 shell 中设置了空值占位变量（常见于 CI 框架），`.env` 文件值会被静默忽略。测试脚本中尤其要注意 import 顺序：settings 对象在第一次 import `backend.core.config` 时就创建了，之后再设 env var 不会刷新。
+
+---
+
+## 30. Phase 5 Pipeline 端到端测试通过（Steps 1-7 of 8）
+
+**测试文件**：`scripts/test_campaign_kb_pipeline.py`
+
+**运行条件**：
+- `docker compose up -d mongodb redis`（MongoDB + Redis 本地运行）
+- `ANTHROPIC_API_KEY` 有效（via `.env`）
+- BGE-M3 embedding 服务不需要（Steps 1-7）
+
+**各步骤结果**（安踏24Q3结案报告）：
+
+| Step | 内容 | 结果 |
+|------|------|------|
+| 1 | PDF 解析 | ✅ 8,648 chars（文档以图片为主，文字稀疏） |
+| 2 | Campaign Record 提取（3 LLM calls） | ✅ record_type=campaign, confidence=high, 13 KPI 指标 |
+| 3 | MongoDB 存储 | ✅ 写入 `campaign_records` collection |
+| 4 | MongoDB 读取验证 | ✅ record_type/client_name/status 全部 round-trip 正确 |
+| 5 | 模拟人工确认 | ✅ status 更新为 confirmed |
+| 6 | Proposition 提取（1 LLM call） | ✅ 14-15 条命题，全部带标准前缀 `[运动服饰 \| 奥运营销 \| 预算未知 \| 体育、生活圈层用户]` |
+| 7 | Proposition MongoDB 存储 | ✅ `campaign_propositions` collection，可按 `campaign_record_id` 检索 |
+| 8 | Pinecone 向量化 upsert | ⊘ 跳过（需要 BGE-M3 embedding 服务 + PINECONE_API_KEY） |
+
+**提取质量亮点**：
+- `client_name`: "安踏" ✓（精准，不是代理公司）
+- `campaign_subtype`: "奥运营销" ✓（稳定且具体）
+- `budget_tier`: null ✓（文档无预算信息，未幻觉填值）
+- `kpi_results`: 13 项指标（总曝光、总互动、视频播放量等完整提取）
+- 命题示例："安踏与中国国家地理联名制作《沿着丝路到巴黎 与奥运同行》纪录片，共发布4站分站内容...共5条纪录片内容"
+
+**Step 8 完成所需**：
+```bash
+# 启动 embedding 服务
+cd infrastructure/docker && docker compose up -d embedding
+
+# 在 .env 中添加
+PINECONE_API_KEY=<key>
+PINECONE_INDEX_NAME=pitchcraft
+```
+
+**运行方式**：
+```bash
+# 运行并自动清理测试数据
+python scripts/test_campaign_kb_pipeline.py
+
+# 保留数据供 mongosh 检查
+python scripts/test_campaign_kb_pipeline.py --keep
+
+# 自定义文档
+python scripts/test_campaign_kb_pipeline.py path/to/report.pdf
+```
+
+---
+
+## 31. `_summarise_results` 中 `None` 字段导致 self-verification 静默失败
+
+**发现时机**：Step 11 retrieval 测试，不相关查询未被过滤。
+
+**根因**：`_summarise_results()` 用 `dict.get(key, default)` 取 meta 字段，`budget_tier` 在文档无预算信息时被存为显式 `None`（而非缺失 key）。`dict.get("budget_tier", "—")` 对显式 `None` 返回 `None` 而非 `"—"`，最终 `" | ".join(parts)` 因 `None` 不是 str 而抛出 `TypeError`。
+
+`verify_retrieval_sufficiency()` 的异常捕获是 `except Exception`，静默记录 warning 后返回 results unfiltered——质量门在没人察觉的情况下失效。
+
+**修复**：所有 meta 字段改为 `str(meta.get(key) or fallback)`，`or` 运算符同时处理 missing key 和显式 `None`。
+
+```python
+# Before (breaks on None):
+parts = [meta.get("budget_tier", "—"), ...]
+
+# After (handles None):
+parts = [str(meta.get("budget_tier") or "预算未知"), ...]
+```
+
+**教训**：`dict.get(key, default)` 的 default 只在 key 不存在时生效，不处理 `key: None` 的情况。当 LLM 故意将字段设为 `None`（如 `budget_tier` 无预算信息时），需要用 `val or default` 而不是 `dict.get(key, default)`。
+
+---
+
+## 32. `verify_retrieval_sufficiency` 只传 SystemMessage 导致 Anthropic 400
+
+**发现时机**：Step 11 retrieval 测试（修复 #31 之后暴露）。
+
+**根因**：`verify_retrieval_sufficiency()` 将完整 prompt（含 query 和 campaigns_summary）放在 `SystemMessage` 里，messages 列表中没有 `HumanMessage`。Anthropic API 要求 messages 数组中至少有一条 role=user 的消息，否则返回 `400: at least one message is required`。
+
+**修复**：将 prompt 拆分：
+- `SystemMessage`：评估规则和判断标准（static，不含用户数据）
+- `HumanMessage`：当前查询 + 检索到的 campaigns（dynamic，每次调用不同）
+
+这同时也是更好的 prompt 设计：system 给 LLM 角色和规则，user 给具体数据。
+
+**教训**：Anthropic 与 OpenAI 在 system-only messages 的处理上有差异。Anthropic 要求至少有一条 user message；OpenAI 对 system-only 更宽松。跨模型兼容写法：永远在 system 后面跟一条 human/user message。

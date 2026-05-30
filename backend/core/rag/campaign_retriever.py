@@ -82,14 +82,8 @@ class SufficiencyCheck(BaseModel):
     reason: str
 
 
-_VERIFICATION_PROMPT = {
-    "zh": """判断这批历史案例对当前项目的参考价值。
-
-当前需求：
-{query}
-
-检索到的历史案例：
-{campaigns_summary}
+_VERIFICATION_SYSTEM = {
+    "zh": """你是检索质量评估专家。判断检索到的历史案例对当前项目的参考价值。
 
 判断标准：
 - sufficient：案例与当前项目在行业、campaign类型、预算档位、目标受众中至少3项高度匹配，可直接参考
@@ -97,13 +91,7 @@ _VERIFICATION_PROMPT = {
 - insufficient：匹配度低，强行参考可能导致误导，不建议使用
 
 reason控制在一句话内。""",
-    "en": """Judge whether these historical campaigns are relevant enough to inform the current project.
-
-Current query:
-{query}
-
-Retrieved campaigns:
-{campaigns_summary}
+    "en": """You are a retrieval quality evaluator. Judge whether the retrieved historical campaigns are relevant enough to inform the current project.
 
 Criteria:
 - sufficient: campaigns match on at least 3 of — industry, campaign type, budget tier, target audience. Safe to reference directly.
@@ -113,16 +101,31 @@ Criteria:
 Keep reason to one sentence.""",
 }
 
+_VERIFICATION_USER = {
+    "zh": """当前需求：
+{query}
+
+检索到的历史案例：
+{campaigns_summary}""",
+    "en": """Current query:
+{query}
+
+Retrieved campaigns:
+{campaigns_summary}""",
+}
+
 
 def _summarise_results(results: list[CampaignRetrievalResult]) -> str:
     lines = []
     for i, r in enumerate(results, 1):
         meta = r.meta
+        # Use `or "—"` to handle both missing keys and explicit None values
+        # (budget_tier is intentionally None when not stated in the document)
         parts = [
-            meta.get("industry", "—"),
-            meta.get("campaign_type", "—"),
-            meta.get("budget_tier", "—"),
-            meta.get("target_audience_summary", "—"),
+            str(meta.get("industry") or "—"),
+            str(meta.get("campaign_type") or "—"),
+            str(meta.get("budget_tier") or "预算未知"),
+            str(meta.get("target_audience_summary") or "—"),
         ]
         lines.append(f"{i}. {' | '.join(parts)}")
     return "\n".join(lines)
@@ -134,12 +137,15 @@ async def verify_retrieval_sufficiency(
 ) -> SufficiencyCheck:
     """Ask LLM whether retrieved campaigns are relevant enough to use."""
     lang = detect_language(query)
-    prompt = _VERIFICATION_PROMPT[lang].format(
+    user_content = _VERIFICATION_USER[lang].format(
         query=query,
         campaigns_summary=_summarise_results(results),
     )
     return await invoke_llm_structured(
-        [SystemMessage(content=prompt)],
+        [
+            SystemMessage(content=_VERIFICATION_SYSTEM[lang]),
+            HumanMessage(content=user_content),
+        ],
         output_schema=SufficiencyCheck,
         temperature=0,
         max_tokens=200,
@@ -201,6 +207,30 @@ async def retrieve_campaign_knowledge(
     cursor = db["campaign_records"].find({"_id": {"$in": record_ids}})
     docs = {str(doc["_id"]): doc async for doc in cursor}
 
+    # Deduplicate: if the same project has both a proposal and a campaign record,
+    # keep the campaign as primary and demote the proposal to strategy-reference only.
+    # Key: project_id → preferred record_id (campaign wins over proposal)
+    project_primary: dict[str, str] = {}
+    project_secondary: dict[str, str] = {}  # proposal demoted by a campaign
+    for record_id, doc in docs.items():
+        project_id = doc.get("project_id")
+        if not project_id:
+            continue
+        record_type = doc.get("record_type", "campaign")
+        if project_id not in project_primary:
+            project_primary[project_id] = record_id
+        else:
+            existing_id = project_primary[project_id]
+            existing_type = docs[existing_id].get("record_type", "campaign")
+            if record_type == "campaign" and existing_type == "proposal":
+                # campaign displaces proposal to secondary
+                project_secondary[project_id] = existing_id
+                project_primary[project_id] = record_id
+            elif record_type == "proposal" and existing_type == "campaign":
+                project_secondary[project_id] = record_id
+
+    demoted_ids = set(project_secondary.values())
+
     results: list[CampaignRetrievalResult] = []
     for record_id, props in record_matches.items():
         doc = docs.get(record_id)
@@ -214,6 +244,14 @@ async def retrieve_campaign_knowledge(
                 modules[module_name] = doc[module_name]
 
         props_sorted = sorted(props, key=lambda x: x[1], reverse=True)
+        record_type = doc.get("record_type", "campaign")
+        pitch_outcome = doc.get("pitch_outcome", "unknown")
+
+        note = ""
+        if record_id in demoted_ids:
+            note = "同一项目已有结案数据，此提案仅供策略思路参考，数字为预估值"
+        elif record_type == "proposal" and pitch_outcome == "lost":
+            note = "未中标方案，可作为对比参考"
 
         results.append(CampaignRetrievalResult(
             record_id=record_id,
@@ -221,6 +259,7 @@ async def retrieve_campaign_knowledge(
             modules=modules,
             meta=doc.get("meta", {}),
             top_score=props_sorted[0][1] if props_sorted else 0.0,
+            sufficiency_note=note,
         ))
 
     results.sort(key=lambda r: r.top_score, reverse=True)
@@ -270,11 +309,20 @@ def format_campaign_context(
                 meta_parts.append(meta["budget_tier"])
             meta_str = " | ".join(meta_parts)
 
-        header = f"[Historical Campaign: {meta_str}]" if meta_str else "[Historical Campaign]"
+        record_type = r.meta.get("record_type", "campaign") if r.meta else "campaign"
+        pitch_outcome = r.meta.get("pitch_outcome", "unknown") if r.meta else "unknown"
+
+        if record_type == "proposal":
+            outcome_label = {"won": "中标", "lost": "未中标"}.get(pitch_outcome, "结果未知")
+            type_label = f"历史提案·{outcome_label}"
+        else:
+            type_label = "历史结案"
+
+        header = f"[{type_label}: {meta_str}]" if meta_str else f"[{type_label}]"
         sections = [header]
 
         if r.sufficiency_note:
-            sections.append(f"  [参考局限: {r.sufficiency_note}]")
+            sections.append(f"  [注意: {r.sufficiency_note}]")
 
         for module_name, module_data in r.modules.items():
             module_text = json.dumps(module_data, ensure_ascii=False, default=str)

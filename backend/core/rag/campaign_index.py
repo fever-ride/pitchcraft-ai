@@ -30,47 +30,39 @@ PROPOSITION_PROMPT = {
 
 规则：
 1. 每条命题必须自包含——不依赖上下文即可理解
-2. 每条命题以campaign元信息开头：[行业 | 类型 | 预算档位 | 受众]
+2. 每条命题必须以此固定前缀开头（不得修改）：{meta_prefix}
 3. 不要用代词（"该项目"、"这个campaign"），展开为具体描述
-4. 每条命题聚焦一个具体决策、数据点或经验
+4. 每条命题聚焦一个具体决策、数据点或经验——不要生成关于文档结构本身的命题（如"本文档共X页"）
 5. 数字和具体信息保留原始值
 6. 生成8-15条命题，覆盖所有有实质内容的字段
-
-示例输出：
-- "[美妆 | 新品上市 | 200万 | Z世代女性] KOC tier占总预算10%但贡献60%互动量"
-- "[美妆 | 新品上市 | 200万 | Z世代女性] 传播节奏采用三阶段：预热7天/引爆3天/长尾14天"
-- "[美妆 | 新品上市 | 200万 | Z世代女性] Big Idea'打破常规'在年轻女性中测试反应良好"
 
 不要生成空泛的命题（如"项目取得了不错的效果"），每条必须包含具体信息。""",
     "en": """You are a knowledge extraction expert. Decompose this campaign record into atomic propositions.
 
 Rules:
 1. Each proposition must be self-contained — understandable without external context
-2. Each proposition starts with campaign meta: [industry | type | budget_tier | audience]
+2. Each proposition MUST start with this exact prefix (do not modify): {meta_prefix}
 3. No pronouns ("the campaign", "this project") — expand to specific descriptions
-4. Each proposition focuses on one specific decision, data point, or learning
+4. Each proposition focuses on one specific decision, data point, or learning — do NOT generate propositions about the document structure itself (e.g. "this document has X pages")
 5. Keep original numbers and specific information intact
 6. Generate 8-15 propositions covering all fields with substantive content
-
-Example output:
-- "[beauty | launch | 2M | Gen-Z female] KOC tier at 10% budget drove 60% of total engagement"
-- "[beauty | launch | 2M | Gen-Z female] Communication rhythm: 3 phases — teaser 7d / burst 3d / sustain 14d"
-- "[beauty | launch | 2M | Gen-Z female] Big idea 'Break the Routine' tested well with young female audience"
 
 Do not generate vague propositions (e.g. "the project achieved good results"). Each must contain specific information.""",
 }
 
 
 def _build_meta_prefix(record: dict) -> str:
-    """Build [industry | type | budget | audience] prefix from record meta."""
+    """Build [industry | subtype | budget | audience] prefix from record meta."""
     meta = record.get("meta", {})
     parts = []
     if meta.get("industry"):
         parts.append(meta["industry"])
-    if meta.get("campaign_type"):
-        parts.append(meta["campaign_type"])
-    if meta.get("budget_tier"):
-        parts.append(meta["budget_tier"])
+    # Use campaign_subtype for semantic richness; fall back to campaign_type enum value
+    type_label = meta.get("campaign_subtype") or meta.get("campaign_type") or ""
+    if type_label:
+        parts.append(str(type_label))
+    budget = meta.get("budget_tier")
+    parts.append(budget if budget else "预算未知")
     if meta.get("target_audience_summary"):
         parts.append(meta["target_audience_summary"])
     return f"[{' | '.join(parts)}]" if parts else ""
@@ -123,9 +115,11 @@ async def extract_propositions(record: dict) -> list[str]:
         return []
 
     lang = detect_language(record_text)
+    prefix = _build_meta_prefix(record)
+    prompt = PROPOSITION_PROMPT[lang].format(meta_prefix=prefix)
 
     messages = [
-        SystemMessage(content=PROPOSITION_PROMPT[lang]),
+        SystemMessage(content=prompt),
         HumanMessage(content=record_text),
     ]
 
@@ -135,7 +129,6 @@ async def extract_propositions(record: dict) -> list[str]:
 
     # Fallback: if LLM returns empty, generate basic propositions from meta
     if not result.propositions:
-        prefix = _build_meta_prefix(record)
         fallback = []
         strategy = record.get("strategy_decisions", {})
         if strategy.get("big_idea"):
@@ -194,8 +187,11 @@ async def index_campaign_propositions(
                 "campaign_record_id": record_id,
                 "text": prop[:1000],
                 "campaign_type": meta.get("campaign_type", ""),
+                "campaign_subtype": meta.get("campaign_subtype", ""),
                 "industry": meta.get("industry", ""),
                 "budget_tier": meta.get("budget_tier", ""),
+                "record_type": record.get("record_type", "campaign"),
+                "pitch_outcome": record.get("pitch_outcome", "unknown"),
             },
         })
 
