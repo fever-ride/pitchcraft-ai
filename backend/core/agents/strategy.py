@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from backend.core.agents.brand_extract import format_brand_profile_for_prompt
 from backend.core.agents.llm import invoke_llm_structured
+from backend.core.agents.research import format_research_for_prompt
 from backend.core.agents.schemas import BrandCheckResult, StrategyPhase1Result, StrategyPhase2Result
 from backend.core.database.connection import get_database
 from backend.core.database.repositories.brand_profiles import BrandProfileRepository
@@ -106,7 +107,7 @@ async def run_strategy_phase2(
 
     user_msg = (
         f"Phase 1 Insight:\n{json.dumps(phase1_insight, ensure_ascii=False)}\n\n"
-        f"Market Research:\n{json.dumps(research_result, ensure_ascii=False)[:3000]}\n\n"
+        f"Market Research:\n{format_research_for_prompt(research_result)}\n\n"
         f"Brief:\n{json.dumps(brief, ensure_ascii=False)}"
         f"{constraints}"
     )

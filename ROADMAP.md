@@ -33,7 +33,7 @@ End-to-end flow from brief input to PPT download with human oversight at every c
 - [x] ~~Internal history search via Pinecone (project namespace)~~ → Removed in 3.8 (duplicates Strategy P1's brand RAG)
 - [x] Deterministic fallback: Tavily → DuckDuckGo → empty (internal RAG fallback removed in 3.8)
 - [x] Result timestamping (research_fetched_at in PipelineState)
-- [x] Semantic response cache (Redis, 30-day TTL, keyed by client_id:competitor:date_bucket)
+- [x] ~~Semantic response cache (Redis, 30-day TTL, keyed by client_id:competitor:date_bucket)~~ → Replaced in 3.8 with MongoDB `research_results` collection keyed by (client_id, brief_hash). Results persist permanently; reuse window is a business logic parameter (default 30 days), not a TTL.
 
 ### 1.5 Strategy Agent (Two-Phase)
 
@@ -235,7 +235,7 @@ Version control, analytics, deployment infrastructure.
 - [ ] Narrative Agent suggestion acceptance rate (needs acceptance event tracking)
 - [x] Average pipeline execution time (avg_duration_s from stage_metrics aggregation)
 - [x] Request Budget usage distribution (avg_llm_calls, avg_search_calls)
-- [x] Cache hit rate (cached_research_entries count from Redis scan)
+- [x] ~~Cache hit rate (cached_research_entries count from Redis scan)~~ → Now queryable from MongoDB `research_results` collection: count docs with `from_cache=True` or compare `created_at` vs pipeline run timestamps
 - [x] Feedback stats: rerun trigger rate, target distribution, direction counts
 - [x] Version stats: total versions, rerun count, rollback count, trigger distribution
 - [x] Frontend dashboard page (/analytics) with KPI cards, stage bar chart, feedback breakdown
@@ -315,36 +315,35 @@ Current Research Agent has structural issues: single query, functional misplacem
   - Belongs in: Resource Agent's retrieval phase (or a dedicated social listening module if we later add brand-level SOV/sentiment analysis)
   - `social_data.py` module retained for future use by Resource Agent or a dedicated social listening feature
 
-**Fix: Single query → multi-dimensional search**
+**Fix: Single query → multi-dimensional search** ✅
 
-- [ ] Replace single `f"{client_name} {theme} marketing campaign competitor"` with LLM-generated query set:
-  - Competitor activity: `"{competitor_name} 近期 campaign 2024"`
-  - Category trends: `"{category} 行业趋势 {year}"`
-  - Platform trends: `"{channel} {category} 爆款内容"` (per channel from brief)
-  - Audience behavior: `"{audience} 消费行为 偏好"`
-- [ ] Multi-round: after first-pass identifies competitor names, do follow-up searches per competitor
+- [x] Replaced single query with 3 targeted parallel queries via `_build_search_queries()`:
+  - Q1 Competitive landscape: `"{client_name} {category} competitor brand positioning marketing strategy"`
+  - Q2 Industry & consumer trends: `"{category} {audience} market trend consumer insight 2025"`
+  - Q3 Named competitors (if in brief) or theme best practice fallback
+- [x] Results merged with URL deduplication (`_merge_web_results`, max 15 results)
+- [x] `competitor_names` from `StructuredBrief.competitors` wired into `research_agent_node` and passed to `run_research()` for use in Q3
+- [ ] Multi-round follow-up per competitor (future: after first pass identifies names, do targeted follow-up searches)
 - [ ] Information sufficiency check: LLM self-evaluates whether results are adequate before synthesis
 
 **Fix: Competitor screenshot analysis not wired into pipeline**
 
-- [ ] Wire `competitor_screenshots` into `research_agent_node` from PipelineState
-  - Currently: `run_research()` accepts the param but pipeline node never passes it
-  - Option A: allow file/image upload at `hitl_brief` node, store in state, pass to research
+- [ ] `competitor_screenshots` param exists in `run_research()` but pipeline never passes it
+  - Option A: allow image/file upload at `hitl_brief` node, store in state, pass to research
   - Option B: reference files already uploaded to project namespace (file records in MongoDB)
-- [ ] Consider expanding to general "supplementary materials" (competitor PDFs, articles, text notes) — not just screenshots
+- [ ] Consider expanding to general "supplementary materials" (competitor PDFs, articles, text notes)
 
-**Fix: Output consumption by Strategy P2**
+**Fix: Output consumption by Strategy P2** ✅
 
-- [ ] Replace `json.dumps(research_result)[:3000]` truncation with structured summary
-  - Current: downstream sees arbitrary first 3000 chars of a JSON blob
-  - Improved: Research Agent outputs a prioritized `executive_summary` (500 tokens max) + full structured data. Strategy P2 reads summary + specific fields it needs (competitors, opportunities)
+- [x] Replaced `json.dumps(research_result)[:3000]` truncation with `format_research_for_prompt()`
+  - New: structured text block (competitors + trends + opportunities + risks + approach), ~400–600 tokens, no arbitrary cutoff
+  - `format_research_for_prompt()` lives in `research.py`, imported by `strategy.py`
 
-**Fix: Cache key collision**
+**Fix: Cache key collision → Redis cache replaced entirely** ✅
 
-- [ ] Cache key uses `search_query[:50]` which can collide across different briefs for same client
-  - Fix: hash the full query string (or structured_brief hash) instead of truncating
-  - Also: `_make_key` param is named `competitor_name` but receives query text — rename for clarity
-  - Consider: cache per-query (multiple keys per pipeline run) instead of caching the entire merged result
+- [x] ~~SHA-256 key fix on Redis SemanticCache~~ → Redis SemanticCache removed entirely
+- [x] Replaced with MongoDB `research_results` collection; lookup key is `SHA-256(JSON.stringify(structured_brief, sort_keys=True))` — stable, brief-content-based, collision-resistant
+- [x] `cache.py` (`SemanticCache` class) deleted; `research_results.py` repository added
 
 **Not yet planned (future consideration):**
 
@@ -533,7 +532,7 @@ Industry Knowledge           Context           Real-time search + cache    Imple
 Resource Library             Execution pool    MongoDB + Pinecone vectors  Implemented
 ```
 
-Three layers have dedicated storage (Brand Library, Campaign Knowledge Base, Resource Library). Industry Knowledge is served by Research Agent's real-time search with 30-day semantic caching. **Methodology Library is out of v1 scope** — see Phase 5.9 for the design plan.
+Three layers have dedicated storage (Brand Library, Campaign Knowledge Base, Resource Library). Industry Knowledge is served by Research Agent's real-time web search; results are persisted to MongoDB `research_results` (keyed by client_id + brief_hash) and reused within 30 days if the brief hasn't changed — **this is result persistence for reuse, not a knowledge base**; it does not accumulate competitive intelligence over time and is not semantically queryable. Long-term industry pattern accumulation is a Phase 5.9 concern (distillation from Campaign KB). **Methodology Library is out of v1 scope** — see Phase 5.9 for the design plan.
 
 **This phase builds Campaign Knowledge Base.** The other layers are already operational.
 

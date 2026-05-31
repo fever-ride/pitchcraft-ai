@@ -485,28 +485,33 @@ python-pptx generation fails
     → Notify user PPT generation failed, provide text version
 ```
 
-### 4.3 Semantic Response Cache
+### 4.3 Research Result Persistence
 
-Caches Research Agent web search results to avoid redundant searches:
+Research Agent results are persisted to MongoDB (`research_results` collection) keyed by `(client_id, brief_hash)`.
+
+**This is not a cache — it is a persistent record.** Results do not expire automatically. The reuse window is a business logic parameter (default 30 days), not a TTL.
 
 ```
-Cache key: {client_id}:{search_query_prefix}:{date_bucket}
-date_bucket: 30-day buckets (reuse research data within 30 days)
+Lookup key: client_id + SHA-256(JSON.stringify(structured_brief, sort_keys=True))
 
-Hit conditions:
-- Same client_id
-- Same search query prefix (first 50 chars)
-- Within same 30-day bucket
+On new pipeline run:
+  1. Compute brief_hash from structured_brief content
+  2. Query research_results: same client_id + brief_hash, created_at within 30 days
+  3. Hit  → return stored result (from_cache=True), skip web search
+  4. Miss → run 3 parallel web searches, synthesize via LLM, save new record
 
-On hit: return cached Research result
-        Label result as "source: cache ({date})"
-        Let user decide whether to force refresh
-
-Known limitation: query prefix truncation can cause cache collisions
-across different briefs for the same client (tracked in ROADMAP 3.8)
+force_refresh=True bypasses lookup and always runs fresh searches.
 ```
 
-Storage: Redis, TTL = 30 days
+Storage: MongoDB `research_results` collection (permanent, no TTL)
+
+Suggested index:
+```
+{ client_id: 1, brief_hash: 1, created_at: -1 }
+```
+
+**Why MongoDB instead of Redis:**
+The previous Redis SemanticCache had a design flaw: date_bucket in the key combined with setex TTL created an inconsistent effective TTL (1–30 days depending on when in the bucket the entry was written). More fundamentally, research results are persistent business data tied to a brief — not a performance cache. MongoDB is the right store.
 
 ---
 
@@ -581,7 +586,7 @@ Based on stage_metrics data:
 |-----------|-----------|---------|
 | Primary database | MongoDB Atlas | Clients, projects, proposals, feedback, metrics |
 | Vector database | Pinecone | RAG retrieval (namespace isolated); namespaces: brand_spec_{client_id}, brand_style_{client_id}, resource_{type}, campaign_knowledge_{org_id} |
-| Cache | Redis | Celery broker + semantic cache |
+| Cache | Redis | Celery broker + pipeline state |
 
 ### 6.3 Frontend
 
@@ -932,7 +937,7 @@ services:
   backend:         # FastAPI,  Port 8000
   worker:          # Celery Worker (file processing + PPT generation)
   embedding:       # BGE-M3 embedding service (Port 8001)
-  redis:           # Port 6379 (Celery broker + semantic cache)
+  redis:           # Port 6379 (Celery broker + pipeline state)
   mongodb:         # Port 27017
   nginx:           # Port 80/443 (reverse proxy)
 
@@ -1007,8 +1012,7 @@ pitchcraft/
 │   │   │   └── nodes.py             # Node functions
 │   │   ├── rag/
 │   │   │   ├── indexer.py           # File vectorization
-│   │   │   ├── retriever.py         # Retrieval logic
-│   │   │   └── cache.py             # Semantic cache
+│   │   │   └── retriever.py         # Retrieval logic
 │   │   ├── language/
 │   │   │   ├── detector.py          # Language detection
 │   │   │   └── prompts.py           # Chinese/English prompt templates

@@ -34,9 +34,13 @@ class CompetitorSocialPresence(BaseModel):
 
 class Competitor(BaseModel):
     name: str
-    positioning: str = ""
-    recent_activity: str = ""
+    positioning: str = Field(default="", description="Brand position and differentiation — what they stand for and vs. whom")
+    target_audience: str = Field(default="", description="Who they primarily target")
+    key_message: str = Field(default="", description="Core message or creative direction they consistently push")
+    recent_activity: str = Field(default="", description="Notable recent campaigns, launches, or moves in the last 12 months")
     social_presence: CompetitorSocialPresence = Field(default_factory=CompetitorSocialPresence)
+    strengths: list[str] = Field(default_factory=list, description="What they're doing well — advantages or areas of dominance")
+    weaknesses: list[str] = Field(default_factory=list, description="Gaps, vulnerabilities, or areas where they underperform")
 
 
 class ContentTrend(BaseModel):

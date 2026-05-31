@@ -96,12 +96,16 @@ async def research_agent_node(state: PipelineState) -> dict:
     brief = state.get("structured_brief", {})
     force_refresh = state.get("rerun_refresh_research", False)
     budget = state.get("request_budget")
+    # Use competitor names extracted by Brief Analyzer for targeted searches
+    competitor_names: list[str] = brief.get("competitors", [])
     result = await run_research(
         brief=brief,
         client_id=state["client_id"],
+        org_id=state.get("org_id"),
         project_id=state.get("project_id"),
         force_refresh=force_refresh,
         budget=budget,
+        competitor_names=competitor_names,
     )
     return {
         "research_result": result,
