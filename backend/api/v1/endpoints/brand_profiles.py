@@ -24,6 +24,9 @@ class BrandProfileUpsertRequest(BaseModel):
     positioning: str | None = None
     personality: list[str] = []
     target_audience: str | None = None
+    usage_scenes: list[str] = []
+    user_pain_points: list[str] = []
+    rtb: list[str] = []
     tone_principles: list[str] = []
     forbidden_directions: list[str] = []
     key_messages: list[str] = []

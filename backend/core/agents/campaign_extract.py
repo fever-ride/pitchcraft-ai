@@ -31,6 +31,7 @@ BACKGROUND_PROMPT = {
 3. meta字段用于检索匹配，尽量填完整
    - campaign_type：选最接近的枚举大类（launch/branding/conversion/event/crisis/always_on/other）
    - campaign_subtype：用2-6字描述具体活动类型（如"员工家属开放日"、"新品发布会"、"618促销"、"品牌代言活动"），比campaign_type更具体
+   - campaign_scenario：用一句话描述驱动本次campaign的宏观业务背景，例如"新品牌进入成熟市场"/"老品牌焕新吸引年轻用户"/"防御竞品新品发布"/"新品类市场教育"；如文档未交代背景则留null
    - budget_tier：【重要】只在文档中明确出现预算金额时填写，否则必须留null
    - client_name：填写文档中服务的品牌/广告主名称（如"一汽解放"），不是代理公司名称
 4. strategy_decisions关注"选了什么方向、为什么"
@@ -53,6 +54,7 @@ Rules:
 3. Fill meta fields as completely as possible (used for retrieval matching)
    - campaign_type: use closest enum (launch/branding/conversion/event/crisis/always_on/other)
    - campaign_subtype: 2-6 word specific description (e.g. "employee family day", "product launch event", "618 sales campaign") — more specific than campaign_type
+   - campaign_scenario: one sentence describing the macro business situation driving this campaign, e.g. "new brand entering a mature market" / "legacy brand repositioning to attract Gen Z" / "defensive response to competitor product launch" / "new category education campaign"; leave null if document provides no context
    - budget_tier: [IMPORTANT] only fill if a budget amount is explicitly stated in the document, otherwise must be null
    - client_name: the brand / advertiser being served (e.g. "一汽解放"), NOT the agency name
 4. strategy_decisions: focus on "what direction was chosen and why"

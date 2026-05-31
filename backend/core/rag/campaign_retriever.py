@@ -143,6 +143,8 @@ def _summarise_results(results: list[CampaignRetrievalResult]) -> str:
             str(meta.get("budget_tier") or "预算未知"),
             str(meta.get("target_audience_summary") or "—"),
         ]
+        if meta.get("campaign_scenario"):
+            parts.append(str(meta["campaign_scenario"]))
         lines.append(f"{i}. {' | '.join(parts)}")
     return "\n".join(lines)
 
@@ -320,9 +322,13 @@ def format_campaign_context(
             if meta.get("industry"):
                 meta_parts.append(meta["industry"])
             if meta.get("campaign_type"):
-                meta_parts.append(meta["campaign_type"])
+                subtype = meta.get("campaign_subtype") or ""
+                ct = meta["campaign_type"]
+                meta_parts.append(f"{ct}（{subtype}）" if subtype else ct)
             if meta.get("budget_tier"):
                 meta_parts.append(meta["budget_tier"])
+            if meta.get("campaign_scenario"):
+                meta_parts.append(meta["campaign_scenario"])
             meta_str = " | ".join(meta_parts)
 
         record_type = r.meta.get("record_type", "campaign") if r.meta else "campaign"

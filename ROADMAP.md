@@ -526,14 +526,14 @@ The competitive moat is not the retrieval technology. It is the accumulated stru
 ```
 Layer                        Role              Implementation              Status
 ─────────────────────────────────────────────────────────────────────────────────────
-Brand Library                Constraint        Pinecone vectors            Implemented
+Brand Library                Constraint        MongoDB + Pinecone vectors  Implemented
 Campaign Knowledge Base      Reference         MongoDB + Pinecone props    This phase
-Methodology Library          Guidance          Agent system prompts        Implemented (static)
+Methodology Library          Guidance          —                           Not in v1 scope (Phase 5.9+)
 Industry Knowledge           Context           Real-time search + cache    Implemented
 Resource Library             Execution pool    MongoDB + Pinecone vectors  Implemented
 ```
 
-Three layers have dedicated storage (Brand Library, Campaign Knowledge Base, Resource Library). Methodology lives in agent prompts and evolves via auto-distillation from Campaign Knowledge Base once enough records accumulate (Phase 5.9). Industry Knowledge is served by Research Agent's real-time search with 30-day semantic caching.
+Three layers have dedicated storage (Brand Library, Campaign Knowledge Base, Resource Library). Industry Knowledge is served by Research Agent's real-time search with 30-day semantic caching. **Methodology Library is out of v1 scope** — see Phase 5.9 for the design plan.
 
 **This phase builds Campaign Knowledge Base.** The other layers are already operational.
 
@@ -577,15 +577,6 @@ Removing `client_name` is necessary but not sufficient for full anonymization. A
 - Opt-in per client: client onboarding includes consent for anonymized cross-reference
 
 These are not implemented now. The current design prioritizes knowledge accumulation speed for a single agency deployment.
-
-**Methodology Library evolution path:**
-
-```
-Now:     tier allocation frameworks, planning heuristics written in agent system prompts
-Phase 5.9: auto-distill patterns from 10+ confirmed CampaignRecords
-           (e.g. "beauty launches: KOC consistently outperforms mid-tier on ROI")
-Future:  if methodology content grows beyond prompt capacity, migrate to RAG-retrievable format
-```
 
 **Two layers within Campaign Knowledge Base:**
 
@@ -989,21 +980,64 @@ Implementation: `verify_retrieval_sufficiency()` in `backend/core/rag/campaign_r
 
 **Language note:** Verification prompt is bilingual (zh/en). Language detected from the query string. Matching criteria are language-agnostic (comparing structured meta fields, not text). A Chinese query against Chinese propositions works identically to an English query against English propositions.
 
-### 5.9 Distilled Insights (Methodology Library auto-evolution)
+### 5.9 Distilled Insights (Methodology Library)
 
-This phase connects Campaign Knowledge Base back to the Methodology Library. When enough project records accumulate, the system auto-distills patterns and updates agent prompts.
+**Not in v1 scope. Design recorded here for future reference.**
 
-When a client accumulates 10+ confirmed campaign records:
-- [ ] Auto-trigger insight distillation (batch LLM call across records)
-- [ ] Output: industry-level patterns (e.g. "beauty launch campaigns: KOC tier consistently outperforms mid-tier on ROI")
-- [ ] Store in `media_insights` collection, tagged by industry + campaign_type
-- [ ] Media Planning Agent prompt includes relevant distilled insights as background context
-- [ ] Closes the loop: Campaign Knowledge Base (raw experience) feeds Methodology Library (distilled guidance)
+---
 
-**Initial approach (before auto-distillation):**
-- Industry frameworks written directly in Media Planning Agent's system prompt as few-shot references (this IS the Methodology Library today)
-- Updated manually as team accumulates experience
-- Migrated to RAG-retrievable format once content volume justifies the infrastructure
+#### 背景：为什么这是一个单独的层
+
+Campaign Knowledge Base 的 propositions 是**个案事实**：安踏这次奥运营销用了多少 KOL、ROI 是多少。
+
+Methodology Library 要存的是**跨案例规律**：美妆行业新品上市，KOC 层级的 ROI 在统计上持续高于头部。
+
+两者不可互相替代：
+- 用个案事实做方法论会导致过拟合（"上次安踏这样做有效"不等于"同类项目都该这样做"）
+- 用模糊方法论替代个案引用会失去情境（"KOC 一般更好"比不上"安踏这个预算级别的运动品牌这样做过"）
+
+#### 行业背景
+
+业界讨论的"蒸馏 skill"有三种含义：
+1. **模型蒸馏**：大模型生成训练数据 → 微调小模型（知识进权重）
+2. **Agent skill 积累**（Voyager 式）：Agent 解决子问题 → 解法写入 skill library → 检索复用（知识进数据库）
+3. **人类专家知识结构化**（"蒸馏同事"）：专家大量解题并出声思考 → LLM 提炼决策模式为可检索规则
+
+我们这个 Phase 5.9 属于第 2+3 类混合：从大量 confirmed records（集体过往经验）中提炼跨项目规律，存入可检索数据库，注入 agent prompt。不改模型权重，结果可读可改可审计。
+
+#### 蒸馏对象和去向
+
+| 蒸馏内容 | 来源 | 存入 | 注入给谁 |
+|---------|------|------|---------|
+| 渠道层级分配规律（某行业 KOC 建议占比） | campaign_records.media_plan + outcome | `media_insights` collection | Media Planning Agent |
+| 客户决策风格规律（保守型客户需要数据背书） | campaign_records.client_learnings | `media_insights` collection | Brief Analyzer |
+| 策略方向成功率（某类 big idea 在某行业接受率高） | campaign_records.strategy_decisions + pitch_outcome | `campaign_insights` collection | Strategy Phase 2 |
+
+**示例蒸馏输出：**
+```
+[美妆 | 新品上市 | 100万-500万]
+在 6/8 条 confirmed records 中，小红书 KOC 层级（1-5万粉）
+是 best_performing_tier，建议预算占比 25-30%
+```
+
+#### 触发条件
+
+不是"总记录数"，而是**同一 industry + campaign_type 组合下**：
+- ≥8 条 confirmed records
+- 其中 ≥5 条有 outcome 数据（无结果的案例蒸馏不出成败规律）
+
+在这之前，Phase 5.9 的功能由 Campaign KB 的命题检索本身承担——agent 从 3 条相关 campaign 的命题里自己推断规律，比预蒸馏的泛化结论更情境化。
+
+#### Checklist（待做）
+
+- [ ] `media_insights` MongoDB collection 设计（tagged by industry + campaign_type + budget_tier）
+- [ ] `campaign_insights` MongoDB collection 设计
+- [ ] Distillation batch job：跨 records 的 LLM 聚合 call，产出结构化 insight
+- [ ] 触发机制：archive pipeline 确认后检查是否达到 threshold，达到则入队
+- [ ] Media Planning Agent：从 `media_insights` 检索相关 insight，注入 prompt
+- [ ] Strategy Phase 2：从 `campaign_insights` 检索相关 insight，注入 prompt
+- [ ] 置信度标注：每条 insight 记录来源 record 数量，agent 能看到"基于 8 条记录"
+- [ ] 过期/更新机制：新 record 确认后，已有 insight 标为 stale，下次蒸馏时更新
 
 ### Design Decisions
 
@@ -1048,10 +1082,10 @@ Frontend: `HitlMedia.tsx` (editable table with count + budget % adjustment)
 
 | Source | What it provides | Implementation |
 |--------|-----------------|----------------|
-| Industry reference frameworks | Default tier ratios by campaign type (e.g. beauty launch: 30% top + 40% mid + 20% KOC + 10% media) | Prompt-embedded few-shot examples initially. Later: dedicated `industry_knowledge` Pinecone namespace maintained by admin. |
-| Historical campaign records (Phase 5) | "We ran a similar campaign before, here is how it was structured and what worked" | Retrieved from `campaign_records` via metadata filter + semantic similarity. Returns structured media_plan + outcome data. |
-| Distilled insights (Phase 5.6) | "Across 10 beauty campaigns, KOC tier consistently delivers highest ROI" | From `media_insights` collection, matched by industry + campaign_type. |
-| Current campaign context | Budget, objectives, timeline constraints | From Strategy P2 output (big_idea, channels, budget_allocation, kpis) |
+| Historical campaign records (Phase 5) | "We ran a similar campaign before, here is how it was structured and what worked" | ✅ Retrieved from `campaign_records` via metadata filter + semantic similarity. Returns structured media_plan + outcome data. |
+| Current campaign context | Budget, objectives, timeline constraints | ✅ From Strategy P2 output (big_idea, channels, budget_allocation, kpis) |
+| Industry tier frameworks | Default tier ratios and role definitions per campaign type | ⬜ Not in v1. Minimal principles hardcoded in system prompt as placeholder. Full Methodology Library deferred to Phase 5.9. |
+| Distilled cross-campaign insights | "Across 10 beauty campaigns, KOC tier consistently delivers highest ROI" | ⬜ Not in v1. Requires `media_insights` collection + distillation batch job. See Phase 5.9. |
 
 ### 6.2 Resource Data Model Enhancement
 

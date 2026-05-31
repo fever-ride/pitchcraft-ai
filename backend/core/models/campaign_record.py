@@ -188,6 +188,8 @@ class CampaignMeta(BaseModel):
     """Fields used for retrieval matching. All indexed for filtering."""
     campaign_type: CampaignType | None = None
     campaign_subtype: str | None = None  # free-text, e.g. "员工家属开放日" / "新品发布会"
+    campaign_scenario: str | None = None  # macro business situation driving this campaign,
+    # e.g. "新品牌进入成熟市场" / "老品牌焕新吸引年轻用户" / "防御竞品新品发布" / "新品类教育市场"
     industry: str | None = None
     budget_tier: BudgetTier | None = None
     target_audience_summary: str | None = None

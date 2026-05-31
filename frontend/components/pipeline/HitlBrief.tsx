@@ -35,6 +35,7 @@ export function HitlBrief({ pipelineId, onConfirm, onRevise }: Props) {
     { key: "budget", label: "Budget" },
     { key: "timeline", label: "Timeline" },
     { key: "objective", label: "Objective" },
+    { key: "competitors", label: "Competitors" },
   ];
 
   return (
@@ -49,10 +50,12 @@ export function HitlBrief({ pipelineId, onConfirm, onRevise }: Props) {
       <div className="space-y-3 mb-6">
         {fields.map(({ key, label }) => {
           const value = brief[key];
+          // Skip empty arrays (e.g. competitors when not mentioned)
+          if (Array.isArray(value) && value.length === 0) return null;
           const display = Array.isArray(value) ? value.join(", ") : String(value || "—");
           return (
             <div key={key} className="flex items-start">
-              <span className="w-24 text-sm font-medium text-gray-500">{label}</span>
+              <span className="w-28 shrink-0 text-sm font-medium text-gray-500">{label}</span>
               <span className="text-sm text-gray-800">{display}</span>
             </div>
           );

@@ -1,4 +1,4 @@
-# Campaign Knowledge Base — Test Log
+# Knowledge Base — Test Log
 
 每次测试记录：测试范围、输入文档、各步骤结果、发现问题、后续动作。
 
@@ -130,16 +130,115 @@
 
 ---
 
+---
+
+## 2026-05-31 — Brand Library 端到端集成测试 #1
+
+**测试类型**：Integration（解析 → 提取 → 格式化 → Brand Check）  
+**运行环境**：本地 macOS，脚本直接调用 backend 模块（无 HTTP 层）  
+**测试文档**：`test_docs/brand_library/forget+in+香薰情绪个护品牌手册.pdf`  
+**品牌类别**：香薰情绪个护，中文文档，图文结合但文字可提取  
+**文档特征**：4,890 chars，含品牌故事、定位、受众、调性体系、产品线、传播渠道
+
+### 各步骤结果
+
+| Step | 内容 | 状态 | 备注 |
+|------|------|------|------|
+| 1 | PDF 解析（`parse_file`） | ✅ | 4,890 chars；文字内容完整，结构段落清晰 |
+| 2 | LLM 结构化提取（`extract_brand_profile`，Haiku） | ✅ | 全字段正确提取，见质量评估 |
+| 3 | Prompt 格式化（`format_brand_profile_for_prompt`） | ✅ | 输出结构清晰，feedback 字段标签区分正确 |
+| 4 | Brand Check — 符合调性策略 | ✅ | `passed=True`，无误报 |
+| 5 | Brand Check — 违背调性策略 | ✅ | `passed=False`，输出 4 条精准 issues |
+
+**全流程 5/5 步通过。**
+
+### 提取质量评估（Step 2）
+
+| 字段 | 提取结果摘要 | 质量评估 |
+|------|------------|---------|
+| `brand_name` | "forget in" | ✅ 精准 |
+| `positioning` | "透过肌肤触达内心，致力感官沉浸享受的情绪个护品牌" | ✅ 原文直取 |
+| `target_audience` | Z世代新青年（体验/颜值/绿色）；小镇青年（平替/成分/出挑欲） | ✅ 两类受众均提取，含细节描述 |
+| `personality` | 7 个特质：敢于表达、拥抱情绪、自由不羁、年轻热血、感性细腻、反叛精神、包容多元 | ✅ 从品牌故事和产品命名中合理推断 |
+| `tone_principles` | 6 条：直白宣泄情绪、符号化语言、打破常规、情绪共鸣优先、年轻化网感、包容转化情绪 | ✅ 从品牌理念段落提炼 |
+| `forbidden_directions` | 空 | ✅ 正确——文档无明确禁忌，未幻觉填值 |
+| `key_messages` | 感性宣泄+理性臻护、情绪香氛体系（粉红胡椒+百里香）、面护级成分用于身体、绿色植萃 | ✅ 核心卖点全覆盖 |
+| `competitive_position` | 整合全球香氛资源，首席调香师曾为 Hermès/Lanvin 创作，GMP 工厂，澳洲生产标准 | ✅ 从生产实力和调香师档案提取 |
+
+### Brand Check 测试（Step 4-5）
+
+**符合调性策略**（Z世代情绪共鸣 + 符号化香氛 + 小红书种草）：
+```
+passed=True，no issues
+```
+
+**违背调性策略**（极简高冷 + 精英背书 + 避免情绪化表达）：
+```
+passed=False，4 issues：
+  1. 极简主义高冷定位与「敢于表达、拥抱情绪」个性相悖
+  2. 避免过多情绪化表达，直接违反「直白宣泄情绪」核心原则
+  3. 精英阶层背书不符合「年轻化网感强」调性要求
+  4. 缺少符号化语言和情感表达元素
+```
+
+每条 issue 均指向具体被违反的品牌规则，无泛化输出。
+
+### Prompt 注入格式示例（Step 3）
+
+（含模拟 feedback 方向，验证标签区分逻辑）
+
+```
+[Brand Profile: forget in]
+Positioning: 透过肌肤触达内心，致力感官沉浸享受的情绪个护品牌
+Target Audience: Z世代新青年（…）；小镇青年（…）
+Personality: 敢于表达, 拥抱情绪, 自由不羁, 年轻热血, 反叛精神
+Competitive Position: 整合全球香氛资源，首席调香师曾为 Hermès、Lanvin 创作
+Tone Principles:
+  - 直白宣泄情绪
+  - 用符号化语言表达复杂情感
+  - 年轻化、网感强
+Key Messages:
+  - 感性宣泄与理性臻护
+  - 情绪香氛体系（粉红胡椒+百里香）
+  - 自然植萃与绿色生产
+Previously Approved Directions (from client feedback):
+  - 聚焦香氛记忆点，主打气味唤醒情绪的故事线
+Previously Rejected Directions (from client feedback):
+  - 不要走极简高冷路线，与品牌调性相悖
+```
+
+### 关键观察
+
+- **`forbidden_directions` 为空不是问题**：forget+in 的品牌手册侧重讲"我们是什么"，没有明确列出禁忌。Brand Check 的约束此时完全来自 `tone_principles` + `personality` 的反向推断——效果同样准确。
+- **PDF 文字提取质量足够**：4,890 chars 覆盖了品牌手册的所有核心章节（品牌故事/定位/受众/香氛体系/传播），提取结果未见明显遗漏。
+- **Haiku 模型的提取质量**：在这类有明确结构（目录 + 分章节）的文档上，Haiku 表现与 Sonnet 相当，cost 更低，路由合理。
+
+### 遗留限制（已知）
+
+- 图片为主的 VI 手册（如麦当劳视觉识别手册）提取字符量极低，无法走本流程。文字型品牌规范文档是当前可靠输入形式。
+- `forbidden_directions` 依赖文档中有明确描述；如果品牌方用"不得…"以外的表达方式陈述禁忌，可能漏提取。
+
+---
+
 ## 待测试项（Backlog）
+
+**Campaign Knowledge Base**
 
 | 测试内容 | 类型 | 所需条件 | 优先级 |
 |---------|------|---------|-------|
 | Proposal 文档（提案）端到端 | Integration | 一份提案 PDF/PPTX | 高 |
-| Step 8：Pinecone 向量化 upsert | Integration | Pinecone key + embedding 服务 | 高 |
-| Step 9：retrieve_campaign_knowledge() | Integration | Pinecone + ≥1 indexed record | 高 |
-| 自验证（Self-verification）质量门 | Integration | ≥2 indexed records + 不相关查询 | 中 |
 | 中等/高质量提案（图文结合 PPTX）| Integration | 提案 PPTX 文件 | 中 |
 | 超长结案报告（>40,000 chars）| Integration | 长文档 | 中 |
 | 英文文档提取 | Integration | 英文报告 | 低 |
 | 混合语言文档 | Integration | 中英混排报告 | 低 |
 | Middle-section fallback for outcome | Unit | mock LLM 返回空 outcome | 低 |
+
+**Brand Library**
+
+| 测试内容 | 类型 | 所需条件 | 优先级 |
+|---------|------|---------|-------|
+| PPTX 品牌手册提取（QMS/Hulu） | Integration | 已有文件 | 中 |
+| IKEA 英文品牌手册提取 | Integration | 已有文件 | 中 |
+| feedback 方向 → BrandProfile `$addToSet` 同步 | Integration | 运行中的 MongoDB 实例 | 中 |
+| Strategy Phase 1 含 BrandProfile 上下文的完整 pipeline | E2E | 运行中的后端服务 | 高 |
+| 图片型 VI 手册（仅视觉，几乎无文字）| Integration | 有文件 | 低（已知限制）|

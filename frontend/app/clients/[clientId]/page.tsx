@@ -18,6 +18,9 @@ interface BrandProfile {
   positioning?: string;
   personality: string[];
   target_audience?: string;
+  usage_scenes: string[];
+  user_pain_points: string[];
+  rtb: string[];
   tone_principles: string[];
   forbidden_directions: string[];
   key_messages: string[];
@@ -31,6 +34,9 @@ const EMPTY_PROFILE: BrandProfile = {
   positioning: "",
   personality: [],
   target_audience: "",
+  usage_scenes: [],
+  user_pain_points: [],
+  rtb: [],
   tone_principles: [],
   forbidden_directions: [],
   key_messages: [],
@@ -232,6 +238,9 @@ function BrandProfileTab({ clientId }: { clientId: string }) {
           positioning: data.positioning || "",
           personality: data.personality || [],
           target_audience: data.target_audience || "",
+          usage_scenes: data.usage_scenes || [],
+          user_pain_points: data.user_pain_points || [],
+          rtb: data.rtb || [],
           tone_principles: data.tone_principles || [],
           forbidden_directions: data.forbidden_directions || [],
           key_messages: data.key_messages || [],
@@ -302,6 +311,9 @@ function BrandProfileTab({ clientId }: { clientId: string }) {
       positioning: extractDraft.positioning || prev.positioning,
       personality: extractDraft.personality?.length ? extractDraft.personality : prev.personality,
       target_audience: extractDraft.target_audience || prev.target_audience,
+      usage_scenes: extractDraft.usage_scenes?.length ? extractDraft.usage_scenes : prev.usage_scenes,
+      user_pain_points: extractDraft.user_pain_points?.length ? extractDraft.user_pain_points : prev.user_pain_points,
+      rtb: extractDraft.rtb?.length ? extractDraft.rtb : prev.rtb,
       tone_principles: extractDraft.tone_principles?.length ? extractDraft.tone_principles : prev.tone_principles,
       forbidden_directions: extractDraft.forbidden_directions?.length ? extractDraft.forbidden_directions : prev.forbidden_directions,
       key_messages: extractDraft.key_messages?.length ? extractDraft.key_messages : prev.key_messages,
@@ -353,6 +365,9 @@ function BrandProfileTab({ clientId }: { clientId: string }) {
             {extractDraft.positioning && <p className="text-sm"><span className="text-xs text-gray-500">Positioning: </span>{extractDraft.positioning}</p>}
             {!!extractDraft.personality?.length && <p className="text-sm"><span className="text-xs text-gray-500">Personality: </span>{extractDraft.personality.join(", ")}</p>}
             {extractDraft.target_audience && <p className="text-sm"><span className="text-xs text-gray-500">Audience: </span>{extractDraft.target_audience}</p>}
+            {!!extractDraft.usage_scenes?.length && <p className="text-sm"><span className="text-xs text-gray-500">Usage scenes: </span>{extractDraft.usage_scenes.join(" · ")}</p>}
+            {!!extractDraft.user_pain_points?.length && <p className="text-sm"><span className="text-xs text-gray-500">Pain points: </span>{extractDraft.user_pain_points.join(" · ")}</p>}
+            {!!extractDraft.rtb?.length && <p className="text-sm"><span className="text-xs text-gray-500">RTB: </span>{extractDraft.rtb.join(" · ")}</p>}
             {!!extractDraft.tone_principles?.length && <p className="text-sm"><span className="text-xs text-gray-500">Tone: </span>{extractDraft.tone_principles.join(" · ")}</p>}
             {!!extractDraft.forbidden_directions?.length && <p className="text-sm"><span className="text-xs text-gray-500">Forbidden: </span>{extractDraft.forbidden_directions.join(" · ")}</p>}
             {!!extractDraft.key_messages?.length && <p className="text-sm"><span className="text-xs text-gray-500">Key messages: </span>{extractDraft.key_messages.join(" · ")}</p>}
@@ -407,6 +422,30 @@ function BrandProfileTab({ clientId }: { clientId: string }) {
             className="w-full border rounded px-2 py-1 text-sm min-h-[50px] resize-y"
           />
         </div>
+
+        <ListInput
+          label="Usage scenes"
+          hint="(when/where consumers use the brand — 通勤/居家/运动/送礼...)"
+          items={profile.usage_scenes}
+          onChange={(v) => set("usage_scenes", v)}
+          placeholder="e.g. 通勤护肤"
+        />
+
+        <ListInput
+          label="User pain points"
+          hint="(problems the brand solves for users)"
+          items={profile.user_pain_points}
+          onChange={(v) => set("user_pain_points", v)}
+          placeholder="e.g. 工作后肌肤疲惫暗沉"
+        />
+
+        <ListInput
+          label="Reason to Believe (RTB)"
+          hint="(credibility evidence — patents, certifications, ingredients, heritage)"
+          items={profile.rtb}
+          onChange={(v) => set("rtb", v)}
+          placeholder="e.g. 法国首席调香师团队"
+        />
 
         <div>
           <label className="text-xs text-gray-500 block mb-1">Competitive position <span className="text-gray-400">(how they differentiate)</span></label>

@@ -8,8 +8,8 @@ from backend.core.language.detector import detect_language
 from backend.core.rag.campaign_retriever import format_campaign_context, retrieve_campaign_knowledge
 
 SYSTEM_PROMPT = {
-    "zh": "你是资深公关营销策略师。把客户brief解析为结构化字段，并找出需要澄清的信息。",
-    "en": "You are a senior PR and marketing strategist. Parse the client brief into structured fields and identify information gaps.",
+    "zh": "你是资深公关营销策略师。把客户brief解析为结构化字段，并找出需要澄清的信息。注意提取brief中明确提及的竞品品牌名称。",
+    "en": "You are a senior PR and marketing strategist. Parse the client brief into structured fields and identify information gaps. Make sure to extract any competitor brand names explicitly mentioned by the client.",
 }
 
 

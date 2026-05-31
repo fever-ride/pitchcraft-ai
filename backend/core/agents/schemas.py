@@ -14,6 +14,7 @@ class StructuredBrief(BaseModel):
     budget_split: dict[str, str] = Field(default_factory=dict, description="Channel-level budget split if specified by client, e.g. {'social': '60%', 'PR': '25%'}. Empty if not specified.")
     timeline: str = Field(default="not provided", description="Timeline or 'not provided'")
     objective: str = Field(default="not provided", description="Campaign objective or 'not provided'")
+    competitors: list[str] = Field(default_factory=list, description="Competitor brand names explicitly mentioned by the client, e.g. ['雅诗兰黛', '兰蔻']. Empty list if not mentioned.")
 
 
 class BriefAnalysis(BaseModel):

@@ -52,7 +52,7 @@ Do not generate vague propositions (e.g. "the project achieved good results"). E
 
 
 def _build_meta_prefix(record: dict) -> str:
-    """Build [industry | subtype | budget | audience] prefix from record meta."""
+    """Build [industry | subtype | budget | audience | scenario] prefix from record meta."""
     meta = record.get("meta", {})
     parts = []
     if meta.get("industry"):
@@ -65,6 +65,8 @@ def _build_meta_prefix(record: dict) -> str:
     parts.append(budget if budget else "预算未知")
     if meta.get("target_audience_summary"):
         parts.append(meta["target_audience_summary"])
+    if meta.get("campaign_scenario"):
+        parts.append(meta["campaign_scenario"])
     return f"[{' | '.join(parts)}]" if parts else ""
 
 
@@ -188,6 +190,7 @@ async def index_campaign_propositions(
                 "text": prop[:1000],
                 "campaign_type": meta.get("campaign_type", ""),
                 "campaign_subtype": meta.get("campaign_subtype", ""),
+                "campaign_scenario": meta.get("campaign_scenario", ""),
                 "industry": meta.get("industry", ""),
                 "budget_tier": meta.get("budget_tier", ""),
                 "record_type": record.get("record_type", "campaign"),

@@ -26,6 +26,9 @@ class BrandProfileExtraction(BaseModel):
     positioning: str | None = None
     personality: list[str] = []
     target_audience: str | None = None
+    usage_scenes: list[str] = []       # When/where consumers use the brand (通勤/居家/送礼/运动...)
+    user_pain_points: list[str] = []   # Problems the brand solves (too oily skin / tired after work...)
+    rtb: list[str] = []                # Reason to Believe (patents / certifications / origin / ingredients)
     tone_principles: list[str] = []
     forbidden_directions: list[str] = []
     key_messages: list[str] = []
@@ -55,6 +58,9 @@ def format_brand_profile_for_prompt(profile: dict, lang: str) -> str:
     positioning = profile.get("positioning")
     target_audience = profile.get("target_audience")
     personality: list[str] = profile.get("personality") or []
+    usage_scenes: list[str] = profile.get("usage_scenes") or []
+    user_pain_points: list[str] = profile.get("user_pain_points") or []
+    rtb: list[str] = profile.get("rtb") or []
     tone_principles: list[str] = profile.get("tone_principles") or []
     forbidden_directions: list[str] = profile.get("forbidden_directions") or []
     key_messages: list[str] = profile.get("key_messages") or []
@@ -67,6 +73,9 @@ def format_brand_profile_for_prompt(profile: dict, lang: str) -> str:
         positioning,
         target_audience,
         personality,
+        usage_scenes,
+        user_pain_points,
+        rtb,
         tone_principles,
         forbidden_directions,
         key_messages,
@@ -85,10 +94,20 @@ def format_brand_profile_for_prompt(profile: dict, lang: str) -> str:
         lines.append(f"Positioning: {positioning}")
     if target_audience:
         lines.append(f"Target Audience: {target_audience}")
+    if usage_scenes:
+        lines.append(f"Usage Scenes: {', '.join(usage_scenes)}")
+    if user_pain_points:
+        lines.append("Pain Points Addressed:")
+        for p in user_pain_points:
+            lines.append(f"  - {p}")
     if personality:
         lines.append(f"Personality: {', '.join(personality)}")
     if competitive_position:
         lines.append(f"Competitive Position: {competitive_position}")
+    if rtb:
+        lines.append("Reason to Believe:")
+        for r in rtb:
+            lines.append(f"  - {r}")
     if tone_principles:
         lines.append("Tone Principles:")
         for principle in tone_principles:
