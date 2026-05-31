@@ -122,10 +122,16 @@ async def submit_feedback(
         "created_at": datetime.utcnow(),
     })
 
-    # Embed approved directions into brand namespace for future use
+    # Embed approved directions into Pinecone + mirror into BrandProfile
     if request.approved_directions:
         from backend.core.rag.feedback_embedder import embed_feedback_directions
         await embed_feedback_directions(client_id, feedback_id, request.approved_directions)
+
+    # Mirror rejected directions into BrandProfile so phase1 + brand_check see them
+    if request.rejected_directions and client_id:
+        from backend.core.database.repositories.brand_profiles import BrandProfileRepository
+        bp_repo = BrandProfileRepository(db)
+        await bp_repo.add_feedback_directions(client_id, rejected=request.rejected_directions)
 
     # Trigger rerun if requested
     rerun_triggered = False

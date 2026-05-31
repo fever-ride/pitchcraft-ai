@@ -3,9 +3,11 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from backend.core.agents.brand_extract import format_brand_profile_for_prompt
 from backend.core.agents.llm import invoke_llm_structured
 from backend.core.agents.schemas import BrandCheckResult, StrategyPhase1Result, StrategyPhase2Result
 from backend.core.database.connection import get_database
+from backend.core.database.repositories.brand_profiles import BrandProfileRepository
 from backend.core.database.repositories.feedback import FeedbackRepository
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import detect_language
@@ -45,7 +47,19 @@ async def run_strategy_phase1(
     )
     brand_context = format_results_with_sources(brand_results)
 
-    user_msg = f"Brief:\n{json.dumps(brief, ensure_ascii=False)}\n\nBrand materials:\n{brand_context or 'No brand materials available.'}"
+    db = await get_database()
+    brand_profile_repo = BrandProfileRepository(db)
+    brand_profile = await brand_profile_repo.find_by_client(client_id)
+    formatted_profile = format_brand_profile_for_prompt(brand_profile, lang) if brand_profile else ""
+
+    if formatted_profile:
+        user_msg = (
+            f"[Structured Brand Profile]\n{formatted_profile}\n\n"
+            f"[Brand Materials from Library]\n{brand_context or 'No brand materials available.'}\n\n"
+            f"Brief:\n{json.dumps(brief, ensure_ascii=False)}"
+        )
+    else:
+        user_msg = f"Brief:\n{json.dumps(brief, ensure_ascii=False)}\n\nBrand materials:\n{brand_context or 'No brand materials available.'}"
 
     messages = [
         SystemMessage(content=PHASE1_SYSTEM[lang]),
@@ -115,18 +129,37 @@ async def run_brand_check(
     client_id: str,
     budget: RequestBudget | None = None,
 ) -> BrandCheckResult:
-    """Check strategy against brand spec namespace."""
+    """Check strategy against brand spec.
+
+    Prefers structured BrandProfile from MongoDB when available.
+    Falls back to vector search if no BrandProfile exists.
+    """
     lang = detect_language(strategy_text)
 
-    brand_results = await retrieve_for_client(
-        "brand guidelines tone values positioning", client_id, top_k=5
+    db = await get_database()
+    brand_profile_repo = BrandProfileRepository(db)
+    brand_profile = await brand_profile_repo.find_by_client(client_id)
+
+    has_structured_profile = brand_profile and (
+        brand_profile.get("tone_principles") or brand_profile.get("forbidden_directions")
     )
-    brand_spec = format_results_with_sources(brand_results)
 
-    if not brand_spec.strip():
-        return BrandCheckResult(passed=True, issues=[])
+    if has_structured_profile:
+        formatted_profile = format_brand_profile_for_prompt(brand_profile, lang)
+        user_msg = (
+            f"Strategy to check:\n{strategy_text[:2000]}\n\n"
+            f"Brand Rules:\n{formatted_profile}"
+        )
+    else:
+        brand_results = await retrieve_for_client(
+            "brand guidelines tone values positioning", client_id, top_k=5
+        )
+        brand_spec = format_results_with_sources(brand_results)
 
-    user_msg = f"Strategy:\n{strategy_text[:2000]}\n\nBrand spec:\n{brand_spec[:2000]}"
+        if not brand_spec.strip():
+            return BrandCheckResult(passed=True, issues=[])
+
+        user_msg = f"Strategy to check:\n{strategy_text[:2000]}\n\nBrand Rules:\n{brand_spec[:2000]}"
 
     messages = [
         SystemMessage(content=BRAND_CHECK_SYSTEM[lang]),

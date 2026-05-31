@@ -34,3 +34,7 @@ redis_data/
 # Output
 backend/output/*.pptx
 uploaded_files/
+
+# Test documents (PDFs, PPTXs used for local integration tests — not committed)
+test_docs/*
+!test_docs/.gitkeep

@@ -126,6 +126,80 @@ The same pipeline handles both pitch decks and recap reports. `record_type` is *
 
 ---
 
+## Concrete Example: 安踏24Q3奥运营销结案
+
+以安踏2024年Q3奥运营销结案报告为例，走一遍完整流程。
+
+### Step 1：上传 & 解析
+
+AE 上传安踏24Q3结案 PDF。文档以图片/设计稿为主，文字稀疏，解析后约 8,648 chars。
+
+### Step 2：LLM 结构化提取（3 calls 并行）
+
+LLM 把文档理解成结构化字段，而不是存原文：
+
+```
+client_name:       "安踏"              ← 从文档提取的品牌名，非数据库 FK
+industry:          "运动服饰"
+record_type:       "campaign"          ← 自动检测：结案报告而非提案
+campaign_type:     "branding"          ← 宽枚举，仅供过滤
+campaign_subtype:  "奥运营销"           ← 自由文本，供语义检索
+big_idea:          "穿中国甲为中国加油"
+budget_tier:       null                ← 文档未提及预算，LLM 未猜值
+kpi_results:       [13项指标]          ← 总曝光、总互动、视频播放量等
+phasing_structure: "三阶段：上市爆发/奥运借势/爆发延续"
+confidence:        "high"             ← 3 calls 全部成功
+```
+
+### Step 3：人工确认
+
+AE 在 `/campaigns` 页面检查提取结果，修正错误，填补空缺。确认后状态从 `pending_confirmation` → `confirmed`，触发命题提取。
+
+### Step 4：拆成原子命题
+
+把整条结案记录拆成 14–15 条独立命题，每条带元信息前缀：
+
+```
+[运动服饰 | 奥运营销 | 预算未知 | 体育、生活圈层用户]
+安踏与中国国家地理联名制作《沿着丝路到巴黎 与奥运同行》纪录片，
+共发布4站分站内容和1站混剪内容，并举办线下沉浸式影展
+
+[运动服饰 | 奥运营销 | 预算未知 | 体育、生活圈层用户]
+安踏奥运营销传播分三阶段：上市爆发（产品上市引爆）、
+奥运借势（赛事期间持续曝光）、爆发延续（赛后长尾转化）
+```
+
+**为什么不直接 embed 整篇结案**：整段摘要会稀释具体洞察的信号。原子化后，每个洞察有自己的向量——下次搜"纪录片联名活动"能精准命中这条，而不是碰运气。
+
+**为什么加元信息前缀**：没有前缀时，向量只编码洞察本身，不知道它在什么条件下成立。加了前缀后，向量同时编码了"运动服饰 + 奥运营销"的语境——如果来了个汽车品牌的项目查同一个话题，这条命题的匹配分会显著低于运动品牌项目。
+
+### Step 5：向量化入库
+
+15 条命题各自生成 1024 维向量（BGE-M3），upsert 到 Pinecone namespace `campaign_knowledge_{org_id}`。每条向量附带 metadata：`campaign_record_id`、`industry`、`campaign_type`、`budget_tier`，供后续 metadata filter 使用。
+
+### Step 6：被 agent 检索
+
+做新提案时，Strategy P2 发出查询：
+
+```
+"运动品牌奥运借势营销的传播策略和 KOL 矩阵设计"
+```
+
+检索结果（相关查询 top score ≈ 0.69；不相关查询如"银行理财老年客户" score ≈ 0.45）。
+
+Self-verification 判断：运动服饰 + 奥运营销两个维度匹配，budget_tier 未知，受众有重叠 → `partial`，返回结果并附注意事项。
+
+Agent 收到的上下文：
+
+```
+[历史结案: 运动服饰 | 奥运营销]
+  strategy_decisions: {"big_idea": "穿中国甲为中国加油",
+                       "phasing_structure": "三阶段：上市爆发/奥运借势/爆发延续", ...}
+  outcome: {"kpi_results": [...13项指标...]}
+```
+
+---
+
 ## How Agents Use It
 
 Each agent calls `retrieve_campaign_knowledge()` with a profile that controls what it gets.
@@ -229,8 +303,8 @@ Source documents may be Chinese, English, or mixed. Chinese ad/PR reports routin
 ### Pending
 
 - [ ] Metadata filter pass-through: agents currently don't pass `metadata_filter` to retrieval — semantic search runs without business-condition pre-filtering (industry, campaign_type, budget_tier)
-- [ ] Frontend: `pitch_outcome` selector on confirmation page
-- [ ] Frontend: `client_learnings` manual input section on confirmation page
+- [x] Frontend: `pitch_outcome` selector on confirmation page (won / lost / unknown toggle buttons, proposals only, in confirm bar)
+- [x] Frontend: `client_learnings` manual input section on confirmation page (decision_style textarea + approved/rejected direction list inputs; always shows even when data is empty)
 - [ ] Hybrid search: sparse + dense vectors (BGE-M3 supports sparse; needs Pinecone config)
 - [ ] Retrieval quality feedback: track HITL edit distance vs retrieved records (5.7)
 - [ ] Distilled insights: auto-distill patterns when 10+ confirmed records accumulate (5.9)

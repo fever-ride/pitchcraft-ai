@@ -39,6 +39,8 @@ export interface CampaignRecord {
   id: string;
   status: string;
   confidence: string;
+  record_type?: "campaign" | "proposal";
+  pitch_outcome?: "won" | "lost" | "unknown";
   client_id?: string;
   project_id?: string;
   created_at?: string;
@@ -97,12 +99,23 @@ export const fetchRecord = createAsyncThunk(
 export const confirmRecord = createAsyncThunk(
   "campaigns/confirmRecord",
   async ({ recordId, edits }: { recordId: string; edits: Record<string, unknown> }) => {
-    // Convert flat edits (meta.industry -> value) to nested structure
-    const nestedEdits: Record<string, Record<string, unknown>> = {};
+    // Convert flat edits to nested structure.
+    // "module.field" -> { module: { field: value } }  (nested module field)
+    // "topLevelKey"  -> { topLevelKey: value }         (top-level field, e.g. pitch_outcome)
+    const nestedEdits: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(edits)) {
-      const [module, field] = key.split(".");
-      if (!nestedEdits[module]) nestedEdits[module] = {};
-      nestedEdits[module][field] = value;
+      const dotIndex = key.indexOf(".");
+      if (dotIndex === -1) {
+        // Top-level field (e.g. pitch_outcome)
+        nestedEdits[key] = value;
+      } else {
+        const module = key.slice(0, dotIndex);
+        const field = key.slice(dotIndex + 1);
+        if (!nestedEdits[module] || typeof nestedEdits[module] !== "object") {
+          nestedEdits[module] = {};
+        }
+        (nestedEdits[module] as Record<string, unknown>)[field] = value;
+      }
     }
     return fetchJson<{ record_id: string; status: string }>(
       `/api/v1/campaigns/${recordId}/confirm`,

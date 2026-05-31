@@ -83,26 +83,38 @@ class SufficiencyCheck(BaseModel):
 
 
 _VERIFICATION_SYSTEM = {
-    "zh": """你是检索质量评估专家。判断检索到的历史案例对当前项目的参考价值。
+    "zh": """你是检索质量评估专家。判断检索到的历史案例对当前查询的实际参考价值。
 
-判断标准：
-- sufficient：案例与当前项目在行业、campaign类型、预算档位、目标受众中至少3项高度匹配，可直接参考
-- partial：有2项匹配，有参考价值但存在明显差异，参考时需注意局限
-- insufficient：匹配度低，强行参考可能导致误导，不建议使用
+判断逻辑：
+1. 先理解当前查询的核心诉求（问的是策略思路、媒介结构、执行细节，还是预算分配？）
+2. 逐维度判断差异是否构成实质性阻碍：
+   - 预算档位相差2档以上 → 媒介体量和资源配置根本不同，通常是硬障碍
+   - 行业不同但媒介诉求相似 → 渠道结构和KOL策略仍有参考价值
+   - campaign类型不同但传播逻辑相同 → 节奏和打法可以迁移
+3. 综合判断：
+   - sufficient：在当前查询最关键的维度上高度匹配，可直接参考
+   - partial：有参考价值，但存在需要注意的重要差异
+   - insufficient：核心维度严重不匹配，强行参考会产生误导
 
-reason控制在一句话内。""",
-    "en": """You are a retrieval quality evaluator. Judge whether the retrieved historical campaigns are relevant enough to inform the current project.
+reason说明哪个维度是关键决定因素，控制在一句话内。""",
+    "en": """You are a retrieval quality evaluator. Judge whether the retrieved historical campaigns offer genuine reference value for the current query.
 
-Criteria:
-- sufficient: campaigns match on at least 3 of — industry, campaign type, budget tier, target audience. Safe to reference directly.
-- partial: 2 dimensions match. Some reference value but notable differences exist. Use with caution.
-- insufficient: low match across dimensions. Using these as reference risks misleading the output.
+Reasoning steps:
+1. Identify the core need in the query (strategy framing, media structure, execution detail, or budget allocation?)
+2. For each dimension, ask whether the mismatch actually blocks usefulness for this specific query:
+   - Budget tier gap of 2+ tiers → fundamentally different media scale, usually a hard blocker
+   - Different industry but similar media objective → channel structure and KOL strategy still transferable
+   - Different campaign type but same communication logic → rhythm and mechanics can migrate
+3. Verdict:
+   - sufficient: strong match on the dimensions that matter most for this query. Safe to reference directly.
+   - partial: reference value exists, but there are important differences to flag.
+   - insufficient: critical dimensions are mismatched — using these cases risks misleading the output.
 
-Keep reason to one sentence.""",
+Keep reason to one sentence, naming the dimension that drove the verdict.""",
 }
 
 _VERIFICATION_USER = {
-    "zh": """当前需求：
+    "zh": """当前查询：
 {query}
 
 检索到的历史案例：
@@ -121,9 +133,13 @@ def _summarise_results(results: list[CampaignRetrievalResult]) -> str:
         meta = r.meta
         # Use `or "—"` to handle both missing keys and explicit None values
         # (budget_tier is intentionally None when not stated in the document)
+        subtype = str(meta.get("campaign_subtype") or "")
+        campaign_type = str(meta.get("campaign_type") or "—")
+        # Show subtype alongside type if available (e.g. "branding（奥运营销）")
+        type_str = f"{campaign_type}（{subtype}）" if subtype else campaign_type
         parts = [
             str(meta.get("industry") or "—"),
-            str(meta.get("campaign_type") or "—"),
+            type_str,
             str(meta.get("budget_tier") or "预算未知"),
             str(meta.get("target_audience_summary") or "—"),
         ]

@@ -45,6 +45,7 @@ AGENT_MODEL_MAP: dict[str, str] = {
     "slide_content": "sonnet",
     "narrative": "haiku",
     "campaign_extract": "haiku",
+    "brand_extract": "haiku",
     "proposition_index": "haiku",
     "backfill": "haiku",
 }

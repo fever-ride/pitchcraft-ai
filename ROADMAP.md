@@ -166,6 +166,55 @@ Design decks and moodboards are primarily visual. Text extraction is near-useles
 - [x] Resource library management interface (/resources — list, filter by type, Excel import)
 - [x] Research data display with refresh controls (/research — load by pipeline ID, refresh rerun)
 
+### 2.6 Structured Brand Profile
+
+Replaces the unstructured brand_spec Pinecone search as the primary source of brand identity for agents. Brand identity is a single authoritative document, not a corpus to search — storing it in MongoDB and loading directly into prompts is more reliable than vector retrieval.
+
+**Why MongoDB, not Pinecone, for brand identity:**
+- BrandProfile is always loaded (no retrieval threshold to miss)
+- Structured fields (tone_principles, forbidden_directions) enable hard-constraint checks in brand_check
+- No semantic search overhead — full profile is injected directly into the prompt
+- Feedback directions accumulate incrementally via `$addToSet` without overwriting the core identity
+
+**Schema (brand_profiles collection):**
+```
+client_id, org_id (1:1 with clients)
+brand_name, positioning, target_audience, competitive_position
+personality[]             ← brand personality traits
+tone_principles[]         ← communication rules (key signal for brand_check)
+forbidden_directions[]    ← brand-spec taboos, set by AE
+key_messages[]            ← core points the brand always conveys
+approved_directions[]     ← auto-accumulated from client feedback ($addToSet)
+rejected_directions[]     ← auto-accumulated from client feedback ($addToSet)
+```
+
+- [x] MongoDB collection: `brand_profiles` (one doc per client, upsert pattern)
+- [x] Repository: `find_by_client`, `upsert_by_client`, `add_feedback_directions` ($addToSet, no upsert)
+- [x] LLM extraction: POST /brand-profile/extract → haiku model → returns draft, does NOT save
+- [x] CRUD API: GET/PUT /clients/{id}/brand-profile
+- [x] Strategy Phase 1: loads BrandProfile → injects as structured block before Pinecone brand results
+- [x] Brand check: prefers BrandProfile if tone_principles or forbidden_directions are set; falls back to Pinecone
+- [x] Feedback loop → BrandProfile: approved_directions synced in `embed_feedback_directions`; rejected_directions synced in `submit_feedback` POST handler
+- [x] Batch job (`process_unembedded_feedback`): also syncs rejected_directions for pre-existing feedback records
+- [x] `format_brand_profile_for_prompt`: distinguishes "Forbidden Directions (from brand spec)" vs "Previously Rejected Directions (from client feedback)" in the prompt block
+- [x] Frontend: Brand Profile tab on client page (extract-from-text flow, full form, read-only feedback directions section)
+
+**Agent prompt block format:**
+```
+[Brand Profile: {brand_name}]
+Positioning: ...
+Target Audience: ...
+Personality: ...
+Tone Principles:
+  - ...
+Forbidden Directions (from brand spec):
+  - ...
+Previously Approved Directions (from client feedback):
+  - ...
+Previously Rejected Directions (from client feedback):
+  - ...
+```
+
 ---
 
 ## Phase 3: Production Hardening

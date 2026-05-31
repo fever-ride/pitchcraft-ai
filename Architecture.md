@@ -77,17 +77,19 @@
 │  │      MongoDB Atlas     │    │        Pinecone DB        │   │
 │  │                        │    │                           │   │
 │  │  - organizations       │    │  brand_spec_{client_id}   │   │
-│  │  - users               │    │  brand_history_{client_id}│   │
+│  │  - users               │    │  brand_style_{client_id}  │   │
 │  │  - clients             │    │  project_{project_id}     │   │
 │  │  - projects            │    │  resource_kol             │   │
 │  │  - proposals           │    │  resource_media           │   │
 │  │  - files               │    │  resource_vendor          │   │
 │  │    (brand & project)   │    │  resource_placement       │   │
-│  │  - resources           │    │                           │   │
-│  │    (kol/media/vendor/  │    │  (namespace isolation     │   │
-│  │     placement)         │    │   prevents cross-index    │   │
-│  │  - feedback            │    │   contamination)          │   │
-│  │  - stage_metrics       │    │                           │   │
+│  │  - resources           │    │  campaign_knowledge_{org} │   │
+│  │    (kol/media/vendor/  │    │                           │   │
+│  │     placement)         │    │  (namespace isolation     │   │
+│  │  - feedback            │    │   prevents cross-index    │   │
+│  │  - stage_metrics       │    │   contamination)          │   │
+│  │  - brand_profiles      │    │                           │   │
+│  │  - campaign_records    │    │                           │   │
 │  └────────────────────────┘    └───────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -267,7 +269,7 @@ Pinecone Index: pitchcraft
 │       Chunk size: 256 tokens (short chunks for higher precision on normative text)
 │       Lifecycle: persistent, reused across projects
 │
-├── namespace: brand_history_{client_id}
+├── namespace: brand_style_{client_id}
 │       Historical proposals + brand content
 │       Past campaign decks, strategy docs, historical copy, social content
 │       Retrieval purpose: style reference (Slide Content Agent copy generation)
@@ -304,8 +306,9 @@ Pinecone Index: pitchcraft
 
 | Scenario | Agent | Namespace | Retrieval logic |
 |----------|-------|-----------|----------------|
-| Brand consistency check | After Strategy Agent | brand_spec_{client_id} | Strategy keywords vs brand spec semantic similarity |
-| Copy style reference | Slide Content Agent | brand_history_{client_id} | Tone descriptors retrieve historical copy styles |
+| Brand consistency check | After Strategy Agent | BrandProfile (MongoDB) preferred; brand_spec_{client_id} fallback | Prefers structured BrandProfile if tone_principles or forbidden_directions are set; falls back to vector search over raw brand docs |
+| Phase 1 brand context | Strategy Phase 1 | BrandProfile (MongoDB) + brand_spec_{client_id} + brand_style_{client_id} | BrandProfile injected as structured block; Pinecone retrieval adds relevant reference snippets from brand docs and past proposals |
+| Copy style reference | Slide Content Agent | brand_style_{client_id} | Tone descriptors retrieve historical copy styles |
 | Historical campaign reference | Strategy P2, Media Planning, Resource, Deck, Brief Analyzer | campaign_knowledge_{org_id} | Proposition vectors + self-verification quality gate; per-agent retrieval profiles control top_k and module whitelist |
 | KOL matching | Resource Agent | resource_kol | Audience profile + content direction vectors |
 | Media matching | Resource Agent | resource_media | Industry + audience trait vectors |
@@ -325,7 +328,7 @@ Determine file destination
         ↓
 Identify file type (determines namespace and chunk strategy)
 ├── brand_spec    → brand_spec_{client_id}
-├── brand_history → brand_history_{client_id}
+├── brand_history → brand_style_{client_id}
 ├── project_doc   → project_{project_id}
 ├── competitor    → project_{project_id}
 └── visual_ref    → store in MongoDB, Phase 2 multimodal processing
@@ -577,7 +580,7 @@ Based on stage_metrics data:
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | Primary database | MongoDB Atlas | Clients, projects, proposals, feedback, metrics |
-| Vector database | Pinecone | RAG retrieval (namespace isolated); namespaces: brand_spec_{client_id}, brand_history_{client_id}, resource_{type}, campaign_knowledge_{org_id} |
+| Vector database | Pinecone | RAG retrieval (namespace isolated); namespaces: brand_spec_{client_id}, brand_style_{client_id}, resource_{type}, campaign_knowledge_{org_id} |
 | Cache | Redis | Celery broker + semantic cache |
 
 ### 6.3 Frontend
@@ -717,6 +720,28 @@ collections:
 │   ├── rerun_from_node             # strategy / resource / deck_structure / slide / null
 │   └── created_at
 │
+├── brand_profiles                  # Structured brand identity per client (one document per client)
+│   ├── _id
+│   ├── client_id                   # 1:1 with clients collection
+│   ├── org_id
+│   ├── brand_name
+│   ├── positioning                 # What the brand stands for, for whom, vs whom
+│   ├── target_audience
+│   ├── personality                 # [str] brand personality traits
+│   ├── tone_principles             # [str] communication rules — key signal for brand_check
+│   ├── forbidden_directions        # [str] brand-spec defined taboos (set by AE)
+│   ├── key_messages                # [str] core points the brand wants to convey
+│   ├── competitive_position        # How the brand differentiates
+│   ├── approved_directions         # [str] accumulated from client feedback ($addToSet)
+│   ├── rejected_directions         # [str] accumulated from client feedback ($addToSet)
+│   ├── updated_at
+│   └── created_at
+│   Notes:
+│     - Loaded directly into agent prompts (no vector search needed for identity layer)
+│     - AE populates via manual form or LLM extraction from pasted brand text
+│     - approved/rejected_directions auto-populated by the feedback loop
+│     - Agents: Strategy Phase 1 (brand context block), Brand Check (preferred over Pinecone fallback)
+│
 ├── stage_metrics                   # Per-stage execution metrics (separate collection for aggregation)
 │   ├── _id
 │   ├── proposal_id
@@ -782,6 +807,11 @@ Clients (shared across org)
 GET    /api/v1/clients
 POST   /api/v1/clients
 PATCH  /api/v1/clients/{id}/deck-structure   # Set client-level default (lead_account+)
+
+Brand Profile (one per client)
+GET    /api/v1/clients/{id}/brand-profile                  # Get profile or 404
+PUT    /api/v1/clients/{id}/brand-profile                  # Create or update
+POST   /api/v1/clients/{id}/brand-profile/extract          # Extract from text/file → returns draft only, does NOT save
 
 Projects
 GET    /api/v1/projects?client_id=...
