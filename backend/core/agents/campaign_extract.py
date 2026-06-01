@@ -267,7 +267,7 @@ async def extract_campaign_record(
             logger.error(f"Outcome extraction failed: {e}")
             outcome = e
     else:
-        logger.info(f"Detected record_type=proposal — skipping outcome call")
+        logger.info("Detected record_type=proposal — skipping outcome call")
 
     # Handle partial failures — merge whatever succeeded
     record_data: dict = {}
