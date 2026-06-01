@@ -7,6 +7,7 @@ from pathlib import Path
 from backend.core.agents.archive import extract_archive
 from backend.core.agents.campaign_extract import extract_campaign_record
 from backend.core.database.connection import get_database
+from backend.core.database.repositories.resources import ResourceRepository
 from backend.core.rag.parser import parse_file
 from backend.core.rag.resource_import import refresh_resource_embedding
 from backend.core.tasks import celery_app
@@ -104,13 +105,10 @@ async def _distribute_to_resources(extraction, client_id: str):
         return
 
     db = await get_database()
-    collection = db["resources"]
+    repo = ResourceRepository(db)
 
     for perf in extraction.resource_performances:
-        doc = await collection.find_one({
-            "client_id": client_id,
-            "name": {"$regex": f"^{perf.name}$", "$options": "i"},
-        })
+        doc = await repo.find_by_name(client_id, perf.name)
         if not doc:
             continue
 
@@ -119,12 +117,8 @@ async def _distribute_to_resources(extraction, client_id: str):
             "metrics": perf.metrics,
             "recommendation": perf.recommendation,
         }
-        await collection.update_one(
-            {"_id": doc["_id"]},
-            {"$push": {"collaboration_history": collab_record}},
-        )
-
-        updated_doc = await collection.find_one({"_id": doc["_id"]})
+        await repo.add_collaboration_record(doc["_id"], collab_record)
+        updated_doc = await repo.get_by_id(doc["_id"])
         await refresh_resource_embedding(updated_doc, client_id)
 
 

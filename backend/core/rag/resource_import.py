@@ -6,6 +6,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 
 from backend.core.database.connection import get_database
+from backend.core.database.repositories.resources import ResourceRepository
 from backend.core.models.resource import ResourceStatus, normalize_platform, parse_follower_count, resource_namespace
 from backend.core.rag.embedder import embed_texts
 from backend.core.rag.indexer import upsert_vectors
@@ -266,11 +267,11 @@ async def import_resources(file_bytes: bytes, client_id: str) -> dict:
         }
 
     db = await get_database()
-    collection = db["resources"]
+    repo = ResourceRepository(db)
 
     for r in resources:
         r["client_id"] = client_id
-        await collection.insert_one(r)
+        await repo.create(r)
 
     # Group by type for namespace-specific upsert
     by_type: dict[str, list[dict]] = defaultdict(list)

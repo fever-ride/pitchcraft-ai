@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
 from backend.core.database.connection import get_database
+from backend.core.database.repositories.resources import ResourceRepository
 from backend.core.models.resource import FRESHNESS_THRESHOLD_DAYS, ResourceStatus, normalize_platform, parse_follower_count, resource_namespace
 from backend.core.rag.embedder import embed_texts
 from backend.core.rag.indexer import upsert_vectors
@@ -88,21 +89,14 @@ async def list_resources(
     user: CurrentUser = Depends(get_current_user),
 ):
     db = await get_database()
-    query: dict = {"client_id": client_id}
-    if type:
-        query["type"] = type
-    if status_filter:
-        query["status"] = status_filter
-    else:
-        query["status"] = {"$ne": ResourceStatus.INACTIVE.value}
-    if min_followers is not None:
-        query["followers_count"] = {"$gte": min_followers}
-
-    cursor = db["resources"].find(query).limit(200)
-    results = []
-    async for doc in cursor:
-        results.append(_enrich_with_freshness(doc))
-    return results
+    repo = ResourceRepository(db)
+    docs = await repo.find_filtered(
+        client_id=client_id,
+        type=type,
+        status_filter=status_filter,
+        min_followers=min_followers,
+    )
+    return [_enrich_with_freshness(doc) for doc in docs]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -112,14 +106,13 @@ async def create_resource(
     user: CurrentUser = Depends(get_current_user),
 ):
     db = await get_database()
+    repo = ResourceRepository(db)
     doc = request.model_dump()
     doc["client_id"] = client_id
     doc["status"] = ResourceStatus.ACTIVE.value
     doc["last_verified_at"] = datetime.utcnow()
     doc["followers_count"] = parse_follower_count(request.followers)
-    result = await db["resources"].insert_one(doc)
-
-    resource_id = str(result.inserted_id)
+    resource_id = await repo.create(doc)
     text = _resource_to_embed_text(doc)
     embeddings = await embed_texts([text])
     ns = resource_namespace(doc.get("type", "kol"), client_id)
@@ -143,13 +136,10 @@ async def verify_resource(
 ):
     """Mark a resource as freshly verified."""
     db = await get_database()
-    from bson import ObjectId
-    result = await db["resources"].update_one(
-        {"_id": ObjectId(resource_id)},
-        {"$set": {"last_verified_at": datetime.utcnow()}},
-    )
-    if result.matched_count == 0:
+    repo = ResourceRepository(db)
+    if not await repo.get_by_id(resource_id):
         raise HTTPException(status_code=404, detail="Resource not found")
+    await repo.verify(resource_id)
     return {"status": "verified"}
 
 
@@ -163,13 +153,10 @@ async def update_resource_status(
     if new_status not in (s.value for s in ResourceStatus):
         raise HTTPException(status_code=400, detail="Invalid status. Must be: active, inactive")
     db = await get_database()
-    from bson import ObjectId
-    result = await db["resources"].update_one(
-        {"_id": ObjectId(resource_id)},
-        {"$set": {"status": new_status}},
-    )
-    if result.matched_count == 0:
+    repo = ResourceRepository(db)
+    if not await repo.get_by_id(resource_id):
         raise HTTPException(status_code=404, detail="Resource not found")
+    await repo.update_status(resource_id, new_status)
     return {"status": "updated", "new_status": new_status}
 
 
@@ -194,11 +181,10 @@ async def update_resource(
     user: CurrentUser = Depends(get_current_user),
 ):
     """Update resource fields and refresh Pinecone embedding."""
-    from bson import ObjectId
     db = await get_database()
-    collection = db["resources"]
+    repo = ResourceRepository(db)
 
-    doc = await collection.find_one({"_id": ObjectId(resource_id)})
+    doc = await repo.get_by_id(resource_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Resource not found")
 
@@ -209,9 +195,9 @@ async def update_resource(
     if "followers" in updates:
         updates["followers_count"] = parse_follower_count(updates["followers"])
 
-    await collection.update_one({"_id": ObjectId(resource_id)}, {"$set": updates})
+    await repo.update(resource_id, updates)
 
-    updated_doc = await collection.find_one({"_id": ObjectId(resource_id)})
+    updated_doc = await repo.get_by_id(resource_id)
     client_id = updated_doc["client_id"]
     await refresh_resource_embedding(updated_doc, client_id)
 

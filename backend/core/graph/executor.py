@@ -278,25 +278,16 @@ class PipelineExecutor:
             return
 
         try:
+            from backend.core.database.repositories.resources import ResourceRepository
             from backend.core.rag.resource_import import refresh_resource_embedding
             db = await get_database()
-            collection = db["resources"]
+            repo = ResourceRepository(db)
 
             for rec in recommended:
                 name = rec.get("name", "") if isinstance(rec, dict) else ""
                 if not name:
                     continue
-                await collection.update_one(
-                    {
-                        "client_id": client_id,
-                        "name": {"$regex": f"^{name}$", "$options": "i"},
-                    },
-                    {"$addToSet": {"categories": category}},
-                )
-                updated_doc = await collection.find_one({
-                    "client_id": client_id,
-                    "name": {"$regex": f"^{name}$", "$options": "i"},
-                })
+                updated_doc = await repo.add_category_tag(client_id, name, category)
                 if updated_doc:
                     await refresh_resource_embedding(updated_doc, client_id)
         except Exception as e:

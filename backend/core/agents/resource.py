@@ -4,6 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from backend.core.agents.llm import invoke_llm_structured
 from backend.core.agents.schemas import ResourceResult
 from backend.core.database.connection import get_database
+from backend.core.database.repositories.resources import ResourceRepository
 from backend.core.graph.state import RequestBudget
 from backend.core.language.detector import resolve_output_language
 from backend.core.models.resource import PLATFORM_ALIASES, ResourceStatus, normalize_platform, resource_namespace
@@ -71,14 +72,11 @@ async def _validate_recommendations(result: ResourceResult, client_id: str) -> R
         return result
 
     db = await get_database()
-    collection = db["resources"]
+    repo = ResourceRepository(db)
 
     validated = []
     for rec in result.recommended_resources:
-        doc = await collection.find_one({
-            "client_id": client_id,
-            "name": {"$regex": f"^{rec.name}$", "$options": "i"},
-        })
+        doc = await repo.find_by_name(client_id, rec.name)
         if doc:
             if doc.get("status", ResourceStatus.ACTIVE.value) == ResourceStatus.INACTIVE.value:
                 result.missing_resources.append(f"{rec.name} (inactive)")
