@@ -220,6 +220,78 @@ Previously Rejected Directions (from client feedback):
 
 ---
 
+## 2026-06-01 — Resource Library Unit Tests #1（resource_to_text 文本层 eval）
+
+**测试类型**：Unit  
+**测试文件**：`backend/tests/unit/test_resource_import.py`  
+**运行命令**：`pytest backend/tests/unit/test_resource_import.py -v`
+
+### 背景与设计思路
+
+`resource_to_text()` 将资源结构化数据拼接成自然语言摘要，是 BGE-M3 embedding 的直接输入，向量搜索质量完全依赖它。该函数是纯函数（无 DB/embedding 依赖），适合做文本层单元测试。
+
+向量质量评估分两层：
+
+| 层次 | 验证内容 | 成本 | 何时做 |
+|------|---------|------|-------|
+| 第一层（文本层） | 各字段是否出现在摘要文本中 | 低，无外部依赖，CI 可跑 | 现在 |
+| 第二层（搜索层） | ground-truth 查询能否在 Pinecone 中召回正确资源 | 高，需 BGE-M3 + Pinecone | Resource Agent 接入后 |
+
+`resource_to_text()` 所在模块顶层 import 了 motor/pinecone 等重依赖，无法直接 import（参见 issues.md #1）。沿用项目既有做法：在测试文件中 inline 函数逻辑并注明"需与真实函数保持同步"。
+
+发现原有 inline 版本（`_resource_to_text`）为早期简化版，缺少 `tier`、`categories`、`content_style`、`audience_tags`、`outlet_type`、`beat` 等核心字段，与真实代码已完全脱节。本次一并更新。
+
+### 测试覆盖范围（16 个新测试）
+
+| 测试名 | 验证内容 |
+|--------|---------|
+| `test_resource_to_text_kol_full` | KOL 全字段均出现（tier、platform、followers、categories、content_style、audience_tags、past_cpe、pricing、notes）|
+| `test_resource_to_text_content_style_v2_takes_priority` | `content_style_v2` 有内容时优先于 `content_style` 字符串 |
+| `test_resource_to_text_content_style_fallback` | `content_style_v2` 缺失时 fallback 到 `content_style` 字符串 |
+| `test_resource_to_text_content_style_v2_empty_dict_falls_back` | `content_style_v2 = {}` 时应 fallback，不静默丢弃（**此测试发现 bug**）|
+| `test_resource_to_text_audience_demographics_takes_priority` | `audience_demographics` 有内容时优先于 `audience_tags` |
+| `test_resource_to_text_audience_tags_fallback` | `audience_demographics` 缺失时 fallback 到 `audience_tags` |
+| `test_resource_to_text_media` | 媒体资源：`outlet_type`、`beat` 出现；`Platform:`、`Followers:` 不出现 |
+| `test_resource_to_text_vendor` | 供应商：`service_type`、`region` 出现 |
+| `test_resource_to_text_placement` | 投放资源：`placement_type`、`location`、`audience_reach` 出现 |
+| `test_resource_to_text_missing_optional_fields_no_crash` | 仅 name + type 的最简 doc 不报错 |
+| `test_resource_to_text_categories_as_list` | categories 为 list，各元素均出现 |
+| `test_resource_to_text_categories_as_string` | categories 为字符串（历史数据）正常处理 |
+| `test_resource_to_text_empty_categories_excluded` | `categories = []` 不产生空的 `Categories:` 标签 |
+| `test_resource_to_text_platform_excluded_when_absent` | platform 缺失时不产生 `Platform:` 标签 |
+| `test_resource_to_text_separator_is_pipe` | 字段间分隔符为 ` \| `（影响 embedding tokenization）|
+
+### 测试结果
+
+```
+26 passed in 0.25s
+```
+
+（含原有 10 个 parse/column-recognition 测试 + 16 个新 text 测试，首次运行 1 failed → fix → 全通过）
+
+### 发现并修复的问题
+
+| 问题 | 症状 | 修复 | 参见 |
+|------|------|------|------|
+| `content_style_v2 = {}` 静默丢弃 `content_style` | 空 dict 进入 v2 分支但无产出，elif 被跳过，内容风格从向量中消失 | 先收集 `style_parts` 再决定走哪条分支 | issues.md #36 |
+
+### 后续（第二层 eval）
+
+等 Resource Agent 接入 Pinecone 检索后，用已导入的 17 条测试资源（`client_id=test-client-001`）做搜索召回测试：
+
+```python
+# ground-truth 对（届时补充）
+("小红书头部美妆KOL 粉丝超50万",     ["甜蜜生活Cindy"]),
+("抖音数码测评 男性用户 理性消费",    ["老爸爱测评"]),
+("科技创投媒体 发稿合作",            ["36氪", "虎嗅"]),
+("活动策划供应商 上海",              ["禾木创意"]),
+("减脂健身 小红书女性",              ["减脂日记by颜颜"]),
+```
+
+指标：Recall@3（期望资源是否出现在前 3 名）。
+
+---
+
 ## 待测试项（Backlog）
 
 **Campaign Knowledge Base**
@@ -242,3 +314,10 @@ Previously Rejected Directions (from client feedback):
 | feedback 方向 → BrandProfile `$addToSet` 同步 | Integration | 运行中的 MongoDB 实例 | 中 |
 | Strategy Phase 1 含 BrandProfile 上下文的完整 pipeline | E2E | 运行中的后端服务 | 高 |
 | 图片型 VI 手册（仅视觉，几乎无文字）| Integration | 有文件 | 低（已知限制）|
+
+**Resource Library**
+
+| 测试内容 | 类型 | 所需条件 | 优先级 |
+|---------|------|---------|-------|
+| 第二层 eval：ground-truth 查询 → Pinecone 召回验证（Recall@3）| Integration | Resource Agent 接入 + 17 条测试资源在 Pinecone | 中（等 Agent 接入后）|
+| 跨类型搜索：同一查询命中 KOL + 媒体 + 供应商 | Integration | 同上 | 低 |

@@ -21,6 +21,11 @@ class ResourceRepository(BaseRepository):
 
     # --- New ---
 
+    async def get_names_set(self, client_id: str) -> set[str]:
+        """Return lowercase set of all resource names for a client. Used for import deduplication."""
+        cursor = self.collection.find({"client_id": client_id}, {"name": 1})
+        return {doc["name"].lower() async for doc in cursor}
+
     async def find_by_name(self, client_id: str, name: str) -> dict | None:
         """Case-insensitive exact name match within a client's resource pool."""
         doc = await self.collection.find_one({

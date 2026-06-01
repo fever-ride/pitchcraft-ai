@@ -29,10 +29,17 @@ def upsert_vectors(
     chunks: list[str],
     embeddings: list[list[float]],
     extra_metadata: list[dict] | None = None,
+    ids: list[str] | None = None,
 ):
+    """Upsert vectors to Pinecone.
+
+    ids: optional per-vector IDs. If omitted, IDs are generated as '{file_id}_{i}'.
+         Pass MongoDB _id strings here to avoid collision on re-import.
+    """
     index = _get_index()
     vectors = []
     for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        vector_id = ids[i] if ids else f"{file_id}_{i}"
         meta = {
             "file_id": file_id,
             "chunk_index": i,
@@ -41,7 +48,7 @@ def upsert_vectors(
         if extra_metadata and i < len(extra_metadata):
             meta.update(extra_metadata[i])
         vectors.append({
-            "id": f"{file_id}_{i}",
+            "id": vector_id,
             "values": emb,
             "metadata": meta,
         })

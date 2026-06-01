@@ -894,3 +894,139 @@ parts = [str(meta.get("budget_tier") or "预算未知"), ...]
 这同时也是更好的 prompt 设计：system 给 LLM 角色和规则，user 给具体数据。
 
 **教训**：Anthropic 与 OpenAI 在 system-only messages 的处理上有差异。Anthropic 要求至少有一条 user message；OpenAI 对 system-only 更宽松。跨模型兼容写法：永远在 system 后面跟一条 human/user message。
+
+---
+
+## Resource Library 技术债
+
+---
+
+## 33. Pinecone namespace 按资源类型分割，跨类型搜索需多次查询
+
+**位置**：`backend/core/models/resource.py` → `resource_namespace()` / `backend/core/rag/resource_import.py`
+
+**现状**：每种资源类型独占一个 namespace：`resource_kol_{client_id}`、`resource_media_{client_id}`、`resource_vendor_{client_id}`。
+
+**问题**：当 AI 做方案需要"找所有适合这个 brief 的资源"时，不知道答案属于哪个类型，必须并发查 3 个 namespace，拿回结果后再合并排序。查询代码复杂，且不同 namespace 返回的相似度分数无法直接横向比较。
+
+Campaign Knowledge 的 namespace 是按**用途**分（`brand_spec_` / `brand_style_` / `project_`），因为你知道去哪找什么；资源库按类型分是为分而分，反而增加了调用方复杂度。
+
+**建议方案**：合并为单一 namespace `resource_{client_id}`，通过 Pinecone metadata filter `type == "kol"` 来收窄。调用方按需 filter，无需关心 namespace 拆分。
+
+**改动范围**：
+- `resource_namespace()` 函数（`models/resource.py`）
+- `import_resources()`、`refresh_resource_embedding()`（`resource_import.py`）
+- Resource Agent 的检索调用（`agents/resource.py`）
+- 已有 Pinecone 向量需要迁移（可用 `repair-embeddings` 接口重建）
+
+**当前影响**：低（目前资源数量少，Agent 检索侧代码还未完整实现跨类型查询）。
+
+---
+
+## 34. 资源去重仅靠名称精确匹配，容易产生重复记录
+
+**位置**：`backend/core/rag/resource_import.py` → `import_resources()` 中 `get_names_set()` 去重逻辑
+
+**现状**：
+```python
+existing_names = await repo.get_names_set(client_id)  # set of name.lower()
+# 导入时跳过 name.lower() 在集合中的行
+```
+
+**问题**：以下情况会绕过去重，产生重复记录：
+- 错别字：`"甜蜜生活Cindy"` vs `"甜密生活Cindy"`
+- 大小写：`"Emily职场穿搭"` vs `"emily职场穿搭"`（已处理 lower，但中英混排的情况复杂）
+- 全角半角：`"36氪"` vs `"３６氪"`
+- 平台账号变更后换了昵称但是同一个人
+
+**对比**：Campaign Knowledge 用文件 hash 去重，可靠且无歧义；资源库因为是手工维护的人名，没有天然唯一键。
+
+**建议方案**（按优先级）：
+1. 短期：在 Excel 解析时对 name 做 normalization（去全角、strip 空格、统一大小写）
+2. 中期：基于 platform + normalized_name 做复合去重（同平台同名才算重复）
+3. 长期：使用 LLM 做模糊去重（只在 preview 阶段提示用户，不自动合并）
+
+**当前影响**：低（单个客户导入量小，重复记录主要带来 Pinecone 冗余向量，不影响功能）。
+
+---
+
+## 35. `resource_to_text()` 质量决定搜索质量，但无 eval 覆盖
+
+**位置**：`backend/core/rag/resource_import.py` → `resource_to_text()`
+
+**现状**：每条资源被拼接成一段文本后 embed，文本质量直接决定向量搜索的上限。Campaign Knowledge 存原始文本（天然保真），资源库是人工合成的摘要，存在以下潜在问题：
+- 某些字段缺失时静默跳过，向量可能不代表资源的核心特征
+- 不同字段的权重隐含在拼接顺序里，没有经过验证
+- `content_style_v2`（结构化）和 `content_style`（字符串）两个字段，`resource_to_text()` 可能只用了其中一个
+
+**建议**：补一组 eval 测试，验证典型查询能否召回正确资源：
+```python
+# 类似这样的 ground truth 测试
+assert "甜蜜生活Cindy" in search("小红书头部美妆KOL，粉丝超50万")
+assert "36氪" in search("科技媒体，适合创投类新品发布")
+```
+
+**当前影响**：未知（功能正常但质量未验证）。建议在 Resource Agent 接入资源库检索后，做一次真实查询测试再评估是否需要调整 `resource_to_text()`。
+
+---
+
+## 通用经验（续 5）
+
+| 场景 | 做法 |
+|------|------|
+| Pinecone namespace 设计 | 按消费者查询模式分（"我去哪找什么"），而非按数据属性分 |
+| 无天然唯一键的实体去重 | platform + normalized_name 复合键；LLM 模糊去重只作提示不自动合并 |
+| 合成文本的向量质量 | 必须有 ground truth eval，不能凭功能正常就认为质量足够 |
+
+---
+
+## 36. `content_style_v2 = {}` 静默丢弃 `content_style` 字段
+
+**位置**：`backend/core/rag/resource_import.py` → `resource_to_text()`
+
+**发现方式**：为 `resource_to_text()` 补写单元测试时，`test_resource_to_text_content_style_v2_empty_dict_falls_back` 失败暴露此问题（参见 test-log.md）。
+
+**根因**：原逻辑用 `if isinstance(cs, dict) ... elif r.get("content_style")` 结构，`{}` 是 dict 所以进入 v2 分支，但 v2 所有子字段均空、`style_parts` 为空，什么都没 append。`elif` 因 `if` 已匹配而不触发，`content_style` 字符串被静默丢弃：
+
+```python
+# Before — {} 进 if 分支但产出为空，elif 永远不触发
+cs = r.get("content_style_v2")
+if isinstance(cs, dict):
+    style_parts = []
+    if cs.get("production_level"): ...  # 全部为空
+    if style_parts:
+        parts.append(...)               # 不执行
+elif r.get("content_style"):            # 跳过
+    parts.append(...)
+```
+
+**影响**：`content_style_v2` 被初始化为空 dict（如 API 传了 `content_style_v2: {}`）时，资源向量缺失内容风格信息，影响"找接地气种草风 KOL"类查询的召回。
+
+**修复**：先收集 `style_parts`，再决定走 v2 还是 fallback：
+
+```python
+# After
+cs = r.get("content_style_v2")
+style_parts = []
+if isinstance(cs, dict):
+    if cs.get("production_level"): style_parts.append(...)
+    if cs.get("persona_type"):     style_parts.append(...)
+    if cs.get("voice_style"):      style_parts.append(...)
+if style_parts:                    # 有内容才用 v2
+    parts.append(f"Content Style: {', '.join(style_parts)}")
+elif r.get("content_style"):       # 空 v2 → fallback 到字符串
+    parts.append(f"Content Style: {r['content_style']}")
+```
+
+同步修复了 `test_resource_import.py` 里的 inline 版本。
+
+**教训**：`if A ... elif B` 的 fallback 结构中，当 A 的"是否进入"条件（`isinstance(cs, dict)`）和"A 是否有产出"（`style_parts` 非空）是两件不同的事时，先收集产出再决定走哪条分支，避免"空 A 吃掉 B"。
+
+---
+
+## 通用经验（续 6）
+
+| 场景 | 做法 |
+|------|------|
+| inline 函数测试 | 注释标注"需与真实函数保持同步"，防止再次脱节 |
+| `if A elif B` 的优先级 fallback | A 的"进入条件"和"有无产出"是两件事时，先收集产出再判断，避免空 A 吃掉 B |

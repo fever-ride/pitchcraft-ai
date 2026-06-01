@@ -1,15 +1,28 @@
+import json
+import uuid
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
+from backend.core.config import settings
 from backend.core.database.connection import get_database
 from backend.core.database.repositories.resources import ResourceRepository
-from backend.core.models.resource import FRESHNESS_THRESHOLD_DAYS, ResourceStatus, normalize_platform, parse_follower_count, resource_namespace
-from backend.core.rag.embedder import embed_texts
-from backend.core.rag.indexer import upsert_vectors
-from backend.core.rag.resource_import import import_resources as do_import, refresh_resource_embedding
+from backend.core.models.resource import (
+    FRESHNESS_THRESHOLD_DAYS,
+    AudienceDemographics,
+    ContentStyle,
+    ResourceStatus,
+    parse_follower_count,
+)
+from backend.core.rag.resource_import import (
+    import_resources_task,
+    preview_import as do_preview,
+    refresh_resource_embedding,
+    repair_resource_embeddings,
+)
 
 router = APIRouter()
 
@@ -18,39 +31,28 @@ class CreateResourceRequest(BaseModel):
     type: str  # kol / media / vendor / placement
     name: str
     platform: str = ""
+    tier: str | None = None  # top / mid / tail / koc
     tags: list[str] = []
     categories: list[str] = []
+    # Content style: use content_style_v2 (structured) when possible; content_style (str) as fallback
     content_style: str | None = None
+    content_style_v2: ContentStyle | None = None
+    # Audience: use audience_demographics (structured) when possible; audience_tags (flat) as fallback
     audience_tags: list[str] = []
+    audience_demographics: AudienceDemographics | None = None
     past_cpe: str | None = None
     followers: str | None = None
     pricing: dict | None = None
+    # Type-specific
+    outlet_type: str | None = None        # media: newspaper / magazine / online / TV
+    beat: str | None = None               # media: tech / lifestyle / finance …
+    service_type: str | None = None       # vendor: event / photography / production
+    region: str | None = None             # vendor / placement
+    placement_type: str | None = None     # placement: OOH / elevator / cinema
+    location: str | None = None           # placement
+    audience_reach: str | None = None     # placement
     metadata: dict = {}
 
-
-def _resource_to_embed_text(r: dict) -> str:
-    """Build embedding text for a single resource (same logic as resource_import)."""
-    parts = [f"Name: {r.get('name', '')}", f"Type: {r.get('type', '')}"]
-    if r.get("platform"):
-        parts.append(f"Platform: {r['platform']}")
-    if r.get("followers"):
-        parts.append(f"Followers: {r['followers']}")
-    if r.get("categories"):
-        cats = r["categories"]
-        parts.append(f"Categories: {', '.join(cats) if isinstance(cats, list) else cats}")
-    if r.get("content_style"):
-        parts.append(f"Content Style: {r['content_style']}")
-    if r.get("audience_tags"):
-        tags = r["audience_tags"]
-        parts.append(f"Audience: {', '.join(tags) if isinstance(tags, list) else tags}")
-    if r.get("past_cpe"):
-        parts.append(f"Past CPE: {r['past_cpe']}")
-    if r.get("tags"):
-        tags = r["tags"]
-        parts.append(f"Tags: {', '.join(tags) if isinstance(tags, list) else tags}")
-    if r.get("pricing"):
-        parts.append(f"Pricing: {r['pricing']}")
-    return " | ".join(parts)
 
 
 def _enrich_with_freshness(doc: dict) -> dict:
@@ -103,6 +105,7 @@ async def list_resources(
 async def create_resource(
     request: CreateResourceRequest,
     client_id: str,
+    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(get_current_user),
 ):
     db = await get_database()
@@ -113,19 +116,8 @@ async def create_resource(
     doc["last_verified_at"] = datetime.utcnow()
     doc["followers_count"] = parse_follower_count(request.followers)
     resource_id = await repo.create(doc)
-    text = _resource_to_embed_text(doc)
-    embeddings = await embed_texts([text])
-    ns = resource_namespace(doc.get("type", "kol"), client_id)
-    extra_meta = {
-        "name": doc.get("name", ""),
-        "type": doc.get("type", "kol"),
-        "platform": normalize_platform(doc.get("platform", "")),
-        "status": doc.get("status", "active"),
-        "followers_count": doc.get("followers_count") or 0,
-        "tags": ", ".join(doc.get("tags", [])),
-    }
-    upsert_vectors(ns, resource_id, [text], embeddings, extra_metadata=[extra_meta])
-
+    doc["_id"] = resource_id  # needed by refresh_resource_embedding
+    background_tasks.add_task(refresh_resource_embedding, doc, client_id)
     return {"status": "created", "id": resource_id}
 
 
@@ -178,9 +170,10 @@ class UpdateResourceRequest(BaseModel):
 async def update_resource(
     resource_id: str,
     request: UpdateResourceRequest,
+    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Update resource fields and refresh Pinecone embedding."""
+    """Update resource fields and refresh Pinecone embedding in the background."""
     db = await get_database()
     repo = ResourceRepository(db)
 
@@ -199,9 +192,64 @@ async def update_resource(
 
     updated_doc = await repo.get_by_id(resource_id)
     client_id = updated_doc["client_id"]
-    await refresh_resource_embedding(updated_doc, client_id)
+    background_tasks.add_task(refresh_resource_embedding, updated_doc, client_id)
 
     return {"status": "updated", "id": resource_id}
+
+
+@router.post("/import/preview")
+async def preview_import(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Analyse Excel column headers without writing to DB.
+
+    Returns three lists:
+    - recognized: columns matched by static alias table
+    - inferred:   columns matched by LLM (needs user confirmation)
+    - ignored:    columns with no mapping found
+
+    Use the returned mapping to build the column_mapping payload for /import/confirm.
+    """
+    if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Excel file exceeds 10 MB limit")
+    return await do_preview(content)
+
+
+@router.post("/import/confirm", status_code=status.HTTP_202_ACCEPTED)
+async def confirm_import(
+    file: UploadFile = File(...),
+    client_id: str = Form(...),
+    column_mapping: str = Form(default="{}"),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Trigger import with a user-confirmed column mapping (from /import/preview).
+
+    column_mapping: JSON object mapping raw header names to schema field names.
+                    Use "ignore" as the value to explicitly skip a column.
+    Example: {"达人账号": "ignore", "联系方式": "notes", "转发率": "past_cpe"}
+    """
+    if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Excel file exceeds 10 MB limit")
+
+    try:
+        override_mapping: dict = json.loads(column_mapping) if column_mapping else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="column_mapping must be valid JSON")
+
+    storage_dir = Path(settings.file_storage_dir) / "resource_imports" / client_id
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_path = storage_dir / f"{uuid.uuid4().hex}.xlsx"
+    storage_path.write_bytes(content)
+
+    task = import_resources_task.delay(str(storage_path), client_id, override_mapping or None)
+    return {"task_id": task.id, "status": "queued"}
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
@@ -210,11 +258,54 @@ async def import_resources(
     client_id: str = Form(...),
     user: CurrentUser = Depends(get_current_user),
 ):
+    """Kick off a background Celery task for bulk Excel import. Returns task_id for polling."""
     if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
 
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Excel file exceeds 10 MB limit")
-    result = await do_import(content, client_id)
-    return result
+
+    # Save to shared storage volume (accessible by both API and Celery worker containers)
+    storage_dir = Path(settings.file_storage_dir) / "resource_imports" / client_id
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_path = storage_dir / f"{uuid.uuid4().hex}.xlsx"
+    storage_path.write_bytes(content)
+
+    task = import_resources_task.delay(str(storage_path), client_id)
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.get("/import/{task_id}")
+async def get_import_status(
+    task_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Poll import task status. States: queued → processing → done / failed."""
+    from backend.core.tasks import celery_app
+    result = celery_app.AsyncResult(task_id)
+
+    if result.state == "PENDING":
+        return {"task_id": task_id, "status": "queued"}
+    if result.state == "STARTED":
+        return {"task_id": task_id, "status": "processing"}
+    if result.state == "SUCCESS":
+        return {"task_id": task_id, "status": "done", "result": result.get()}
+    if result.state == "FAILURE":
+        return {"task_id": task_id, "status": "failed", "error": str(result.result)}
+    return {"task_id": task_id, "status": result.state.lower()}
+
+
+@router.post("/repair-embeddings", status_code=status.HTTP_202_ACCEPTED)
+async def repair_embeddings(
+    client_id: str,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Rebuild Pinecone vectors for all resources of a client.
+
+    Use after a failed import where MongoDB records exist but Pinecone vectors are missing.
+    Runs in the background — returns immediately.
+    """
+    background_tasks.add_task(repair_resource_embeddings, client_id)
+    return {"status": "started", "message": f"Rebuilding embeddings for {client_id} in background"}

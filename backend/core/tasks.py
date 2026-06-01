@@ -15,4 +15,8 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
+    include=[
+        "backend.core.rag.archive_process",
+        "backend.core.rag.resource_import",
+    ],
 )

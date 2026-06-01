@@ -84,10 +84,10 @@ class Resource(BaseModel):
 
     # Profile fields (semantic — used in embedding text for similarity matching)
     categories: list[str] = []
-    content_style: str | None = None  # legacy freeform field, kept for backward compat
-    content_style_v2: ContentStyle | None = None  # structured multi-dimensional style
-    audience_tags: list[str] = []  # legacy flat list, kept for backward compat
-    audience_demographics: AudienceDemographics | None = None  # structured audience profile
+    content_style: str | None = None          # freeform fallback (e.g. "活泼种草风")
+    content_style_v2: ContentStyle | None = None  # structured: production_level / persona_type / voice_style
+    audience_tags: list[str] = []             # flat fallback (e.g. ["年轻女性", "美妆"])
+    audience_demographics: AudienceDemographics | None = None  # structured: age_range / gender_skew / city_tier
     past_cpe: str | None = None
 
     # KOL/KOC specific

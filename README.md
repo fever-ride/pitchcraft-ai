@@ -353,7 +353,7 @@ Note: name removal is necessary but not sufficient for full anonymization. Meta 
 - Proposition-based indexing (implemented): each record is decomposed into 8-15 atomic, self-contained insights (e.g. "[beauty | launch | 2M] KOC tier drove 60% engagement at 10% budget"). Enables precise matching without diluting signals in a single summary embedding.
 - Parent-child retrieval (implemented): search at proposition level (precision), expand to full structured modules before sending to the agent (context). Per-agent profiles control which modules are returned.
 - Human confirmation gate (implemented): LLM-extracted records are marked `pending_confirmation`. Only user-reviewed records enter retrieval. Prevents noisy or incorrect data from polluting recommendations.
-- Self-verification (planned, Phase 5.8): after retrieval, LLM judges whether historical records are sufficiently similar to the current task. Falls back to prompt-embedded knowledge if not.
+- Self-verification (implemented): after retrieval, LLM judges whether historical records are sufficiently similar to the current task (`sufficient` / `partial` / `insufficient`). Falls back to prompt-embedded knowledge if insufficient.
 
 ### Ingestion Pipelines
 
@@ -367,9 +367,28 @@ Pipeline 1: Brand Library Pipeline
   Note:    no LLM involved. Pure parse-chunk-embed.
 
 Pipeline 2: Resource Import Pipeline
-  Trigger: user uploads Excel or creates resource via API
-  Flow:    parse rows → MongoDB (structured record) → render to text → BGE-M3 embed → Pinecone
-  Output:  searchable resource vectors in resource_kol / resource_media / resource_vendor / resource_placement namespace
+  Trigger: user uploads Excel or creates/edits resource via API
+
+  Excel import (two-step):
+    Step 1 — Preview:  POST /resources/import/preview
+      Parse column headers → static alias table → unrecognized columns → LLM inference
+      Returns: recognized[], inferred[] (with confidence + reason), ignored[]
+      No DB writes. User reviews and corrects column mapping.
+    Step 2 — Confirm:  POST /resources/import/confirm
+      Apply user-confirmed column_mapping override → save file to shared volume
+      → dispatch Celery task (returns task_id immediately)
+      → worker: parse rows → dedup → MongoDB bulk insert → BGE-M3 embed (grouped by type) → Pinecone upsert
+      Poll: GET /resources/import/{task_id}
+
+  Single resource (create/update):
+    POST /resources   → MongoDB insert → BGE-M3 embed + Pinecone upsert (BackgroundTask, non-blocking)
+    PATCH /resources/{id} → MongoDB update → re-embed + Pinecone upsert (BackgroundTask, non-blocking)
+
+  Repair: POST /resources/repair-embeddings
+    Re-embeds all resources for a client from MongoDB. Idempotent.
+    Use when MongoDB records exist but Pinecone vectors are missing.
+
+  Output: searchable resource vectors in resource_kol / resource_media / resource_vendor / resource_placement namespace
 
 Pipeline 3: Archive Pipeline
   Trigger: user uploads project recap/case study via POST /projects/{id}/archive
@@ -414,7 +433,7 @@ Step 1: metadata filter on propositions (campaign_type, industry, budget_tier)
 Step 2: semantic similarity on proposition vectors → top_k matches
 Step 3: deduplicate by campaign_record_id → N distinct campaigns
 Step 4: fetch full structured modules from MongoDB (per agent's retrieval profile)
-Step 5: LLM self-verification (sufficient / partial / insufficient similarity) [planned]
+Step 5: LLM self-verification (sufficient / partial / insufficient similarity)
 ```
 
 Each agent has a retrieval profile that controls what modules it receives:
@@ -878,7 +897,7 @@ cd backend && pytest tests/ -v
 
 **Phase 4 (Resource Intelligence & Project Archive)**: Complete. Resource profile enrichment, archive pipeline, progressive accumulation, contextual embedding, source location tracking, adaptive chunking all done. Remaining: external social data API integration (low priority), HITL UI for source citations (frontend).
 
-**Phase 5 (Campaign Knowledge Base)**: Core complete. Schema design (5-dimension CampaignRecord), 3-call parallel extraction pipeline, confirmation API, proposition indexing, and per-agent retrieval integration all implemented. All pipeline agents now query campaign_knowledge with agent-specific profiles. Remaining: retrieval quality feedback (5.7), self-verification (5.8), distilled insights (5.9).
+**Phase 5 (Campaign Knowledge Base)**: Core complete. Schema design (5-dimension CampaignRecord), 3-call parallel extraction pipeline, confirmation API, proposition indexing, per-agent retrieval integration, and self-verification (`verify_retrieval_sufficiency`) all implemented. All pipeline agents now query campaign_knowledge with agent-specific profiles. Remaining: retrieval quality feedback (5.7), distilled insights (5.9).
 
 **Phase 6 (Media Planning Intelligence)**: Complete. New Media Planning Agent sits between Strategy P2 and Resource Agent. Transforms strategy output into structured tier-level media matrix (top/mid/koc/media) with per-tier budget allocation. Resource data model enhanced with `tier`, multi-dimensional `content_style_v2`, and structured `audience_demographics`. Resource Agent now performs per-tier retrieval using `selection_criteria` as query + `tier` as metadata filter. HITL editable table for matrix confirmation. Budget flows: Brief → Strategy (channel-level) → Media Planner (tier-level) → Resource Agent (execution).
 

@@ -13,6 +13,13 @@ class BaseRepository:
         result = await self.collection.insert_one(data)
         return str(result.inserted_id)
 
+    async def create_many(self, docs: list[dict]) -> list[str]:
+        """Bulk insert. Motor sets _id on each dict in-place; returns list of inserted id strings."""
+        if not docs:
+            return []
+        result = await self.collection.insert_many(docs)
+        return [str(oid) for oid in result.inserted_ids]
+
     async def get_by_id(self, id: str) -> dict | None:
         doc = await self.collection.find_one({"_id": ObjectId(id)})
         if doc:
