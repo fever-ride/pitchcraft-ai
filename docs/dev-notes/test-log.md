@@ -292,6 +292,73 @@ Previously Rejected Directions (from client feedback):
 
 ---
 
+## 2026-06-01 — Full Pipeline Happy Path #1（完整流水线端到端）
+
+**测试类型**：E2E  
+**测试脚本**：`scripts/happypath_test.py`  
+**运行环境**：本地 macOS，全服务本地启动（MongoDB Docker + Redis brew + BGE-M3 本地 + FastAPI + Celery + Next.js）  
+**测试 Brief**：可口可乐2026夏季年轻化营销提案（中文，约 600 字，标注预算 800万 + 音乐节 IP + 抖音/小红书/微博）  
+**输出语言**：zh  
+
+### 服务启动清单
+
+| 服务 | 启动方式 | 状态 |
+|------|---------|------|
+| MongoDB | `docker run -d --name pitchcraft-mongo-local -p 27017:27017 mongo:7` | ✅ |
+| Redis | brew services（已有） | ✅ |
+| BGE-M3 Embedding | `uvicorn server:app --port 8001`（infrastructure/docker/embedding/） | ✅ |
+| FastAPI backend | `set -a && source .env && set +a && uvicorn backend.api.main:app --port 8000 --reload` | ✅ |
+| Celery worker | `celery -A backend.core.tasks worker --loglevel=info` | ✅ |
+| Next.js frontend | `npm run dev`（frontend/） | ✅ |
+
+**前置操作**：新 MongoDB 容器无用户，需 seed（`python3 << 'PYEOF'` 直接插入 org + user + client）。
+
+### Pipeline 执行轨迹（第三次运行，前两次各发现一个 bug）
+
+| 节点 | 耗时 | 状态 |
+|------|------|------|
+| brief_analyzer | ~10s | ✅ |
+| hitl_brief | auto-confirm | ✅ |
+| parallel（research + strategy_phase1） | ~40s | ✅ |
+| strategy_phase2 | ~15s | ✅ |
+| brand_check | ~8s | ✅ |
+| hitl_strategy | auto-confirm | ✅ |
+| resource_agent | ~10s | ✅（无资源库数据，返回空列表）|
+| deck_orchestrator | ~55s | ✅（修复 #37 后）|
+| hitl_structure | auto-confirm | ✅ |
+| slide_content（18 slides × 3 并发） | ~60s | ✅（修复 #38 后）|
+| narrative_agent | ~10s | ✅ |
+| hitl_gallery | auto-confirm | ✅ |
+| ppt_builder | ~2s | ✅ |
+
+**总耗时**：约 4 分钟（含 4 次 HITL auto-confirm）  
+**输出文件**：`backend/output/a1058483-f600-46bc-9523-fa4fb022335e.pptx`（57KB，19 slides）
+
+### 输出质量抽查
+
+| 检验项 | 结果 |
+|--------|------|
+| 幻灯片数量 | 19（1 template + 18 content）|
+| Big Idea | "开罐即开场" ✓ |
+| 渠道覆盖 | 抖音/小红书/微博/音乐节IP/便利店/B站 全部有对应 slide ✓ |
+| 语言 | 全中文 ✓ |
+| 结构类型分布 | cover/insight/strategy/channel/budget/timeline/kpi/appendix ✓ |
+
+### 发现并修复的问题
+
+| # | 节点 | 症状 | 修复 | 参见 |
+|---|------|------|------|------|
+| 1 | deck_orchestrator | `ValidationError: slides Field required, input_value={}` | max_tokens 3000→6000，channel role/KPI 截断至 60 字 | issues.md #37 |
+| 2 | slide_content | `429: concurrent connections exceeded` | `asyncio.Semaphore(3)` 限制在途 LLM 请求 | issues.md #38 |
+
+### 注记
+
+- `langgraph` 未包含在系统 Python 中，需手动 `pip install langgraph`（已装，pipeline 模块延迟 import 所以 backend 重启无需重装）
+- 本地 .env 缺少 `MONGODB_URL`/`REDIS_URL`/`CELERY_*`/`EMBEDDING_SERVICE_URL` 的 localhost 覆盖，需补充（已加入 .env 注释区段）
+- `TAVILY_API_KEY` 未设置，Research Agent 自动 fallback 到 DuckDuckGo（无感）
+
+---
+
 ## 待测试项（Backlog）
 
 **Campaign Knowledge Base**

@@ -242,16 +242,20 @@ async def slide_content_node(state: PipelineState) -> dict:
     budget = state.get("request_budget")
     output_language = state.get("output_language", "auto")
 
+    # Semaphore caps concurrent Anthropic API calls to avoid 429 rate limits
+    sem = asyncio.Semaphore(3)
+
     async def _generate_one(slide_info: dict, idx: int):
-        content = await generate_slide_content(
-            slide=slide_info,
-            big_idea=big_idea,
-            brand_direction=brand_direction,
-            client_id=client_id,
-            project_id=project_id,
-            budget=budget,
-            output_language=output_language,
-        )
+        async with sem:
+            content = await generate_slide_content(
+                slide=slide_info,
+                big_idea=big_idea,
+                brand_direction=brand_direction,
+                client_id=client_id,
+                project_id=project_id,
+                budget=budget,
+                output_language=output_language,
+            )
         return {
             "index": slide_info.get("slide_index", idx),
             "content": content.model_dump(),

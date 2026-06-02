@@ -70,11 +70,21 @@ async def run_deck_orchestrator(
         )
         campaign_context = format_campaign_context(campaign_results, max_records=2)
 
-    channel_names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in channels]
+    # Truncate channel roles to keep prompt concise — detailed roles are for media planner, not deck structure
+    def _channel_summary(c) -> str:
+        if isinstance(c, dict):
+            name = c.get("name", "")
+            role = c.get("role", "")
+            return f"{name}（{role[:60]}）" if role else name
+        return str(c)
+
+    channel_summaries = [_channel_summary(c) for c in channels]
+    # Truncate KPIs to first 60 chars each to avoid blowing context
+    kpi_summaries = [k[:60] for k in kpis]
     user_msg = (
         f"Big Idea: {big_idea}\n"
-        f"Channels: {', '.join(channel_names)}\n"
-        f"KPIs: {', '.join(kpis)}\n\n"
+        f"Channels: {', '.join(channel_summaries)}\n"
+        f"KPIs: {', '.join(kpi_summaries)}\n\n"
         f"Brief:\n{json.dumps(brief, ensure_ascii=False)}"
     )
     if campaign_context:
@@ -85,7 +95,7 @@ async def run_deck_orchestrator(
     ]
 
     result = await invoke_llm_structured(
-        messages, output_schema=DeckStructureResult, budget=budget, temperature=0.3, max_tokens=3000
+        messages, output_schema=DeckStructureResult, budget=budget, temperature=0.3, max_tokens=6000
     )
     return [s.model_dump() for s in result.slides]
 

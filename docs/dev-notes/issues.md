@@ -1030,3 +1030,89 @@ elif r.get("content_style"):       # 空 v2 → fallback 到字符串
 |------|------|
 | inline 函数测试 | 注释标注"需与真实函数保持同步"，防止再次脱节 |
 | `if A elif B` 的优先级 fallback | A 的"进入条件"和"有无产出"是两件事时，先收集产出再判断，避免空 A 吃掉 B |
+
+---
+
+## Happy Path 端到端测试 — 发现的问题
+
+---
+
+## 37. `deck_orchestrator` max_tokens 不足 → 输出截断 → pydantic 收到 `{}`
+
+**发现时机**：第一次完整 happy path 测试（可口可乐夏季 brief），pipeline 在 deck_orchestrator 阶段报错：
+
+```
+pydantic_core._pydantic_core.ValidationError: 1 validation error for DeckStructureResult
+slides
+  Field required [type=missing, input_value={}, input_type=dict]
+```
+
+langchain 同时打出：
+```
+Output parser received a `max_tokens` stop reason. The output is likely incomplete.
+```
+
+**根因**：`run_deck_orchestrator` 中 `invoke_llm_structured(..., max_tokens=3000)`。当 strategy_phase2 生成的 channels 含详细 role 描述（每个 200+ 汉字 × 6 渠道）+ 6 条长 KPI + brief JSON，prompt 输入已很大，要求输出 12-20 slides 的结构化 deck，3000 tokens 不够。LLM 响应被强制截断，tool_use 的 JSON arguments 不完整，output parser fallback 返回 `{}`，pydantic 尝试 `DeckStructureResult({})` 失败。
+
+**关键特征**：错误不是 API 异常（不是 4xx），而是 LLM 正常响应但被 `max_tokens` 截断。langchain 对此有明确警告日志，但不会自动重试。
+
+**修复**（`backend/core/agents/deck.py`）：
+1. `max_tokens: 3000 → 6000`（给输出足够空间）
+2. `user_msg` 中 channel role 截断至 60 字（详细 role 是 media planner 的需求，deck 结构不需要）：
+   ```python
+   def _channel_summary(c) -> str:
+       name = c.get("name", "")
+       role = c.get("role", "")
+       return f"{name}（{role[:60]}）" if role else name
+   ```
+3. KPI 截断至前 60 字：`kpi_summaries = [k[:60] for k in kpis]`
+
+**验证**：用真实 pipeline state 直接调用 `run_deck_orchestrator`，修复后成功返回 18 slides。
+
+**教训**：`max_tokens` 是输出上限，不是"应该够用"的估算值。prompt 输入动态增长（channel 内容越详细 brief 越大）时，输出 tokens 相应被压缩。对于需要生成大量结构化 items（12-20 slides × 多字段）的调用，`max_tokens` 应该保守地设大，而非按"最简单输入"来估算。
+
+---
+
+## 38. `slide_content` 全并发 → 429 concurrent connection rate limit
+
+**发现时机**：happy path 测试第二轮（修复 #37 后），pipeline 在 slide_content 阶段报：
+
+```
+Error code: 429 - Number of concurrent connections has exceeded your rate limit.
+Please try again later or contact sales to discuss your options for a rate limit increase.
+```
+
+**根因**：`slide_content_node` 用 `asyncio.gather(*tasks)` 为 deck 的所有 slides 同时发起 LLM 调用：
+
+```python
+tasks = [_generate_one(s, i) for i, s in enumerate(structure)]
+slides = await asyncio.gather(*tasks)  # 18 个并发请求
+```
+
+18 张 slides 全部并发打到 Anthropic API，超过账号的并发连接数上限（rate limit 类型是 concurrent connections，不是 tokens/min）。
+
+**修复**（`backend/core/graph/pipeline.py`）：加 `asyncio.Semaphore(3)` 限制最多 3 个同时在途的 LLM 调用：
+
+```python
+sem = asyncio.Semaphore(3)
+
+async def _generate_one(slide_info: dict, idx: int):
+    async with sem:
+        content = await generate_slide_content(...)
+    return {...}
+```
+
+**效果**：18 slides 仍并发处理（不退化为串行），但实际在途 API 请求不超过 3 个。18 slides × ~5s/slide ÷ 3 并发 ≈ 30s，比串行 90s 快，比 429 全挂好。
+
+**教训**：`asyncio.gather` 的"并发"是无限制的并发——所有 coroutine 同时调度，网络 IO 层面几乎同时发出。外部 API 的 rate limit 有 RPM（每分钟请求数）和 concurrent connections（在途连接数）两个维度，前者容易感知，后者容易忽视。LLM 调用密集型的 batch 节点，应该用 Semaphore 设上限。合理值参考：Semaphore(3-5) 对个人/小团队 API key 通常安全。
+
+---
+
+## 通用经验（续 7）
+
+| 场景 | 做法 |
+|------|------|
+| structured output 的 `max_tokens` 设置 | 按"最复杂可能输出"估算，不按"典型最简输入"。动态 prompt 输入越大，留给输出的空间越小 |
+| LLM 输出被截断时的表现 | langchain 打 `max_tokens stop reason` 警告但不重试；tool_use JSON 截断后 parser 返回 `{}`；pydantic 收到空 dict 才会 ValidationError。三层信号，真正的根因在第一层 |
+| batch LLM 调用的并发控制 | `asyncio.gather` 无上限并发；用 `asyncio.Semaphore(N)` 控制在途请求数。`N=3` 对 free/tier-1 账号是安全值 |
+| 429 concurrent vs RPM | concurrent connections rate limit 触发快（几乎同时的 18 个请求），RPM 触发慢（需要积累）。两者现象相同但解法不同：concurrent → Semaphore；RPM → 请求间加 delay 或指数退避 |
