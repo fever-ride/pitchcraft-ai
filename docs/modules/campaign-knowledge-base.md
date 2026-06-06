@@ -1,5 +1,11 @@
 # Campaign Knowledge Base
 
+**Role in system:** Knowledge layer — the team's institutional memory, queried by agents at generation time.
+
+**Technical design:** Structured Knowledge RAG. Campaign documents are structurally extracted into a typed schema (CampaignRecord), decomposed into atomic propositions, and retrieved in two stages: proposition-level vector match for precision, then full module expansion for context. A self-verification gate filters irrelevant results before prompt injection. This is distinct from naive chunk-based RAG, where raw text fragments are embedded and retrieved directly.
+
+---
+
 A structured memory system that accumulates decision records from past campaigns and makes them available to every planning agent in the pipeline — turning each completed project into reusable institutional knowledge.
 
 ---

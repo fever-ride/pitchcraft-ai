@@ -317,6 +317,10 @@ The brand's identity card. Stores what this brand IS, not what was done for it.
 
 #### Campaign Knowledge Base
 
+**Role in system:** Knowledge layer — the team's institutional memory. Agents query it at generation time to ground decisions in historical experience rather than relying on LLM priors alone.
+
+**Technical design:** Structured Knowledge RAG. Unlike naive chunk-based RAG, campaign documents are structurally extracted into a typed schema (CampaignRecord), decomposed into atomic propositions, and retrieved in two stages (proposition-level match for precision → full module expansion for context). A self-verification gate filters irrelevant results before injection. See [Retrieval](#retrieval) for full mechanics.
+
 The team's work history. Stores what was DONE, what was DECIDED, and whether it WORKED.
 
 **What it stores:**
@@ -677,6 +681,31 @@ LLM is never responsible for flow decisions. It only handles the task within its
 ---
 
 ## System Architecture
+
+**Conceptual layers:**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                       Orchestration Layer                            │
+│         LangGraph pipeline · HITL pause nodes · state management     │
+├─────────────────────────────────────────────────────────────────────┤
+│                          Agent Layer                                 │
+│  Brief Analyzer · Research · Strategy P1/P2 · Brand Check           │
+│  Media Planner · Resource Agent · Deck System · PPT Builder         │
+│                   ↓ each agent queries as needed                    │
+├─────────────────────────────────────────────────────────────────────┤
+│                        Knowledge Layer                               │
+│   Brand Library      Campaign Knowledge Base      Resource Library   │
+│  (brand identity)   (historical intelligence)    (execution assets) │
+│                   ↑ Structured Knowledge RAG ↑                      │
+│  structured extraction · proposition indexing · two-stage retrieval │
+├─────────────────────────────────────────────────────────────────────┤
+│                      Infrastructure Layer                            │
+│   Pinecone · MongoDB · Redis · Anthropic API · BGE-M3               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Infrastructure topology:**
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
