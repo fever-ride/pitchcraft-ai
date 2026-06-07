@@ -128,24 +128,27 @@ Retrieved campaigns:
 
 
 def _summarise_results(results: list[CampaignRetrievalResult]) -> str:
+    """Summarise retrieved campaigns for the sufficiency gate.
+
+    Includes meta labels AND the top matched proposition so the gate can judge
+    by actual content, not just industry/type metadata.
+    """
     lines = []
     for i, r in enumerate(results, 1):
         meta = r.meta
-        # Use `or "—"` to handle both missing keys and explicit None values
-        # (budget_tier is intentionally None when not stated in the document)
         subtype = str(meta.get("campaign_subtype") or "")
         campaign_type = str(meta.get("campaign_type") or "—")
-        # Show subtype alongside type if available (e.g. "branding（奥运营销）")
         type_str = f"{campaign_type}（{subtype}）" if subtype else campaign_type
         parts = [
             str(meta.get("industry") or "—"),
             type_str,
             str(meta.get("budget_tier") or "预算未知"),
-            str(meta.get("target_audience_summary") or "—"),
         ]
         if meta.get("campaign_scenario"):
             parts.append(str(meta["campaign_scenario"]))
         lines.append(f"{i}. {' | '.join(parts)}")
+        if r.matched_propositions:
+            lines.append(f"   matched: {r.matched_propositions[0][:150]}")
     return "\n".join(lines)
 
 
@@ -153,7 +156,13 @@ async def verify_retrieval_sufficiency(
     query: str,
     results: list[CampaignRetrievalResult],
 ) -> SufficiencyCheck:
-    """Ask LLM whether retrieved campaigns are relevant enough to use."""
+    """Ask LLM whether the retrieved campaign set is relevant enough to use.
+
+    Holistic batch evaluation: the LLM sees all results together and gives one
+    verdict for the set. This is the most reliable approach for FPR=0% — the
+    LLM can recognize "none of these match this query" when the full set is
+    irrelevant, which per-result evaluation cannot reliably detect.
+    """
     lang = detect_language(query)
     user_content = _VERIFICATION_USER[lang].format(
         query=query,
@@ -166,7 +175,7 @@ async def verify_retrieval_sufficiency(
         ],
         output_schema=SufficiencyCheck,
         temperature=0,
-        max_tokens=200,
+        max_tokens=400,
     )
 
 
@@ -285,7 +294,11 @@ async def retrieve_campaign_knowledge(
     if not results or not verify:
         return results
 
-    # 5.8 Self-verification: drop or flag results that aren't relevant enough.
+    # 5.8 Self-verification: batch gate on the full result set.
+    # Holistic evaluation (one verdict for the whole set) is the only approach
+    # that reliably achieves FPR=0% — the LLM recognizes "none of these match
+    # this query" when it sees the full set, which per-result evaluation cannot
+    # detect. Three architectures were tested; this remains the best overall.
     try:
         check = await verify_retrieval_sufficiency(query, results)
         if check.verdict == SufficiencyVerdict.INSUFFICIENT:

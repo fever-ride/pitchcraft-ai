@@ -46,6 +46,12 @@ Layer 3: campaign_knowledge_{org_id} (Pinecone)
 
 A single 200-word summary embedding dilutes specific signals. "KOC tier drove 60% engagement at 10% budget" is lost inside a general campaign summary. Atomic propositions give each insight its own vector — a query about KOC budget allocation matches precisely, not by accident.
 
+This design is grounded in **"Dense X Retrieval: What Retrieval Granularity Should We Use?"** (Tong Chen et al., EMNLP 2023), which systematically compared Document → Passage → Sentence → Proposition as retrieval units. Key finding: proposition-level retrieval significantly outperforms chunk/sentence retrieval on open-domain QA, because each proposition is a semantically complete, noise-free unit. The paper defines three properties for a well-formed proposition — all three are enforced in our extraction prompt:
+
+1. **Single fact** — one claim per proposition, no bundling
+2. **De-referenced** — no pronouns; subject is always spelled out explicitly
+3. **Self-contained** — understandable without any surrounding context
+
 **Why the meta prefix on each proposition?**
 
 ```
@@ -57,6 +63,8 @@ With:     "[美妆 | launch | 200万 | Z世代] KOC tier drove 60% engagement at
 ```
 
 A query about "beauty launch KOC effectiveness" matches strongly. A query about "automotive branding KOC" does not — even though both mention KOC.
+
+This mirrors **Anthropic's "Contextual Retrieval"** (2024): prepend a context description to each chunk before embedding, so the vector encodes not just the content but where and under what conditions it applies. Our meta prefix is a structured variant of the same idea — `[industry | campaign_type | budget_tier | audience]` is the applicability context baked into every proposition vector.
 
 ---
 
@@ -311,6 +319,7 @@ Source documents may be Chinese, English, or mixed. Chinese ad/PR reports routin
 - [ ] Metadata filter pass-through: agents currently don't pass `metadata_filter` to retrieval — semantic search runs without business-condition pre-filtering (industry, campaign_type, budget_tier)
 - [x] Frontend: `pitch_outcome` selector on confirmation page (won / lost / unknown toggle buttons, proposals only, in confirm bar)
 - [x] Frontend: `client_learnings` manual input section on confirmation page (decision_style textarea + approved/rejected direction list inputs; always shows even when data is empty)
+- [x] **Retrieval quality eval (Phase 2 complete)** — 6 records, 20 queries; Recall@3=94% (raw+gated), MRR=0.74, FPR=0% (gated); proposition prompt improved based on eval findings; see `docs/dev-notes/eval-campaign-kb-retrieval.md`
 - [ ] Hybrid search: sparse + dense vectors (BGE-M3 supports sparse; needs Pinecone config)
 - [ ] Retrieval quality feedback: track HITL edit distance vs retrieved records (5.7)
 - [ ] Distilled insights: auto-distill patterns when 10+ confirmed records accumulate (5.9)
@@ -318,7 +327,7 @@ Source documents may be Chinese, English, or mixed. Chinese ad/PR reports routin
 
 ### Known Limitations
 
-- **Sparse knowledge base.** The full pipeline is verified end-to-end (Steps 1-9, including Pinecone upsert and retrieval). Self-verification and cross-campaign retrieval only become meaningful after the first 5–10 confirmed records are accumulated.
+- **Retrieval quality improves with KB size.** 6 records are now archived and evaluated (Recall@3=81%, 74 propositions). Precision@3 (38%) is naturally low at this scale — with K=3 and 6 records, the system returns half the KB per query. Expect Precision to rise significantly at 20+ records as top-K becomes more selective.
 - **Image-heavy documents extract poorly.** Many proposal decks are predominantly visual. PDF parsing captures text only; images, charts, and designed layouts are invisible to the extractor. Workaround: upload PPTX instead of PDF — python-pptx extracts all text boxes including those inside designed slides. OCR is not planned for the current phase.
 - **`client_learnings` not auto-extracted.** This information doesn't appear in formal recap reports. AEs fill it manually. Quality depends on AE discipline.
 - **Single-pass extraction.** Very long or badly structured reports may have information scattered in ways the text windowing misses. The middle-section fallback for Call 3 mitigates the most common case.
@@ -327,13 +336,13 @@ Source documents may be Chinese, English, or mixed. Chinese ad/PR reports routin
 
 ## Immediate Next Steps
 
-1. **Complete Step 8: Pinecone upsert** — get Pinecone API key (free tier at app.pinecone.io), create index (1024 dims for BGE-M3), add `PINECONE_API_KEY` to `.env`, start embedding service with `docker compose up -d embedding`, re-run test script.
+1. **Fix proposition vocabulary gaps** — re-index 安踏 record with improved proposition prompt: explicitly encode comparative KPI performance ("达成率130%，超出预期"), 小红书主阵地 framing, and multi-platform 大促节点 vocabulary. Addresses 3 of 4 identified failure modes.
 
-2. **Test retrieval end-to-end** — once Step 8 is done, run `retrieve_campaign_knowledge()` with a sample query matching the 安踏 record. Verify proposition matching → module fetch → self-verification.
+2. **Add metadata filter to agent calls** — Strategy P2 and Media Planning should pass `industry` and `campaign_type` from the current brief so retrieval pre-filters before semantic search (currently semantic-only, no business-condition prefilter).
 
-3. **Add metadata filter to agent calls** — Strategy P2 and Media Planning should pass `industry` and `campaign_type` from the current brief so retrieval pre-filters before semantic search.
+3. **Run proposition count sweep** — `python scripts/eval_proposition_sweep.py --record-id 281feb42-... --no-coverage` to validate whether 8–15 is the right range vs. alternatives. Secondary eval.
 
-4. **Test with a proposal document** — verify 2-call path, `record_type=proposal` auto-detection, and `confidence` stability (no empty Outcome call dragging it down).
+4. **Accumulate real records** — archive actual client campaign reports so the KB reflects production data. Precision@3 becomes meaningful at 20+ records.
 
 5. **Add `pitch_outcome` to confirmation UI** — low-cost, high-value: one dropdown field on the existing confirmation page.
 

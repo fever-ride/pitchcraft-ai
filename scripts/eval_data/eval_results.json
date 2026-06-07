@@ -1,0 +1,1589 @@
+{
+  "config": {
+    "org_id": "test-org-001",
+    "profile": "strategy_reference",
+    "k": 3
+  },
+  "raw": {
+    "summary": {
+      "total_queries": 49,
+      "relevant_queries": 42,
+      "irrelevant_queries": 7,
+      "recall_at_k": 0.833,
+      "precision_at_k": 0.611,
+      "mrr": 0.779,
+      "false_positive_rate": 1.0,
+      "by_type": {
+        "broad": {
+          "recall": 0.812,
+          "precision": 0.667,
+          "mrr": 0.75
+        },
+        "specific": {
+          "recall": 0.941,
+          "precision": 0.676,
+          "mrr": 0.912
+        },
+        "cross-field": {
+          "recall": 0.667,
+          "precision": 0.389,
+          "mrr": 0.578
+        }
+      }
+    },
+    "queries": [
+      {
+        "query_id": "Q-01",
+        "query": "运动品牌借势大型体育赛事的整合传播策略",
+        "type": "broad",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.6555,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-02",
+        "query": "奥运营销传播节奏和阶段规划",
+        "type": "broad",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.7142,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-03",
+        "query": "运动品牌KPI超出预期的成功案例",
+        "type": "specific",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.5658,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-04",
+        "query": "品牌借势IP联名内容营销策略",
+        "type": "specific",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.6108,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 0.5
+      },
+      {
+        "query_id": "Q-05",
+        "query": "小红书作为主阵地的内容传播方案",
+        "type": "specific",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "4f0c75ee-e825-420c-8734-ee304588d447",
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "top_score": 0.6671,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-06",
+        "query": "体育圈层用户内容触达和互动策略",
+        "type": "specific",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "top_score": 0.6322,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-07",
+        "query": "整合营销 + 传播效果超预期 + 阶段性爆发",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.6384,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-08",
+        "query": "爱国情感营销结合产品上市的传播路径",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "f8b81938-c129-4556-acda-cd9b27ae04f7",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.5778,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-09",
+        "query": "汽车品牌全年营销规划和媒介策略",
+        "type": "broad",
+        "relevant_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.5764,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 0.5
+      },
+      {
+        "query_id": "Q-10",
+        "query": "O2O本地生活平台用户增长营销方案",
+        "type": "broad",
+        "relevant_ids": [
+          "6dac3b91-0508-4c74-b53c-3b8a0cbbafec"
+        ],
+        "retrieved_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "top_score": 0.5744,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-11",
+        "query": "FMCG饮料新品上市小红书种草策略",
+        "type": "broad",
+        "relevant_ids": [
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "top_score": 0.5989,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-12",
+        "query": "美妆品牌小红书KOC种草内容营销",
+        "type": "broad",
+        "relevant_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96",
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "top_score": 0.6587,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 0.5
+      },
+      {
+        "query_id": "Q-13",
+        "query": "户外运动品牌细分市场拓展年度传播规划",
+        "type": "broad",
+        "relevant_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.6996,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-14",
+        "query": "银行金融机构品牌营销和用户教育",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.5201,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-15",
+        "query": "B2B工业品牌展会策划方案",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "top_score": 0.4999,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-16",
+        "query": "游戏公司新游上线用户拉新策略",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.5874,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-17",
+        "query": "房地产开盘营销蓄客方案",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "top_score": 0.5005,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-18",
+        "query": "国潮运动品牌年轻化传播与社媒运营",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "top_score": 0.5869,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 0.5
+      },
+      {
+        "query_id": "Q-19",
+        "query": "品牌联名跨界合作内容创作经验",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "retrieved_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae",
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.6252,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-20",
+        "query": "电商平台节点大促整合营销节奏",
+        "type": "broad",
+        "relevant_ids": [
+          "6dac3b91-0508-4c74-b53c-3b8a0cbbafec"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.5792,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-21",
+        "query": "进口豪华小型车个性化品牌定位与都市年轻圈层渗透策略",
+        "type": "specific",
+        "relevant_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "retrieved_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "top_score": 0.623,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-22",
+        "query": "汽车品牌线下体验活动与数字内容协同的全年营销节奏",
+        "type": "cross-field",
+        "relevant_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "retrieved_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.6001,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-23",
+        "query": "护肤品牌小红书企业号代运营方案与内容日历策略",
+        "type": "specific",
+        "relevant_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "retrieved_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "top_score": 0.7557,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-24",
+        "query": "新兴美妆品牌通过素人KOC铺量建立小红书口碑的低成本种草方法论",
+        "type": "cross-field",
+        "relevant_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "retrieved_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96",
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.6522,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 0.5
+      },
+      {
+        "query_id": "Q-25",
+        "query": "专业户外运动品牌垂类圈层KOL矩阵构建与内容分发策略",
+        "type": "specific",
+        "relevant_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "top_score": 0.6755,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-26",
+        "query": "运动品牌同步拓展成人户外与青少年儿童双细分市场的年度传播规划",
+        "type": "cross-field",
+        "relevant_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.7332,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-27",
+        "query": "本地生活平台通过创意洞察重塑用户消费场景认知的品牌战役",
+        "type": "specific",
+        "relevant_ids": [
+          "6dac3b91-0508-4c74-b53c-3b8a0cbbafec"
+        ],
+        "retrieved_ids": [
+          "6dac3b91-0508-4c74-b53c-3b8a0cbbafec",
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "top_score": 0.6089,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-28",
+        "query": "快消饮料新品借助跨界联名实现破圈传播和货架心智占领的策略",
+        "type": "specific",
+        "relevant_ids": [
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "retrieved_ids": [
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae",
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.6514,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-29",
+        "query": "小红书为核心种草渠道的新品推广：从KOC布局到爆款内容的打法",
+        "type": "cross-field",
+        "relevant_ids": [
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee",
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "top_score": 0.7171,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.2
+      },
+      {
+        "query_id": "Q-30",
+        "query": "运动品牌通过专业赛事资源和垂类圈层建立品牌认知的传播策略",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.6566,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-31",
+        "query": "K12在线教育平台品牌知名度建设与用户拉新整合营销",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7",
+          "78174665-3c4e-4cc3-9672-420228070a6a",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.5289,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-32",
+        "query": "连锁奶茶新品牌加盟拓展与区域市场下沉传播方案",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.5875,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-33",
+        "query": "医疗器械品牌院线渠道进入与患者教育整合营销策略",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.4863,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-34",
+        "query": "即溶咖啡新品上市借助社交传播制造全民话题的营销方案",
+        "type": "broad",
+        "relevant_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "retrieved_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.7148,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-35",
+        "query": "饮料新品通过差异化饮用仪式感和产品卖点驱动消费者尝新的内容策略",
+        "type": "specific",
+        "relevant_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "retrieved_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7",
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "top_score": 0.6584,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-36",
+        "query": "时尚媒体品牌女性主题旗舰活动的策划方案与赞助商资源整合",
+        "type": "broad",
+        "relevant_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447"
+        ],
+        "retrieved_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447"
+        ],
+        "top_score": 0.7053,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-37",
+        "query": "奢侈品或时尚品牌借助高端媒体IP活动实现精准圈层曝光和口碑传播的策略",
+        "type": "specific",
+        "relevant_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447"
+        ],
+        "retrieved_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447"
+        ],
+        "top_score": 0.6615,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-38",
+        "query": "家电品牌与快餐连锁品牌跨界联名实现年轻受众破圈传播的方案",
+        "type": "broad",
+        "relevant_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "retrieved_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.7476,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-39",
+        "query": "生活家电新品借力餐饮联名IP在社媒打造话题热度的创意切入策略",
+        "type": "specific",
+        "relevant_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "retrieved_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.6461,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-40",
+        "query": "健身器材品牌抖音直播间运营矩阵与用户分层转化方案",
+        "type": "broad",
+        "relevant_ids": [
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "retrieved_ids": [
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "top_score": 0.8077,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-41",
+        "query": "运动健身品牌多账号差异化定位覆盖细分健身人群的抖音矩阵策略",
+        "type": "specific",
+        "relevant_ids": [
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "retrieved_ids": [
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "top_score": 0.8009,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-42",
+        "query": "乳品品牌联合运动零售品牌的中秋国庆双节节点联名营销方案",
+        "type": "broad",
+        "relevant_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.7187,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-43",
+        "query": "食品快消品与运动品牌跨界联名的渠道协同策略和联合内容创意方向",
+        "type": "specific",
+        "relevant_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.6493,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-44",
+        "query": "汽车品牌在抖音小红书快手多平台的账号矩阵搭建与内容分发策略",
+        "type": "broad",
+        "relevant_ids": [
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "retrieved_ids": [
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "top_score": 0.738,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-45",
+        "query": "汽车品牌通过1+N企业号矩阵突破单账号流量瓶颈、提升线索量的运营策略",
+        "type": "specific",
+        "relevant_ids": [
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "retrieved_ids": [
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "top_score": 0.7294,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-46",
+        "query": "车主服务类APP品牌定位策略与目标用户心智建立方案",
+        "type": "broad",
+        "relevant_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "retrieved_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.6976,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-47",
+        "query": "汽车后市场细分服务品牌从功能诉求升级到情感归属的品牌重塑策略",
+        "type": "specific",
+        "relevant_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "retrieved_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.6297,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-48",
+        "query": "地方文旅景区通过文化节庆活动提升目的地品牌知名度的整合营销方案",
+        "type": "broad",
+        "relevant_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "retrieved_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "top_score": 0.6321,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-49",
+        "query": "文化旅游节活动策划中融合地方非遗茶文化与旅游体验设计的传播策略",
+        "type": "specific",
+        "relevant_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "retrieved_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e",
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.642,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      }
+    ]
+  },
+  "with_gate": {
+    "summary": {
+      "total_queries": 49,
+      "relevant_queries": 42,
+      "irrelevant_queries": 7,
+      "recall_at_k": 0.81,
+      "precision_at_k": 0.663,
+      "mrr": 0.774,
+      "false_positive_rate": 0.714,
+      "by_type": {
+        "broad": {
+          "recall": 0.75,
+          "precision": 0.708,
+          "mrr": 0.719
+        },
+        "specific": {
+          "recall": 0.941,
+          "precision": 0.745,
+          "mrr": 0.912
+        },
+        "cross-field": {
+          "recall": 0.667,
+          "precision": 0.426,
+          "mrr": 0.611
+        }
+      }
+    },
+    "queries": [
+      {
+        "query_id": "Q-01",
+        "query": "运动品牌借势大型体育赛事的整合传播策略",
+        "type": "broad",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "top_score": 0.6555,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-02",
+        "query": "奥运营销传播节奏和阶段规划",
+        "type": "broad",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "top_score": 0.7142,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-03",
+        "query": "运动品牌KPI超出预期的成功案例",
+        "type": "specific",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "top_score": 0.5658,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-04",
+        "query": "品牌借势IP联名内容营销策略",
+        "type": "specific",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.6108,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 0.5
+      },
+      {
+        "query_id": "Q-05",
+        "query": "小红书作为主阵地的内容传播方案",
+        "type": "specific",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "4f0c75ee-e825-420c-8734-ee304588d447",
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "top_score": 0.6671,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-06",
+        "query": "体育圈层用户内容触达和互动策略",
+        "type": "specific",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "top_score": 0.6322,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-07",
+        "query": "整合营销 + 传播效果超预期 + 阶段性爆发",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.6384,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-08",
+        "query": "爱国情感营销结合产品上市的传播路径",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.5778,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-09",
+        "query": "汽车品牌全年营销规划和媒介策略",
+        "type": "broad",
+        "relevant_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.5764,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-10",
+        "query": "O2O本地生活平台用户增长营销方案",
+        "type": "broad",
+        "relevant_ids": [
+          "6dac3b91-0508-4c74-b53c-3b8a0cbbafec"
+        ],
+        "retrieved_ids": [],
+        "top_score": 0.0,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-11",
+        "query": "FMCG饮料新品上市小红书种草策略",
+        "type": "broad",
+        "relevant_ids": [
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "top_score": 0.5762,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-12",
+        "query": "美妆品牌小红书KOC种草内容营销",
+        "type": "broad",
+        "relevant_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96",
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "top_score": 0.6587,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 0.5
+      },
+      {
+        "query_id": "Q-13",
+        "query": "户外运动品牌细分市场拓展年度传播规划",
+        "type": "broad",
+        "relevant_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.6996,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-14",
+        "query": "银行金融机构品牌营销和用户教育",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.5118,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-15",
+        "query": "B2B工业品牌展会策划方案",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "top_score": 0.4808,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-16",
+        "query": "游戏公司新游上线用户拉新策略",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [],
+        "top_score": 0.0,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-17",
+        "query": "房地产开盘营销蓄客方案",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "top_score": 0.4993,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-18",
+        "query": "国潮运动品牌年轻化传播与社媒运营",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "281feb42-9796-4ea9-b8aa-abecc628fdca"
+        ],
+        "top_score": 0.5869,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 0.5
+      },
+      {
+        "query_id": "Q-19",
+        "query": "品牌联名跨界合作内容创作经验",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "retrieved_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae",
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.6252,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-20",
+        "query": "电商平台节点大促整合营销节奏",
+        "type": "broad",
+        "relevant_ids": [
+          "6dac3b91-0508-4c74-b53c-3b8a0cbbafec"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.5792,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-21",
+        "query": "进口豪华小型车个性化品牌定位与都市年轻圈层渗透策略",
+        "type": "specific",
+        "relevant_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "retrieved_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "top_score": 0.623,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-22",
+        "query": "汽车品牌线下体验活动与数字内容协同的全年营销节奏",
+        "type": "cross-field",
+        "relevant_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"
+        ],
+        "retrieved_ids": [
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.6001,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-23",
+        "query": "护肤品牌小红书企业号代运营方案与内容日历策略",
+        "type": "specific",
+        "relevant_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "retrieved_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "top_score": 0.7557,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-24",
+        "query": "新兴美妆品牌通过素人KOC铺量建立小红书口碑的低成本种草方法论",
+        "type": "cross-field",
+        "relevant_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "retrieved_ids": [
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96",
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.6409,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-25",
+        "query": "专业户外运动品牌垂类圈层KOL矩阵构建与内容分发策略",
+        "type": "specific",
+        "relevant_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "top_score": 0.6755,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.333,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-26",
+        "query": "运动品牌同步拓展成人户外与青少年儿童双细分市场的年度传播规划",
+        "type": "cross-field",
+        "relevant_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.7332,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-27",
+        "query": "本地生活平台通过创意洞察重塑用户消费场景认知的品牌战役",
+        "type": "specific",
+        "relevant_ids": [
+          "6dac3b91-0508-4c74-b53c-3b8a0cbbafec"
+        ],
+        "retrieved_ids": [
+          "6dac3b91-0508-4c74-b53c-3b8a0cbbafec",
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "top_score": 0.6089,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-28",
+        "query": "快消饮料新品借助跨界联名实现破圈传播和货架心智占领的策略",
+        "type": "specific",
+        "relevant_ids": [
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "retrieved_ids": [
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.6514,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-29",
+        "query": "小红书为核心种草渠道的新品推广：从KOC布局到爆款内容的打法",
+        "type": "cross-field",
+        "relevant_ids": [
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee",
+          "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "819f00e5-17b9-41ed-8b5d-f1e3f6d819ca",
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.7171,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-30",
+        "query": "运动品牌通过专业赛事资源和垂类圈层建立品牌认知的传播策略",
+        "type": "cross-field",
+        "relevant_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "retrieved_ids": [
+          "281feb42-9796-4ea9-b8aa-abecc628fdca",
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69"
+        ],
+        "top_score": 0.6566,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-31",
+        "query": "K12在线教育平台品牌知名度建设与用户拉新整合营销",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7",
+          "78174665-3c4e-4cc3-9672-420228070a6a",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.5289,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-32",
+        "query": "连锁奶茶新品牌加盟拓展与区域市场下沉传播方案",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [],
+        "top_score": 0.0,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-33",
+        "query": "医疗器械品牌院线渠道进入与患者教育整合营销策略",
+        "type": "irrelevant",
+        "relevant_ids": [],
+        "retrieved_ids": [
+          "486b2d6a-51ec-498f-a61d-5a62d1611c69",
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.4863,
+        "recall_at_k": 0.0,
+        "precision_at_k": 0.0,
+        "rr": 0.0
+      },
+      {
+        "query_id": "Q-34",
+        "query": "即溶咖啡新品上市借助社交传播制造全民话题的营销方案",
+        "type": "broad",
+        "relevant_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "retrieved_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "top_score": 0.7148,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-35",
+        "query": "饮料新品通过差异化饮用仪式感和产品卖点驱动消费者尝新的内容策略",
+        "type": "specific",
+        "relevant_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7"
+        ],
+        "retrieved_ids": [
+          "f8b81938-c129-4556-acda-cd9b27ae04f7",
+          "cd54c74c-d67a-4837-a900-54a783cdc8ee"
+        ],
+        "top_score": 0.6584,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-36",
+        "query": "时尚媒体品牌女性主题旗舰活动的策划方案与赞助商资源整合",
+        "type": "broad",
+        "relevant_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447"
+        ],
+        "retrieved_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447"
+        ],
+        "top_score": 0.7053,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-37",
+        "query": "奢侈品或时尚品牌借助高端媒体IP活动实现精准圈层曝光和口碑传播的策略",
+        "type": "specific",
+        "relevant_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447"
+        ],
+        "retrieved_ids": [
+          "4f0c75ee-e825-420c-8734-ee304588d447"
+        ],
+        "top_score": 0.6615,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-38",
+        "query": "家电品牌与快餐连锁品牌跨界联名实现年轻受众破圈传播的方案",
+        "type": "broad",
+        "relevant_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "retrieved_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.7476,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-39",
+        "query": "生活家电新品借力餐饮联名IP在社媒打造话题热度的创意切入策略",
+        "type": "specific",
+        "relevant_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "retrieved_ids": [
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.6461,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-40",
+        "query": "健身器材品牌抖音直播间运营矩阵与用户分层转化方案",
+        "type": "broad",
+        "relevant_ids": [
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "retrieved_ids": [
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "top_score": 0.8077,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-41",
+        "query": "运动健身品牌多账号差异化定位覆盖细分健身人群的抖音矩阵策略",
+        "type": "specific",
+        "relevant_ids": [
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "retrieved_ids": [
+          "d2d8af23-13c7-4113-ad56-2da2f07da51e"
+        ],
+        "top_score": 0.8009,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-42",
+        "query": "乳品品牌联合运动零售品牌的中秋国庆双节节点联名营销方案",
+        "type": "broad",
+        "relevant_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "top_score": 0.7187,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-43",
+        "query": "食品快消品与运动品牌跨界联名的渠道协同策略和联合内容创意方向",
+        "type": "specific",
+        "relevant_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973"
+        ],
+        "retrieved_ids": [
+          "1781fb74-c17c-4a51-9658-6f430427f973",
+          "2dd63675-f14f-4fff-a036-3a394a4d99ae"
+        ],
+        "top_score": 0.6493,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-44",
+        "query": "汽车品牌在抖音小红书快手多平台的账号矩阵搭建与内容分发策略",
+        "type": "broad",
+        "relevant_ids": [
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "retrieved_ids": [
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "top_score": 0.738,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-45",
+        "query": "汽车品牌通过1+N企业号矩阵突破单账号流量瓶颈、提升线索量的运营策略",
+        "type": "specific",
+        "relevant_ids": [
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "retrieved_ids": [
+          "78174665-3c4e-4cc3-9672-420228070a6a"
+        ],
+        "top_score": 0.7294,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-46",
+        "query": "车主服务类APP品牌定位策略与目标用户心智建立方案",
+        "type": "broad",
+        "relevant_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "retrieved_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.6976,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-47",
+        "query": "汽车后市场细分服务品牌从功能诉求升级到情感归属的品牌重塑策略",
+        "type": "specific",
+        "relevant_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "retrieved_ids": [
+          "95af472b-8719-4d6e-bc2f-ce99867160e9"
+        ],
+        "top_score": 0.6297,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-48",
+        "query": "地方文旅景区通过文化节庆活动提升目的地品牌知名度的整合营销方案",
+        "type": "broad",
+        "relevant_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "retrieved_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "top_score": 0.6321,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      },
+      {
+        "query_id": "Q-49",
+        "query": "文化旅游节活动策划中融合地方非遗茶文化与旅游体验设计的传播策略",
+        "type": "specific",
+        "relevant_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "retrieved_ids": [
+          "d6d49672-83df-43d3-adec-6ecfb47edb4e"
+        ],
+        "top_score": 0.642,
+        "recall_at_k": 1.0,
+        "precision_at_k": 1.0,
+        "rr": 1.0
+      }
+    ]
+  }
+}

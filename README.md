@@ -450,7 +450,7 @@ Each agent has a retrieval profile that controls what modules it receives:
 | Deck Orchestrator | `deck_reference` | 4 | deck_info, communication_plan |
 | Brief Analyzer | `brief_reference` | 4 | client_learnings, meta |
 
-Why propositions instead of full-record embeddings: a single CampaignRecord has 50+ fields. Embedding the entire record dilutes specific signals. "[beauty | launch | 2M] KOC at 10% budget drove 60% engagement" is findable as a proposition vector but invisible inside a 200-word summary embedding.
+Why propositions instead of full-record embeddings: a single CampaignRecord has 50+ fields. Embedding the entire record dilutes specific signals. "[beauty | launch | 2M] KOC at 10% budget drove 60% engagement" is findable as a proposition vector but invisible inside a 200-word summary embedding. Proposition-level retrieval is validated in Chen et al. (EMNLP 2023, "Dense X Retrieval") as the optimal retrieval granularity for open-domain QA. The `[industry | type | budget | audience]` meta prefix on each proposition follows the same principle as Anthropic's Contextual Retrieval (2024) — baking applicability conditions into the vector so a query from a beauty brand does not match a proposition extracted from an automotive campaign.
 
 **Embedding infrastructure:**
 - **BGE-M3**: self-hosted, multilingual (Chinese + English), zero API cost. Outputs dense + sparse vectors simultaneously. Cross-lingual retrieval works bidirectionally.

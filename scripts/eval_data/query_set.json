@@ -1,0 +1,368 @@
+[
+  {
+    "note": "=== FILL IN record_ids BEFORE RUNNING ===",
+    "note2": "Replace 281feb42-9796-4ea9-b8aa-abecc628fdca, 819f00e5-17b9-41ed-8b5d-f1e3f6d819ca, 6dac3b91-0508-4c74-b53c-3b8a0cbbafec, cd54c74c-d67a-4837-a900-54a783cdc8ee, dfeccd49-dd82-4249-8d3b-ad45f7d2af96, 486b2d6a-51ec-498f-a61d-5a62d1611c69 with actual campaign_record_id values from MongoDB after archiving"
+  },
+
+  {
+    "id": "Q-01",
+    "query": "运动品牌借势大型体育赛事的整合传播策略",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "broad",
+    "note": "安踏奥运营销 — broad match"
+  },
+  {
+    "id": "Q-02",
+    "query": "奥运营销传播节奏和阶段规划",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "broad",
+    "note": "安踏三阶段传播结构"
+  },
+  {
+    "id": "Q-03",
+    "query": "运动品牌KPI超出预期的成功案例",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "specific",
+    "note": "安踏KPI达成率130%"
+  },
+  {
+    "id": "Q-04",
+    "query": "品牌借势IP联名内容营销策略",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "specific",
+    "note": "安踏×中国国家地理纪录片联名"
+  },
+  {
+    "id": "Q-05",
+    "query": "小红书作为主阵地的内容传播方案",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "specific",
+    "note": "安踏小红书主阵地策略"
+  },
+  {
+    "id": "Q-06",
+    "query": "体育圈层用户内容触达和互动策略",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "specific",
+    "note": "安踏目标受众策略"
+  },
+  {
+    "id": "Q-07",
+    "query": "整合营销 + 传播效果超预期 + 阶段性爆发",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "cross-field",
+    "note": "跨字段：传播结构 + KPI结果组合"
+  },
+  {
+    "id": "Q-08",
+    "query": "爱国情感营销结合产品上市的传播路径",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "cross-field",
+    "note": "跨字段：big idea（中国甲）+ 上市爆发阶段"
+  },
+
+  {
+    "id": "Q-09",
+    "query": "汽车品牌全年营销规划和媒介策略",
+    "relevant_ids": ["819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"],
+    "type": "broad",
+    "note": "MINI汽车全年方案"
+  },
+  {
+    "id": "Q-10",
+    "query": "O2O本地生活平台用户增长营销方案",
+    "relevant_ids": ["6dac3b91-0508-4c74-b53c-3b8a0cbbafec"],
+    "type": "broad",
+    "note": "美团外卖整合营销"
+  },
+  {
+    "id": "Q-11",
+    "query": "FMCG饮料新品上市小红书种草策略",
+    "relevant_ids": ["cd54c74c-d67a-4837-a900-54a783cdc8ee"],
+    "type": "broad",
+    "note": "COSTA罐装咖啡新品"
+  },
+  {
+    "id": "Q-12",
+    "query": "美妆品牌小红书KOC种草内容营销",
+    "relevant_ids": ["dfeccd49-dd82-4249-8d3b-ad45f7d2af96"],
+    "type": "broad",
+    "note": "popchrio欧可芮小红书方案"
+  },
+  {
+    "id": "Q-13",
+    "query": "户外运动品牌细分市场拓展年度传播规划",
+    "relevant_ids": ["486b2d6a-51ec-498f-a61d-5a62d1611c69"],
+    "type": "broad",
+    "note": "美津浓MIZUNO户外+儿童细分市场年度营销计划"
+  },
+
+  {
+    "id": "Q-14",
+    "query": "银行金融机构品牌营销和用户教育",
+    "relevant_ids": [],
+    "type": "irrelevant",
+    "note": "无相关record — 测FPR"
+  },
+  {
+    "id": "Q-15",
+    "query": "B2B工业品牌展会策划方案",
+    "relevant_ids": [],
+    "type": "irrelevant",
+    "note": "无相关record — 测FPR"
+  },
+  {
+    "id": "Q-16",
+    "query": "游戏公司新游上线用户拉新策略",
+    "relevant_ids": [],
+    "type": "irrelevant",
+    "note": "无相关record — 测FPR"
+  },
+  {
+    "id": "Q-17",
+    "query": "房地产开盘营销蓄客方案",
+    "relevant_ids": [],
+    "type": "irrelevant",
+    "note": "无相关record — 测FPR"
+  },
+
+  {
+    "id": "Q-18",
+    "query": "国潮运动品牌年轻化传播与社媒运营",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca"],
+    "type": "cross-field",
+    "note": "跨字段：国潮属性 + Z世代 + 社媒策略"
+  },
+  {
+    "id": "Q-19",
+    "query": "品牌联名跨界合作内容创作经验",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca", "cd54c74c-d67a-4837-a900-54a783cdc8ee"],
+    "type": "cross-field",
+    "note": "多record命中：安踏国家地理联名 + COSTA跨界；测Recall多相关"
+  },
+  {
+    "id": "Q-20",
+    "query": "电商平台节点大促整合营销节奏",
+    "relevant_ids": ["6dac3b91-0508-4c74-b53c-3b8a0cbbafec"],
+    "type": "broad",
+    "note": "美团外卖大促营销节奏（原Stokke ID替换为MIZUNO后不再匹配此查询）"
+  },
+
+  {
+    "note": "=== Phase 2 additions: fill coverage gaps for existing 6 records ==="
+  },
+
+  {
+    "id": "Q-21",
+    "query": "进口豪华小型车个性化品牌定位与都市年轻圈层渗透策略",
+    "relevant_ids": ["819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"],
+    "type": "specific",
+    "note": "MINI差异化品牌定位与目标受众策略"
+  },
+  {
+    "id": "Q-22",
+    "query": "汽车品牌线下体验活动与数字内容协同的全年营销节奏",
+    "relevant_ids": ["819f00e5-17b9-41ed-8b5d-f1e3f6d819ca"],
+    "type": "cross-field",
+    "note": "跨字段：MINI线下体验 + 全年媒介组合"
+  },
+  {
+    "id": "Q-23",
+    "query": "护肤品牌小红书企业号代运营方案与内容日历策略",
+    "relevant_ids": ["dfeccd49-dd82-4249-8d3b-ad45f7d2af96"],
+    "type": "specific",
+    "note": "popchrio小红书企业号运营核心方法"
+  },
+  {
+    "id": "Q-24",
+    "query": "新兴美妆品牌通过素人KOC铺量建立小红书口碑的低成本种草方法论",
+    "relevant_ids": ["dfeccd49-dd82-4249-8d3b-ad45f7d2af96"],
+    "type": "cross-field",
+    "note": "跨字段：popchrio KOC策略 + 种草ROI效率洞察"
+  },
+  {
+    "id": "Q-25",
+    "query": "专业户外运动品牌垂类圈层KOL矩阵构建与内容分发策略",
+    "relevant_ids": ["486b2d6a-51ec-498f-a61d-5a62d1611c69"],
+    "type": "specific",
+    "note": "MIZUNO户外垂类KOL矩阵策略"
+  },
+  {
+    "id": "Q-26",
+    "query": "运动品牌同步拓展成人户外与青少年儿童双细分市场的年度传播规划",
+    "relevant_ids": ["486b2d6a-51ec-498f-a61d-5a62d1611c69"],
+    "type": "cross-field",
+    "note": "跨字段：MIZUNO户外+儿童双赛道 + 年度节奏"
+  },
+  {
+    "id": "Q-27",
+    "query": "本地生活平台通过创意洞察重塑用户消费场景认知的品牌战役",
+    "relevant_ids": ["6dac3b91-0508-4c74-b53c-3b8a0cbbafec"],
+    "type": "specific",
+    "note": "美团「外卖黄的更灵的」消费场景心智重塑"
+  },
+  {
+    "id": "Q-28",
+    "query": "快消饮料新品借助跨界联名实现破圈传播和货架心智占领的策略",
+    "relevant_ids": ["cd54c74c-d67a-4837-a900-54a783cdc8ee"],
+    "type": "specific",
+    "note": "COSTA罐装咖啡跨界联名破圈策略"
+  },
+  {
+    "id": "Q-29",
+    "query": "小红书为核心种草渠道的新品推广：从KOC布局到爆款内容的打法",
+    "relevant_ids": ["cd54c74c-d67a-4837-a900-54a783cdc8ee", "dfeccd49-dd82-4249-8d3b-ad45f7d2af96"],
+    "type": "cross-field",
+    "note": "多record命中：COSTA + popchrio 均以小红书为主渠道"
+  },
+  {
+    "id": "Q-30",
+    "query": "运动品牌通过专业赛事资源和垂类圈层建立品牌认知的传播策略",
+    "relevant_ids": ["281feb42-9796-4ea9-b8aa-abecc628fdca", "486b2d6a-51ec-498f-a61d-5a62d1611c69"],
+    "type": "cross-field",
+    "note": "多record命中：安踏（奥运赛事）+ MIZUNO（户外圈层）"
+  },
+
+  {
+    "note": "=== Phase 2 additions: additional irrelevant queries (FPR pressure test) ==="
+  },
+
+  {
+    "id": "Q-31",
+    "query": "K12在线教育平台品牌知名度建设与用户拉新整合营销",
+    "relevant_ids": [],
+    "type": "irrelevant",
+    "note": "无相关record — 教育行业"
+  },
+  {
+    "id": "Q-32",
+    "query": "连锁奶茶新品牌加盟拓展与区域市场下沉传播方案",
+    "relevant_ids": [],
+    "type": "irrelevant",
+    "note": "无相关record — 加盟拓展（非消费者品牌营销）"
+  },
+  {
+    "id": "Q-33",
+    "query": "医疗器械品牌院线渠道进入与患者教育整合营销策略",
+    "relevant_ids": [],
+    "type": "irrelevant",
+    "note": "无相关record — 医疗器械"
+  },
+
+  {
+    "note": "=== Phase 3: 8 new records archived 2026-06-06 ==="
+  },
+
+  {
+    "id": "Q-34",
+    "query": "即溶咖啡新品上市借助社交传播制造全民话题的营销方案",
+    "relevant_ids": ["f8b81938-c129-4556-acda-cd9b27ae04f7"],
+    "type": "broad",
+    "note": "雀巢雪咖慕思新品上市传播方案"
+  },
+  {
+    "id": "Q-35",
+    "query": "饮料新品通过差异化饮用仪式感和产品卖点驱动消费者尝新的内容策略",
+    "relevant_ids": ["f8b81938-c129-4556-acda-cd9b27ae04f7"],
+    "type": "specific",
+    "note": "雀巢雪咖「摇一摇」仪式感核心卖点策略"
+  },
+  {
+    "id": "Q-36",
+    "query": "时尚媒体品牌女性主题旗舰活动的策划方案与赞助商资源整合",
+    "relevant_ids": ["4f0c75ee-e825-420c-8734-ee304588d447"],
+    "type": "broad",
+    "note": "嘉人POWER TRIP女性影响力之夜"
+  },
+  {
+    "id": "Q-37",
+    "query": "奢侈品或时尚品牌借助高端媒体IP活动实现精准圈层曝光和口碑传播的策略",
+    "relevant_ids": ["4f0c75ee-e825-420c-8734-ee304588d447"],
+    "type": "specific",
+    "note": "嘉人媒体IP背书 + 奢侈品牌高端场景"
+  },
+  {
+    "id": "Q-38",
+    "query": "家电品牌与快餐连锁品牌跨界联名实现年轻受众破圈传播的方案",
+    "relevant_ids": ["2dd63675-f14f-4fff-a036-3a394a4d99ae"],
+    "type": "broad",
+    "note": "小天鹅×肯德基跨界联名新品发布"
+  },
+  {
+    "id": "Q-39",
+    "query": "生活家电新品借力餐饮联名IP在社媒打造话题热度的创意切入策略",
+    "relevant_ids": ["2dd63675-f14f-4fff-a036-3a394a4d99ae"],
+    "type": "specific",
+    "note": "小天鹅跨界联名创意策略与内容引爆点"
+  },
+  {
+    "id": "Q-40",
+    "query": "健身器材品牌抖音直播间运营矩阵与用户分层转化方案",
+    "relevant_ids": ["d2d8af23-13c7-4113-ad56-2da2f07da51e"],
+    "type": "broad",
+    "note": "IRONMAN健身器械抖音直播间营销方案"
+  },
+  {
+    "id": "Q-41",
+    "query": "运动健身品牌多账号差异化定位覆盖细分健身人群的抖音矩阵策略",
+    "relevant_ids": ["d2d8af23-13c7-4113-ad56-2da2f07da51e"],
+    "type": "specific",
+    "note": "IRONMAN多账号人群细分（秀肌肉/一起练/高颜值/减肥）"
+  },
+  {
+    "id": "Q-42",
+    "query": "乳品品牌联合运动零售品牌的中秋国庆双节节点联名营销方案",
+    "relevant_ids": ["1781fb74-c17c-4a51-9658-6f430427f973"],
+    "type": "broad",
+    "note": "百特牛奶×迪卡侬双节联名传播方案"
+  },
+  {
+    "id": "Q-43",
+    "query": "食品快消品与运动品牌跨界联名的渠道协同策略和联合内容创意方向",
+    "relevant_ids": ["1781fb74-c17c-4a51-9658-6f430427f973"],
+    "type": "specific",
+    "note": "百特×迪卡侬联名渠道协同与内容策略"
+  },
+  {
+    "id": "Q-44",
+    "query": "汽车品牌在抖音小红书快手多平台的账号矩阵搭建与内容分发策略",
+    "relevant_ids": ["78174665-3c4e-4cc3-9672-420228070a6a"],
+    "type": "broad",
+    "note": "本田雅阁新媒体账号矩阵运营方案"
+  },
+  {
+    "id": "Q-45",
+    "query": "汽车品牌通过1+N企业号矩阵突破单账号流量瓶颈、提升线索量的运营策略",
+    "relevant_ids": ["78174665-3c4e-4cc3-9672-420228070a6a"],
+    "type": "specific",
+    "note": "本田雅阁1+N+∞账号矩阵战略核心逻辑"
+  },
+  {
+    "id": "Q-46",
+    "query": "车主服务类APP品牌定位策略与目标用户心智建立方案",
+    "relevant_ids": ["95af472b-8719-4d6e-bc2f-ce99867160e9"],
+    "type": "broad",
+    "note": "ETC车宝APP品牌策略推广方案"
+  },
+  {
+    "id": "Q-47",
+    "query": "汽车后市场细分服务品牌从功能诉求升级到情感归属的品牌重塑策略",
+    "relevant_ids": ["95af472b-8719-4d6e-bc2f-ce99867160e9"],
+    "type": "specific",
+    "note": "ETC车宝品牌升级从工具到车主身份认同的策略"
+  },
+  {
+    "id": "Q-48",
+    "query": "地方文旅景区通过文化节庆活动提升目的地品牌知名度的整合营销方案",
+    "relevant_ids": ["d6d49672-83df-43d3-adec-6ecfb47edb4e"],
+    "type": "broad",
+    "note": "山水旅情文化旅游节+雪浪茶文化节策划"
+  },
+  {
+    "id": "Q-49",
+    "query": "文化旅游节活动策划中融合地方非遗茶文化与旅游体验设计的传播策略",
+    "relevant_ids": ["d6d49672-83df-43d3-adec-6ecfb47edb4e"],
+    "type": "specific",
+    "note": "山水旅情「雪浪茶文化」在地文化策略"
+  }
+]

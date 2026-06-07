@@ -686,6 +686,52 @@ if TYPE_CHECKING:
 
 ---
 
+## D7. 用 eval 分层分析定位 cross-field 检索瓶颈
+
+**Situation**：Campaign KB 首轮完整 eval（14 条记录，49 个查询）完成后，整体 Recall@3=83%，看似还不错。但按 query type 分层后，数据差异极大：Specific Recall=94%、MRR=0.91；Cross-field Recall=56%、MRR=0.52。Cross-field 恰好是 agent 在真实 pitch 流程中最常见的查询类型——比如"小红书种草策略 × 预算 < 500k × KPI 超出预期"这类多维度组合查询。
+
+**Problem**：逐条排查 cross-field miss 的 retrieved_ids 后，发现共同特征：目标 record 的命题里，各个维度的信息都有（"小红书种草"命题存在，"KPI 超出预期"命题也存在），但它们分散在不同命题中。Cross-field 查询的 embedding 需要同时匹配两个概念，而单条命题只覆盖一个——相似度分数被稀释，目标 record 滑出 top-3。这不是检索算法的问题，是索引内容的结构问题：原子命题 + 多概念查询 = 必然的分数稀释。
+
+**Action**：
+1. 评估两条修复路径：改检索侧（query decomposition、HyDE）vs 改索引侧（增加跨字段命题）
+2. 选改索引侧：检索优化的上限是索引内容质量；命题里没有的语义，再好的检索也找不到
+3. 在 proposition prompt 加 Rule C：要求至少 2-3 条"跨字段效率洞察"命题，明确覆盖不同字段组合（渠道策略×预算效率、KPI 结果×内容形式、受众洞察×平台角色），并加 Rule D 要求业务结果视角词汇
+4. 全量重新索引 14 条记录，立刻重跑 eval 验证
+
+**Result**：跨字段命题数量增加（从平均 0-1 条到 2-3 条），总命题数从 203 增至 262。整体 RAW Recall 提升至 83%（+2%），但同批引入的 brand name prefix 改动带来了新的 embedding displacement（Q-05/Q-07 出现回归），cross-field 未净提升。识别出 cross-field 是多重因素叠加的瓶颈，仍是首要优化目标，下一步方向为 query decomposition。
+
+**Key takeaway**：整体指标对优化决策的指导价值有限——Recall=83% 不告诉你哪里该改。按 query type 分层分析才能精确定位瓶颈：哪一类查询最弱，那里就是最值得投入的地方。分层 → 根因定位 → 改上游，比直接调参数更快找到有效干预点。
+
+---
+
+## D8. Self-verification Gate 的三种架构实验
+
+**Situation**：Campaign KB retrieval 有一个根本性的 precision 问题：当 agent 的查询领域和所有历史案例都不相关时，系统仍然返回"相似度最高"的几条记录（FPR=100%）。这些凑合的结果一旦被 agent 当作历史经验参考，会把本来无关的案例强行对号入座，产生误导性建议。需要一个能识别"这组结果不值得参考"的 gate。
+
+**Problem**：Gate 设计有一个基本张力：既要在整批结果都不相关时拦截（FPR→0%），又不能在结果有实际参考价值时误伤（Recall 不能下降）。最直觉的改进方向是"逐条评估"——批量拦截太粗，应该保留好的、丢掉不好的。但这个方向有一个深层的 LLM 认知问题。
+
+**Action（测试了 3 种架构）**：
+
+*Architecture 1 — 批量 gate（当前实现）*  
+全部检索结果打包给 LLM，一次判断整组是否 sufficient。LLM 看到"3 条结果和 query 领域全不沾边"，可以做消除性推理直接判 INSUFFICIENT。  
+结果：Recall=81%，FPR=0%。
+
+*Architecture 2 — Per-result gate（N 次调用）*  
+每条结果单独调 LLM，有任何一条通过就返回。期望：不相关的 record 被拦截，相关的被保留。  
+实际问题：LLM 孤立评估单条结果时更宽容，总能找到理由（"都是营销案例，策略思路有参考价值"）给 PARTIAL。  
+结果：FPR=14%，Recall 未提升。
+
+*Architecture 3 — Per-result verdict（1 次调用，逐条输出）*  
+一次 LLM 调用，要求对每条结果分别给出 verdict，期望 LLM 有整体上下文的同时做逐条判断。  
+实际问题：逐条要求的 prompt 结构诱导了逐条的"评估思维"（每条有没有价值？），而非批量的"消除思维"（这组整体相不相关？）。FPR 反而更高。  
+结果：FPR=71%。
+
+**Result**：批量 gate 是三种架构中唯一达到 FPR=0% 的方案。核心洞察：LLM 对同一组信息的推理方式受 prompt 结构决定——"给整组一个结论"诱导比较性/消除性推理，"给每条一个结论"诱导连接性/评估推理，更容易接受"都是营销案例"作为保留理由。Per-result 的方向（更细粒度过滤）是正确的，但需要在 prompt 中显式拦截"都是营销案例"作为 PARTIAL 的依据——这是下一步优化方向。
+
+**Key takeaway**：LLM-as-judge 系统的设计不只是"信息给全了就行"，关键是 prompt 结构诱导的推理模式。先想清楚"希望 LLM 用什么认知方式判断"，再设计 prompt 去诱导它。批量评估 vs 逐条评估不是技术实现差异，是认知架构差异；三种架构各自 FPR 差了 71%，但信息量几乎相同。
+
+---
+
 ## Phase 5 首次端到端测试
 
 ---
@@ -1116,3 +1162,149 @@ async def _generate_one(slide_info: dict, idx: int):
 | LLM 输出被截断时的表现 | langchain 打 `max_tokens stop reason` 警告但不重试；tool_use JSON 截断后 parser 返回 `{}`；pydantic 收到空 dict 才会 ValidationError。三层信号，真正的根因在第一层 |
 | batch LLM 调用的并发控制 | `asyncio.gather` 无上限并发；用 `asyncio.Semaphore(N)` 控制在途请求数。`N=3` 对 free/tier-1 账号是安全值 |
 | 429 concurrent vs RPM | concurrent connections rate limit 触发快（几乎同时的 18 个请求），RPM 触发慢（需要积累）。两者现象相同但解法不同：concurrent → Semaphore；RPM → 请求间加 delay 或指数退避 |
+
+---
+
+## Retrieval Eval 发现的问题
+
+---
+
+## 39. Self-verification gate 表现远低于预期——两个独立 bug 叠加
+
+**发现时机**：Campaign KB 首次端到端 retrieval eval（2026-06-06），6 条记录、20 个查询。
+
+**表面现象**：开启 gate（`verify=True`）后 Recall@3 从 84% 骤降至 56%——gate 拦掉了 8 个查询（其中 5 个是明确相关的正确结果），看起来像"gate 过于激进"。
+
+**排查过程**：
+
+查看被拦截的查询，发现两类不同的错误信号：
+1. 部分查询返回 `score=0.000`，且 stderr 有 `ValidationError: reason — Field required`
+2. 部分查询返回 `score=0.000`，但 stderr 没有报错（gate 正常运行，只是 verdict 是 insufficient）
+
+两类信号说明是两个独立问题。
+
+**Bug A：`max_tokens=200` 导致 JSON 截断**
+
+`verify_retrieval_sufficiency()` 调用 LLM 时设置 `max_tokens=200`。当检索结果较多（3 条记录各含 meta + matched proposition）时，LLM 生成 verdict + reason 有时超出 200 tokens。
+
+响应被强制截断，输出中只有 `{"verdict": "insufficient"}`，缺少 `reason` 字段。Pydantic 解析 `SufficiencyCheck` 失败，抛 `ValidationError`。gate 的 `except Exception` 捕获后 fallback 为**返回 unfiltered 结果**（与完全拦截相反）。
+
+同样的 `max_tokens` 问题在 #37 的 `deck_orchestrator` 里出现过，这次是同一个 pattern 在 gate 上的重演——输入动态增大（更多检索结果 → 更长的 summary），输出空间被压缩。
+
+**Bug B：gate summary 只暴露 meta 标签，不含 matched proposition**
+
+`_summarise_results()` 生成给 LLM 的 campaign 摘要时，只展示 `industry | campaign_type | budget_tier`，不展示实际匹配的 proposition 内容。
+
+当查询命中正确的记录，但排序第一的记录恰好是另一个（语义相近但不相关的）campaign 时，gate 看到的是混杂行业的 meta 标签（如"美妆 | 汽车 | 运动服饰"），对"整合营销IP联名策略"这类查询就判断 insufficient——因为 meta 和查询词汇不够接近。
+
+但如果 gate 能看到实际 matched proposition（如"安踏联合中国国家地理制作纪录片联名合作"），它会直接判断 sufficient。meta 标签太粗糙，无法替代 proposition 内容做相关性判断。
+
+**修复**：
+
+1. `max_tokens: 200 → 400`（给 verdict + reason 足够空间）
+2. `_summarise_results()` 每条记录额外附上 `top matched proposition`（截断到 150 字符）：
+
+```python
+# Before: only meta
+lines.append(f"{i}. {industry} | {type_str} | {budget}")
+
+# After: meta + top matched proposition
+lines.append(f"{i}. {industry} | {type_str} | {budget}")
+if r.matched_propositions:
+    lines.append(f"   matched: {r.matched_propositions[0][:150]}")
+```
+
+**修复后结果**：
+
+| 模式 | 修复前 | 修复后 |
+|---|---|---|
+| gate Recall@3 | 56% | **75%** |
+| gate FPR | 100%（Bug A fallback 导致未拦截） | **0%** |
+| gate 多拦截的正确结果 | 5 个 | 1 个（Q-03，属于 proposition 内容本身的问题） |
+
+**教训**：
+- 同一个 bug pattern（`max_tokens` 低于实际输出需求）第二次出现，说明这是系统性问题。对所有结构化输出调用，应该按"最复杂可能输入"设 `max_tokens`，而非按典型 case 估算
+- LLM judge 的判断质量取决于它能看到什么。meta 标签（industry/type）太粗粒度，无法替代实际匹配内容；给 gate 看 proposition 内容，判断准确率大幅提升
+- gate 的 `except Exception: return results` fallback 掩盖了 Bug A——FPR 没有下降反而稳定在 100%，看起来"正常"，其实是 gate 完全失效。silent fallback 是危险的，应该至少记录 warning 并在 eval 中检测到
+
+---
+
+## 通用经验（续 8）
+
+| 场景 | 做法 |
+|---|---|
+| LLM judge 的输入设计 | judge 只能判断它能看到的内容。meta 标签太粗，要给 judge 实际的匹配内容（proposition / chunk）才能做精准判断 |
+| `max_tokens` 的第二次教训 | 输入动态增长的 LLM 调用（检索结果变多 → summary 变长 → 输出空间压缩），`max_tokens` 要按最大可能输入估算 |
+| silent fallback 掩盖根因 | `except Exception: return results` 的 fallback 让系统"正常工作"但 gate 实际失效。eval 期间要检查 fallback 触发频率，而不只看最终 metric |
+
+---
+
+## 40. Proposition prompt 优化——从 eval 失败模式倒推干预点
+
+**发现时机**：Retrieval eval 第一轮完成后（Recall@3=81%），分析 retrieved_ids 发现 3 个具体失败模式。
+
+**失败模式诊断**：
+
+通过逐条查看每个 miss 的 retrieved_ids，定位出 3 类共同根因——不是检索算法的问题，而是 **proposition 的写法和 agent 查询语言之间有系统性词汇鸿沟**：
+
+| 失败查询 | Proposition 实际写法 | 查询的语言 | 鸿沟 |
+|---|---|---|---|
+| Q-05 "小红书作为主阵地" | "在小红书投放25位KOL+10位素人" | 战略定位语言 | 执行动作 ≠ 平台角色 |
+| Q-03 "KPI超出预期" | "全平台总曝光1.05亿+" | 比较性结论 | 绝对数字 ≠ 相对达成 |
+| Q-07 "整合营销+超预期+阶段性爆发" | 各字段独立描述 | 跨字段综合结论 | 原子命题无跨字段推导 |
+
+**两条路可以走，选了更根本的那条**：
+
+修复方向有两种：
+1. **改检索侧**：加 HyDE（查询前先生成假设性文档），或调高 score threshold，或加 query rewriting
+2. **改索引侧**：改 proposition prompt，让提取出来的命题本身覆盖这些语义维度
+
+选了改索引侧，理由是：**检索层优化的上限是索引内容的质量**。如果 proposition 里根本没有"战略定位"这个维度，再好的向量搜索也找不到它。改内容比改算法更根本，也更持久。
+
+**改动**：在 proposition prompt 里加了三条"高频遗漏"指令：
+
+```
+A. 渠道战略定位：写平台的战略角色，不只写投放数量
+   ❌ "在小红书投放25位KOL"
+   ✅ "以小红书为种草转化渠道，微博为引爆主阵地"
+
+B. KPI比较性结论：有达成率/超预期数据时必须写相对表述
+   ❌ "总曝光1.05亿+"
+   ✅ "总曝光1.05亿+，核心KPI超出预期目标30%+"
+
+C. 跨字段效率洞察：至少1条综合多字段的推导命题
+   例："KOC以10%预算贡献60%互动量"
+```
+
+代价：一次 prompt 修改 + 对安踏 record 重新 index（删旧命题 → LLM 重新提取 → Pinecone upsert）。
+
+**结果**（重跑 eval 后）：
+
+| 指标 | 修改前 | 修改后 |
+|---|---|---|
+| Recall@3 (raw) | 81% | **94%** |
+| Recall@3 (gate) | 75% | **94%** |
+| MRR | 0.58 | **0.74** |
+| Specific 类 Recall | 75% | **100%** |
+| Cross-field 类 Recall | 75% | **100%** |
+| Gate 额外 Recall 损耗 | −6% | **0%** |
+| FPR (gate) | 0% | **0%** |
+
+一次 prompt 修改同时修复了 3 个 failure mode。Gate 原本会多吃掉一个 Q-03（命题没写比较性结论导致 gate 判 insufficient），现在命题质量提升后 gate 判断更有把握，不再误伤。
+
+**与 #39 的关系**：#39 修的是 gate 的两个实现 bug（max_tokens 截断 + meta-only summary），Recall 从 56% 提升到 75%。#40 修的是 proposition 内容质量，Recall 从 75% 提升到 94%，gate 损耗归零。两者是串联关系：先修 gate 让它能正常工作，再修 proposition 让 gate 有更好的内容可以判断。
+
+**教训**：
+- RAG 系统的 Recall 瓶颈经常不在检索算法，而在索引内容的表达质量。eval → retrieved_ids 分析 → 根因定位 → 改上游，这个循环比直接调参数更有效
+- 3 个表面不同的 failure mode（词汇缺失、比较语言缺失、跨字段缺失）追根溯源是同一件事：prompt 没有明确要求这些维度，LLM 就不会主动生成它们
+- 改完要立刻重跑 eval 验证，不能凭直觉判断"应该好了"
+
+---
+
+## 通用经验（续 9）
+
+| 场景 | 做法 |
+|---|---|
+| RAG Recall 低但检索算法看起来正常 | 先查 retrieved_ids，确认是否是内容表达问题，再考虑算法优化 |
+| Proposition / chunk 写法 | 执行细节（投放数量）≠ 战略概念（平台角色）；绝对数字 ≠ 比较结论。两者都需要，各有其检索价值 |
+| LLM 内容提取的默认行为 | LLM 倾向于忠实复述原文，不会主动推导；跨字段结论和比较性表述必须在 prompt 里显式要求 |
