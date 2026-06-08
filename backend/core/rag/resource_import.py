@@ -3,6 +3,7 @@ import asyncio
 import io
 import json
 import logging
+import re as _re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,12 @@ from backend.core.rag.indexer import upsert_vectors
 
 VALID_TYPES = {"kol", "koc", "media", "vendor", "placement"}
 
+# Columns that are definitively structural noise — skip before LLM inference, never map to schema.
+KNOWN_IGNORE_COLUMNS = {
+    "序号", "no", "no.", "#", "编号", "id", "index", "行号",
+    "备选", "是否合作", "合作状态", "状态", "是否可用",
+}
+
 KNOWN_COLUMNS = {
     "name", "type", "tier", "platform", "followers", "categories",
     "content_style", "production_level", "persona_type", "voice_style",
@@ -28,6 +35,7 @@ KNOWN_COLUMNS = {
     "past_cpe", "tags", "pricing", "notes",
     "outlet_type", "beat", "service_type", "region",
     "placement_type", "location", "audience_reach",
+    "profile_url", "contact",
 }
 
 HEADER_ALIASES = {
@@ -41,12 +49,17 @@ HEADER_ALIASES = {
     "博主昵称": "name",
     "博主名称": "name",
     "账号名称": "name",
+    "账号": "name",
     "媒体名称": "name",
     "供应商名称": "name",
     "kol名称": "name",
-    # type
-    "类型": "type",
+    # type — use unambiguous aliases only; "类型" alone almost always means content category in real KOL sheets
     "资源类型": "type",
+    "达人类型": "type",
+    "kol类型": "type",
+    # categories — "类型" in practice means content genre (摄影/生活方式), not kol/koc/media
+    "类型": "categories",
+    "内容类型": "categories",
     # tier
     "层级": "tier",
     "达人层级": "tier",
@@ -71,6 +84,7 @@ HEADER_ALIASES = {
     "擅长类目": "categories",
     "垂类": "categories",
     "内容品类": "categories",
+    "内容类型": "categories",
     "行业": "categories",
     # content style
     "内容风格": "content_style",
@@ -107,6 +121,20 @@ HEADER_ALIASES = {
     # notes
     "备注": "notes",
     "说明": "notes",
+    # profile url (homepage / social profile link)
+    "链接": "profile_url",
+    "主页链接": "profile_url",
+    "主页": "profile_url",
+    "账号链接": "profile_url",
+    "账号主页": "profile_url",
+    "profile": "profile_url",
+    "url": "profile_url",
+    # contact (email / phone — non-url contact info)
+    "联系方式": "contact",
+    "联系人": "contact",
+    "邮箱": "contact",
+    "电话": "contact",
+    "微信": "contact",
     # media-specific
     "媒体类型": "outlet_type",
     "跑线": "beat",
@@ -150,6 +178,8 @@ SCHEMA_FIELD_DESCRIPTIONS: dict[str, str] = {
     "placement_type":   "广告形式（placement专用）：OOH/elevator/cinema",
     "location":         "广告位地点（placement专用）",
     "audience_reach":   "覆盖人群规模（placement专用）",
+    "profile_url":      "主页链接/账号链接（http/https开头的URL）",
+    "contact":          "联系方式（邮箱、电话、微信等非URL联系信息）",
 }
 
 
@@ -239,7 +269,9 @@ async def preview_import(file_bytes: bytes) -> dict:
         if not h:
             continue
         norm = h.lower()
-        if norm in KNOWN_COLUMNS:
+        if norm in KNOWN_IGNORE_COLUMNS:
+            ignored.append({"raw": h, "reason": "结构性序号列，自动忽略"})
+        elif norm in KNOWN_COLUMNS:
             recognized.append({"raw": h, "mapped_to": norm, "source": "exact"})
         elif norm in HEADER_ALIASES:
             recognized.append({"raw": h, "mapped_to": HEADER_ALIASES[norm], "source": "alias"})
@@ -247,7 +279,6 @@ async def preview_import(file_bytes: bytes) -> dict:
             unrecognized.append(h)
 
     inferred: list[dict] = []
-    ignored: list[dict] = []
 
     if unrecognized:
         llm_results = await infer_unrecognized_headers(unrecognized)
@@ -280,6 +311,43 @@ class ImportParseResult:
         self.ignored_columns = ignored
 
 
+_PLATFORM_SPLIT_RE = _re.compile(r'[+、/，,]+')
+_PLATFORM_FOLLOWER_RE = _re.compile(
+    r'(小红书|抖音|微博|微信|b站|bilibili|快手|youtube|instagram)([\d.]+(?:万|k|m)?)',
+    _re.IGNORECASE,
+)
+
+
+def _build_platforms(raw_platform: str, raw_followers: str, raw_url: str) -> list[dict]:
+    """Convert raw string fields into a list of PlatformEntry dicts."""
+    platform_names = [p.strip() for p in _PLATFORM_SPLIT_RE.split(raw_platform) if p.strip()]
+    if not platform_names:
+        return []
+
+    # Try to parse per-platform followers e.g. "抖音88万+小红书32万"
+    per_platform: dict[str, int] = {}
+    if raw_followers:
+        for m in _PLATFORM_FOLLOWER_RE.finditer(raw_followers):
+            fc = parse_follower_count(m.group(2))
+            if fc:
+                per_platform[m.group(1).lower()] = fc
+
+    total_count = parse_follower_count(raw_followers)
+
+    entries = []
+    for i, pname in enumerate(platform_names):
+        fc = per_platform.get(pname.lower())
+        if fc is None and len(platform_names) == 1:
+            fc = total_count
+        entries.append({
+            "name": pname,
+            "followers_raw": raw_followers if len(platform_names) == 1 else None,
+            "followers_count": fc,
+            "profile_url": raw_url if i == 0 else None,
+        })
+    return entries
+
+
 def parse_resource_excel(
     file_bytes: bytes,
     override_mapping: dict[str, str] | None = None,
@@ -298,6 +366,7 @@ def parse_resource_excel(
         return ImportParseResult([], [], [])
 
     raw_headers = [str(h).strip() if h else "" for h in rows[0]]
+    raw_headers_lower = {h.lower() for h in raw_headers if h}
 
     # Map headers: exact match → alias lookup → user override → ignored
     mapped_headers = []
@@ -305,7 +374,10 @@ def parse_resource_excel(
     ignored = []
     for h in raw_headers:
         normalized = h.lower()
-        if normalized in KNOWN_COLUMNS:
+        if normalized in KNOWN_IGNORE_COLUMNS:
+            mapped_headers.append("")   # silently drop — structural noise
+            ignored.append(h)
+        elif normalized in KNOWN_COLUMNS:
             mapped_headers.append(normalized)
             recognized.append(h)
         elif normalized in HEADER_ALIASES:
@@ -323,9 +395,19 @@ def parse_resource_excel(
             if h:
                 ignored.append(h)
 
+    def _is_repeat_header(row: tuple) -> bool:
+        """Return True if this row looks like a repeated header row (e.g. mid-sheet section dividers)."""
+        non_empty = [str(v).strip().lower() for v in row if v is not None and str(v).strip()]
+        if not non_empty:
+            return False
+        matches = sum(1 for v in non_empty if v in raw_headers_lower)
+        return matches >= min(3, max(2, len(non_empty) // 2))
+
     resources = []
     for row in rows[1:]:
         if not any(row):
+            continue
+        if _is_repeat_header(row):
             continue
         record = {}
         for idx, header in enumerate(mapped_headers):
@@ -336,14 +418,22 @@ def parse_resource_excel(
                 record[header] = str(val).strip()
         if record.get("name"):
             record.setdefault("type", "kol")
-            record.setdefault("platform", "")
             record.setdefault("tags", "")
             record.setdefault("categories", "")
             record.setdefault("content_style", "")
             record.setdefault("audience_tags", "")
             record.setdefault("past_cpe", "")
-            record["followers_count"] = parse_follower_count(record.get("followers"))
-            record["platform_normalized"] = normalize_platform(record.get("platform", ""))
+            # Build platforms list from raw fields, then remove flat fields
+            raw_platform = record.pop("platform", "")
+            raw_followers = record.pop("followers", "")
+            raw_url = record.pop("profile_url", "")
+            record.pop("followers_count", None)       # remove old computed field
+
+            platforms = _build_platforms(raw_platform, raw_followers, raw_url)
+            record["platforms"] = platforms
+            record["primary_platform"] = normalize_platform(platforms[0]["name"]) if platforms else ""
+            per_platform_total = sum(p["followers_count"] for p in platforms if p.get("followers_count")) or None
+            record["total_followers_count"] = per_platform_total or parse_follower_count(raw_followers)
             record["status"] = ResourceStatus.ACTIVE.value
             record["last_verified_at"] = datetime.utcnow()
             for list_field in ("categories", "audience_tags", "tags", "interest_tags"):
@@ -388,10 +478,14 @@ def resource_to_text(r: dict) -> str:
     ]
     if r.get("tier"):
         parts.append(f"Tier: {r['tier']}")
-    if r.get("platform"):
-        parts.append(f"Platform: {r['platform']}")
-    if r.get("followers"):
-        parts.append(f"Followers: {r['followers']}")
+    if r.get("platforms"):
+        for p in r["platforms"]:
+            line = f"Platform: {p['name']}"
+            if p.get("followers_count"):
+                line += f" ({p['followers_count']:,} followers)"
+            parts.append(line)
+    elif r.get("primary_platform"):
+        parts.append(f"Platform: {r['primary_platform']}")
     if r.get("categories"):
         cats = r["categories"]
         parts.append(f"Categories: {', '.join(cats) if isinstance(cats, list) else cats}")
@@ -468,9 +562,10 @@ async def refresh_resource_embedding(doc: dict, client_id: str):
         "name": doc.get("name", ""),
         "type": doc.get("type", rtype),
         "tier": doc.get("tier", ""),
-        "platform": normalize_platform(doc.get("platform", "")),
+        "platforms": [normalize_platform(p["name"]) for p in doc.get("platforms", []) if p.get("name")],
+        "primary_platform": doc.get("primary_platform", ""),
         "status": doc.get("status", ResourceStatus.ACTIVE.value),
-        "followers_count": doc.get("followers_count") or 0,
+        "total_followers_count": doc.get("total_followers_count") or 0,
         "tags": ", ".join(doc.get("tags", [])) if isinstance(doc.get("tags"), list) else doc.get("tags", ""),
     }
     upsert_vectors(ns, resource_id, [text], embeddings, extra_metadata=[extra_meta])
@@ -538,9 +633,10 @@ async def import_resources(
                 "name": r.get("name", ""),
                 "type": r.get("type", rtype),
                 "tier": r.get("tier", ""),
-                "platform": r.get("platform_normalized", normalize_platform(r.get("platform", ""))),
+                "platforms": [normalize_platform(p["name"]) for p in r.get("platforms", []) if p.get("name")],
+                "primary_platform": r.get("primary_platform", ""),
                 "status": r.get("status", ResourceStatus.ACTIVE.value),
-                "followers_count": r.get("followers_count") or 0,
+                "total_followers_count": r.get("total_followers_count") or 0,
                 "tags": ", ".join(tags) if isinstance(tags, list) else tags,
             }
             extra_metadata.append(meta)

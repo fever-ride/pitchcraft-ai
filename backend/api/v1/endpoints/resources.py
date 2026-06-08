@@ -15,6 +15,7 @@ from backend.core.models.resource import (
     AudienceDemographics,
     ContentStyle,
     ResourceStatus,
+    normalize_platform,
     parse_follower_count,
 )
 from backend.core.rag.resource_import import (
@@ -30,7 +31,11 @@ router = APIRouter()
 class CreateResourceRequest(BaseModel):
     type: str  # kol / media / vendor / placement
     name: str
+    platforms: list[dict] = []    # list of {name, followers_raw?, followers_count?, profile_url?}
+    # Convenience fields for single-platform creation — converted to platforms list
     platform: str = ""
+    followers: str | None = None
+    profile_url: str | None = None
     tier: str | None = None  # top / mid / tail / koc
     tags: list[str] = []
     categories: list[str] = []
@@ -41,7 +46,6 @@ class CreateResourceRequest(BaseModel):
     audience_tags: list[str] = []
     audience_demographics: AudienceDemographics | None = None
     past_cpe: str | None = None
-    followers: str | None = None
     pricing: dict | None = None
     # Type-specific
     outlet_type: str | None = None        # media: newspaper / magazine / online / TV
@@ -114,7 +118,20 @@ async def create_resource(
     doc["client_id"] = client_id
     doc["status"] = ResourceStatus.ACTIVE.value
     doc["last_verified_at"] = datetime.utcnow()
-    doc["followers_count"] = parse_follower_count(request.followers)
+    # Convert flat platform/followers/profile_url to platforms list if platforms not provided
+    if not doc.get("platforms") and (doc.get("platform") or doc.get("followers")):
+        from backend.core.rag.resource_import import _build_platforms
+        doc["platforms"] = _build_platforms(
+            doc.pop("platform", ""),
+            doc.pop("followers", "") or "",
+            doc.pop("profile_url", "") or "",
+        )
+        doc["primary_platform"] = normalize_platform(doc["platforms"][0]["name"]) if doc["platforms"] else ""
+        doc["total_followers_count"] = sum(p.get("followers_count") or 0 for p in doc["platforms"]) or None
+    else:
+        doc.pop("platform", None)
+        doc.pop("followers", None)
+        doc.pop("profile_url", None)
     resource_id = await repo.create(doc)
     doc["_id"] = resource_id  # needed by refresh_resource_embedding
     background_tasks.add_task(refresh_resource_embedding, doc, client_id)
@@ -154,13 +171,15 @@ async def update_resource_status(
 
 class UpdateResourceRequest(BaseModel):
     name: str | None = None
+    platforms: list[dict] | None = None
+    # Convenience fields — if provided alongside empty/absent platforms, they are converted
     platform: str | None = None
+    followers: str | None = None
     tags: list[str] | None = None
     categories: list[str] | None = None
     content_style: str | None = None
     audience_tags: list[str] | None = None
     past_cpe: str | None = None
-    followers: str | None = None
     pricing: dict | None = None
     metadata: dict | None = None
     notes: str | None = None
@@ -185,8 +204,19 @@ async def update_resource(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    if "followers" in updates:
-        updates["followers_count"] = parse_follower_count(updates["followers"])
+    # Convert flat platform/followers to platforms list if platforms not explicitly set
+    if not updates.get("platforms") and ("platform" in updates or "followers" in updates):
+        from backend.core.rag.resource_import import _build_platforms
+        raw_platform = updates.pop("platform", "")
+        raw_followers = updates.pop("followers", "")
+        platforms = _build_platforms(raw_platform, raw_followers, "")
+        if platforms:
+            updates["platforms"] = platforms
+            updates["primary_platform"] = normalize_platform(platforms[0]["name"])
+            updates["total_followers_count"] = sum(p.get("followers_count") or 0 for p in platforms) or None
+    else:
+        updates.pop("platform", None)
+        updates.pop("followers", None)
 
     await repo.update(resource_id, updates)
 

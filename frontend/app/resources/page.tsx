@@ -109,8 +109,15 @@ export default function ResourcesPage() {
                   {typeLabel(r.type)}
                 </div>
                 <div className="text-xs text-gray-500 flex gap-4">
-                  {r.platform && <span>{t("platform")}{r.platform}</span>}
-                  {r.followers && <span>{t("followers")}{r.followers}</span>}
+                  {r.platforms && r.platforms.length > 0 && (
+                    <span className="flex gap-1 flex-wrap">
+                      {r.platforms.map((p: { name: string; followers_count?: number }) => (
+                        <span key={p.name} className="text-xs text-gray-500">
+                          {p.name}{p.followers_count ? ` ${(p.followers_count / 10000).toFixed(1)}万` : ""}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                   {r.outlet_type && <span>{t("outlet")}{r.outlet_type}</span>}
                   {r.service_type && <span>{t("service")}{r.service_type}</span>}
                   {r.placement_type && <span>{t("type")}{r.placement_type}</span>}

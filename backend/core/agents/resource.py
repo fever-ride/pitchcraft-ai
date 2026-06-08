@@ -61,7 +61,7 @@ def _build_metadata_filter(
             if resolved:
                 platforms.add(resolved)
         if platforms:
-            filters["platform"] = {"$in": sorted(platforms)}
+            filters["platforms"] = {"$in": sorted(platforms)}
 
     return filters
 

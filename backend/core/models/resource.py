@@ -62,6 +62,13 @@ class CollaborationRecord(BaseModel):
     recommendation: str = ""
 
 
+class PlatformEntry(BaseModel):
+    name: str                        # e.g. "小红书", "抖音"
+    followers_raw: str | None = None # original string e.g. "88万"
+    followers_count: int | None = None
+    profile_url: str | None = None
+
+
 FRESHNESS_THRESHOLD_DAYS = 180
 
 
@@ -70,7 +77,6 @@ class Resource(BaseModel):
     client_id: str
     type: ResourceType
     name: str
-    platform: str = ""
     tags: list[str] = []
     pricing: Pricing | None = None
     collaboration_history: list[CollaborationRecord] = []
@@ -91,8 +97,9 @@ class Resource(BaseModel):
     past_cpe: str | None = None
 
     # KOL/KOC specific
-    followers: str | None = None
-    followers_count: int | None = None
+    platforms: list[PlatformEntry] = []
+    primary_platform: str = ""        # normalize_platform(platforms[0].name) — set at import/create time
+    total_followers_count: int | None = None   # sum across all platforms, display only
     engagement_rate: str | None = None
 
     # Media specific
@@ -171,17 +178,30 @@ def normalize_platform(raw: str) -> str:
 
 
 def parse_follower_count(raw: str | None) -> int | None:
-    """Parse follower string like '500万', '12.5k', '3000' into integer."""
+    """Parse follower string into total integer count.
+
+    Handles single values ('500万', '12.5k', '186000') and multi-platform
+    strings ('抖音88万+小红书32万') by extracting all number tokens and summing.
+    """
+    import re
     if not raw:
         return None
     text = raw.strip().lower().replace(",", "")
+    # Extract all number+unit tokens, e.g. ["88万", "32万"] from "抖音88万+小红书32万"
+    tokens = re.findall(r'[\d.]+(?:万|k|m)?', text)
+    if not tokens:
+        return None
     try:
-        if "万" in text:
-            return int(float(text.replace("万", "")) * 10000)
-        if "k" in text:
-            return int(float(text.replace("k", "")) * 1000)
-        if "m" in text:
-            return int(float(text.replace("m", "")) * 1000000)
-        return int(float(text))
+        total = 0
+        for token in tokens:
+            if "万" in token:
+                total += int(float(token.replace("万", "")) * 10000)
+            elif "k" in token:
+                total += int(float(token.replace("k", "")) * 1000)
+            elif "m" in token:
+                total += int(float(token.replace("m", "")) * 1000000)
+            else:
+                total += int(float(token))
+        return total if total > 0 else None
     except (ValueError, TypeError):
         return None

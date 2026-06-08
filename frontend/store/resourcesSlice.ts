@@ -26,10 +26,16 @@ export interface Resource {
   _id: string;
   name: string;
   type: string;
-  platform?: string;
+  platforms?: Array<{
+    name: string;
+    followers_raw?: string;
+    followers_count?: number;
+    profile_url?: string;
+  }>;
+  primary_platform?: string;
+  total_followers_count?: number;
   tags?: string[];
   pricing?: string;
-  followers?: string;
   outlet_type?: string;
   service_type?: string;
   placement_type?: string;
