@@ -89,7 +89,7 @@ export default function ProposalPage() {
               <div className="bg-gray-50 rounded p-4 text-sm">
                 {typeof proposal.strategy_result === "object" && (
                   <div className="space-y-2">
-                    {(proposal.strategy_result as Record<string, unknown>).big_idea && (
+                    {!!(proposal.strategy_result as Record<string, unknown>).big_idea && (
                       <div>
                         <span className="font-medium text-gray-500">Big Idea: </span>
                         <span>{String((proposal.strategy_result as Record<string, unknown>).big_idea)}</span>

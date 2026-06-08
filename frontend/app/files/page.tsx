@@ -162,10 +162,10 @@ export default function FilesPage() {
                   {f.metadata.visual_summary && (
                     <div className="bg-violet-50 rounded p-3 text-xs">
                       <h4 className="font-medium text-violet-800 mb-1">Visual Identity Summary</h4>
-                      {(f.metadata.visual_summary as Record<string, unknown>).style_description && (
+                      {!!(f.metadata.visual_summary as Record<string, unknown>).style_description && (
                         <p className="text-violet-700">{String((f.metadata.visual_summary as Record<string, unknown>).style_description)}</p>
                       )}
-                      {(f.metadata.visual_summary as Record<string, unknown>).design_language && (
+                      {!!(f.metadata.visual_summary as Record<string, unknown>).design_language && (
                         <p className="text-violet-600 mt-1">
                           Keywords: {((f.metadata.visual_summary as Record<string, unknown>).design_language as string[]).join(", ")}
                         </p>

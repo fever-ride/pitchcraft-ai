@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
+import bcrypt as _bcrypt
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import RedirectResponse
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 
 from backend.core.config import settings
@@ -11,12 +11,25 @@ from backend.core.database.connection import get_database
 from backend.core.database.repositories.users import UserRepository
 
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _verify_password(plain: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+def _hash_password(plain: str) -> str:
+    return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    name: str = ""
 
 
 class TokenResponse(BaseModel):
@@ -37,7 +50,13 @@ def _create_token(data: dict, expires_delta: timedelta) -> str:
 
 def _create_token_pair(user: dict) -> TokenResponse:
     access_token = _create_token(
-        {"sub": str(user["_id"]), "org_id": user["organization_id"], "role": user["role"]},
+        {
+            "sub": str(user["_id"]),
+            "email": user.get("email", ""),
+            "name": user.get("name", ""),
+            "org_id": user.get("organization_id", ""),
+            "role": user.get("role", "user"),
+        },
         timedelta(minutes=settings.jwt_access_token_expire_minutes),
     )
     refresh_token = _create_token(
@@ -56,9 +75,29 @@ async def login(request: LoginRequest):
     if not user or not user.get("password_hash"):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if not pwd_context.verify(request.password, user["password_hash"]):
+    if not _verify_password(request.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    return _create_token_pair(user)
+
+
+@router.post("/register", response_model=TokenResponse)
+async def register(request: RegisterRequest):
+    db = await get_database()
+    repo = UserRepository(db)
+    existing = await repo.find_by_email(request.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    hashed = _hash_password(request.password)
+    user_id = await repo.create({
+        "email": request.email,
+        "name": request.name or request.email.split("@")[0],
+        "password_hash": hashed,
+        "role": "user",
+        "organization_id": "",
+        "created_at": datetime.now(timezone.utc),
+    })
+    user = await repo.get_by_id(user_id)
     return _create_token_pair(user)
 
 

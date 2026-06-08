@@ -15,8 +15,8 @@ services:
 
   backend:
     build:
-      context: ../../backend
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
     environment:
@@ -49,8 +49,8 @@ services:
 
   worker:
     build:
-      context: ../../backend
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: backend/Dockerfile
     command: celery -A backend.core.tasks worker --loglevel=info --concurrency=4
     environment:
       - MONGODB_URL=mongodb://mongodb:27017
@@ -78,6 +78,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8001:8001"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
     networks:
       - pitchcraft_network
 

@@ -62,7 +62,7 @@ export function HitlBrief({ pipelineId, onConfirm, onRevise }: Props) {
         })}
       </div>
 
-      {(brief as Record<string, unknown>).missing_fields && (
+      {!!(brief as Record<string, unknown>).missing_fields && (
         <div className="bg-amber-50 border border-amber-200 rounded p-3 mb-6">
           <h4 className="text-sm font-semibold text-amber-800 mb-1">Missing Information</h4>
           <ul className="text-sm text-amber-700 list-disc pl-4">

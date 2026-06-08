@@ -19,11 +19,13 @@ export default function ClientsPage() {
 
   const loadClients = async () => {
     try {
-      const data = await fetch(
+      const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/clients`,
         { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }
-      ).then((r) => r.json());
-      setClients(data);
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data)) setClients(data);
     } catch {}
   };
 

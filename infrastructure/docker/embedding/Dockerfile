@@ -2,11 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+RUN pip install --no-cache-dir torch
+
 RUN pip install --no-cache-dir \
-    fastapi==0.115.0 \
-    uvicorn[standard]==0.30.6 \
-    sentence-transformers==3.1.0 \
-    torch --index-url https://download.pytorch.org/whl/cpu
+    fastapi \
+    uvicorn[standard] \
+    sentence-transformers
 
 COPY server.py .
 
