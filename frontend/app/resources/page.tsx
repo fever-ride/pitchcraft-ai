@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { useTranslations } from "next-intl";
 
 import type { AppDispatch, RootState } from "@/store/store";
 import {
@@ -29,6 +30,7 @@ const typeLabel = (type: string) => {
 };
 
 export default function ResourcesPage() {
+  const t = useTranslations("resources");
   const dispatch = useDispatch<AppDispatch>();
   const { resources, loading, importing, importResult, clientId, typeFilter } = useSelector(
     (state: RootState) => state.resources
@@ -57,14 +59,14 @@ export default function ResourcesPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-8">
-      <h1 className="text-2xl font-bold mb-6">Resource Library</h1>
+      <h1 className="text-2xl font-bold mb-6">{t("title")}</h1>
 
       <div className="flex gap-3 mb-6 items-center">
         <input
           type="text"
           value={clientId}
           onChange={(e) => dispatch(setClientId(e.target.value))}
-          placeholder="Client ID"
+          placeholder={t("clientIdPlaceholder")}
           className="border rounded px-3 py-2 text-sm w-48"
         />
         <select
@@ -72,7 +74,7 @@ export default function ResourcesPage() {
           onChange={(e) => dispatch(setTypeFilter(e.target.value))}
           className="border rounded px-3 py-2 text-sm"
         >
-          <option value="">All Types</option>
+          <option value="">{t("allTypes")}</option>
           <option value="kol">KOL</option>
           <option value="koc">KOC</option>
           <option value="media">Media</option>
@@ -80,7 +82,7 @@ export default function ResourcesPage() {
           <option value="placement">Placement</option>
         </select>
         <label className="px-4 py-2 bg-green-600 text-white rounded text-sm cursor-pointer hover:bg-green-700">
-          {importing ? "Importing..." : "Import Excel"}
+          {importing ? t("importing") : t("importExcel")}
           <input
             type="file"
             accept=".xlsx,.xls"
@@ -91,10 +93,10 @@ export default function ResourcesPage() {
         </label>
       </div>
 
-      {loading && <p className="text-gray-500 text-sm">Loading...</p>}
+      {loading && <p className="text-gray-500 text-sm">{t("loading")}</p>}
 
       {!loading && resources.length === 0 && (
-        <p className="text-gray-500 text-sm">No resources found. Enter a Client ID or import an Excel file.</p>
+        <p className="text-gray-500 text-sm">{t("noResources")}</p>
       )}
 
       {!loading && resources.length > 0 && (
@@ -107,12 +109,12 @@ export default function ResourcesPage() {
                   {typeLabel(r.type)}
                 </div>
                 <div className="text-xs text-gray-500 flex gap-4">
-                  {r.platform && <span>Platform: {r.platform}</span>}
-                  {r.followers && <span>Followers: {r.followers}</span>}
-                  {r.outlet_type && <span>Outlet: {r.outlet_type}</span>}
-                  {r.service_type && <span>Service: {r.service_type}</span>}
-                  {r.placement_type && <span>Type: {r.placement_type}</span>}
-                  {r.pricing && <span>Pricing: {r.pricing}</span>}
+                  {r.platform && <span>{t("platform")}{r.platform}</span>}
+                  {r.followers && <span>{t("followers")}{r.followers}</span>}
+                  {r.outlet_type && <span>{t("outlet")}{r.outlet_type}</span>}
+                  {r.service_type && <span>{t("service")}{r.service_type}</span>}
+                  {r.placement_type && <span>{t("type")}{r.placement_type}</span>}
+                  {r.pricing && <span>{t("pricing")}{r.pricing}</span>}
                 </div>
               </div>
               {r.tags && r.tags.length > 0 && (

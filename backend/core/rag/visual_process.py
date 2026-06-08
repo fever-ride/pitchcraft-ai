@@ -1,5 +1,4 @@
 """Visual file processing pipeline: render → analyze → embed → index."""
-import asyncio
 import json
 import logging
 import tempfile
@@ -16,7 +15,7 @@ from backend.core.rag.visual_style import (
     style_to_embedding_text,
     summary_to_embedding_text,
 )
-from backend.core.tasks import celery_app
+from backend.core.tasks import celery_app, run_async
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +32,13 @@ def process_visual_file_task(
 ):
     """Celery task: render visual file, extract styles, embed, and index."""
     try:
-        asyncio.run(_process_visual_file(file_id, storage_path, filename, client_id))
+        run_async(_process_visual_file(file_id, storage_path, filename, client_id))
     except Exception as exc:
         logger.error(f"Visual processing failed for {file_id}: {exc}")
-        asyncio.run(_mark_failed(file_id, str(exc)))
+        try:
+            run_async(_mark_failed(file_id, str(exc)))
+        except Exception as mark_exc:
+            logger.error(f"Failed to mark file {file_id} as failed: {mark_exc}")
         raise self.retry(exc=exc)
 
 

@@ -19,13 +19,15 @@ from pydantic import BaseModel, Field, model_validator
 # --- Enums ---
 
 class CampaignType(str, Enum):
-    LAUNCH = "launch"
-    BRANDING = "branding"
-    CONVERSION = "conversion"
-    EVENT = "event"
-    CRISIS = "crisis"
-    ALWAYS_ON = "always_on"
-    OTHER = "other"
+    PRODUCT_LAUNCH   = "product_launch"    # 新品上市 — announcing a new product/line
+    BRAND_CAMPAIGN   = "brand_campaign"    # 品牌建设 — awareness, image, repositioning
+    PERFORMANCE      = "performance"       # 效果营销 — conversion, CPA, e-commerce
+    EVENT_ACTIVATION = "event_activation"  # 活动策划 — brand days, pop-ups, experiential
+    BIG_SALE_PROMO   = "big_sale_promo"    # 大促 — 618, Double 11, seasonal mega-sale
+    INFLUENCER_KOL   = "influencer_kol"    # KOL/达人 — influencer-led campaigns
+    CRISIS_COMMS     = "crisis_comms"      # 危机公关 — crisis response / reputation mgmt
+    ALWAYS_ON        = "always_on"         # 常态运营 — ongoing retention / CRM
+    OTHER            = "other"
 
 
 class BudgetTier(str, Enum):

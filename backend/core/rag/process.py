@@ -1,5 +1,4 @@
 """File processing pipeline: parse → chunk → embed → index."""
-import asyncio
 import logging
 from pathlib import Path
 
@@ -9,7 +8,7 @@ from backend.core.rag.chunker import semantic_chunk, semantic_chunk_with_metadat
 from backend.core.rag.embedder import embed_texts
 from backend.core.rag.indexer import resolve_namespace, upsert_vectors
 from backend.core.rag.parser import parse_file, parse_file_structured
-from backend.core.tasks import celery_app
+from backend.core.tasks import celery_app, run_async
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +42,13 @@ def _build_contextual_prefix(
 def process_file_task(self, file_id: str, storage_path: str, filename: str, file_type: str, client_id: str, project_id: str | None, client_name: str | None = None):
     """Celery task: read from disk, parse, chunk, embed, and index a file."""
     try:
-        asyncio.run(_process_file(file_id, storage_path, filename, file_type, client_id, project_id, client_name))
+        run_async(_process_file(file_id, storage_path, filename, file_type, client_id, project_id, client_name))
     except Exception as exc:
         logger.error(f"File processing failed for {file_id}: {exc}")
-        asyncio.run(_mark_failed(file_id, str(exc)))
+        try:
+            run_async(_mark_failed(file_id, str(exc)))
+        except Exception as mark_exc:
+            logger.error(f"Failed to mark file {file_id} as failed: {mark_exc}")
         raise self.retry(exc=exc)
 
 

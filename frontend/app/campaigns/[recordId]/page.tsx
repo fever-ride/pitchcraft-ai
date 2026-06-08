@@ -3,6 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { useTranslations } from "next-intl";
 
 import type { AppDispatch, RootState } from "@/store/store";
 import {
@@ -12,6 +13,7 @@ import {
   clearCurrentRecord,
 } from "@/store/campaignsSlice";
 import { addToast } from "@/store/toastSlice";
+import { apiFetch } from "@/lib/api";
 
 type ModuleName =
   | "meta"
@@ -23,13 +25,34 @@ type ModuleName =
   | "client_learnings"
   | "deck_info";
 
-const CAMPAIGN_TYPES = ["launch", "branding", "conversion", "event", "crisis", "always_on", "other"];
+const CAMPAIGN_TYPES = [
+  "product_launch",
+  "brand_campaign",
+  "performance",
+  "event_activation",
+  "big_sale_promo",
+  "influencer_kol",
+  "crisis_comms",
+  "always_on",
+  "other",
+];
 const BUDGET_TIERS = ["under_100k", "100k_500k", "500k_2m", "2m_5m", "above_5m"];
 
 const ENUM_FIELDS: Record<string, string[]> = {
   "meta.campaign_type": CAMPAIGN_TYPES,
   "meta.budget_tier": BUDGET_TIERS,
 };
+
+const MODULE_ORDER: ModuleName[] = [
+  "meta",
+  "strategy_decisions",
+  "communication_plan",
+  "media_plan",
+  "execution",
+  "outcome",
+  "client_learnings",
+  "deck_info",
+];
 
 function StarRating({ value, onChange, readonly }: { value: number | null; onChange?: (v: number) => void; readonly?: boolean }) {
   return (
@@ -52,43 +75,20 @@ function StarRating({ value, onChange, readonly }: { value: number | null; onCha
 const PITCH_OUTCOME_OPTIONS = ["won", "lost", "unknown"] as const;
 type PitchOutcome = (typeof PITCH_OUTCOME_OPTIONS)[number];
 
-const PITCH_OUTCOME_LABELS: Record<PitchOutcome, string> = {
-  won: "Won ✓",
-  lost: "Lost ✗",
-  unknown: "Unknown",
-};
-
-const MODULE_LABELS: Record<ModuleName, string> = {
-  meta: "Campaign Meta",
-  strategy_decisions: "Strategy Decisions",
-  communication_plan: "Communication Plan",
-  media_plan: "Media Plan",
-  execution: "Execution Details",
-  outcome: "Outcome & Results",
-  client_learnings: "Client Learnings",
-  deck_info: "Deck Info",
-};
-
-const MODULE_ORDER: ModuleName[] = [
-  "meta",
-  "strategy_decisions",
-  "communication_plan",
-  "media_plan",
-  "execution",
-  "outcome",
-  "client_learnings",
-  "deck_info",
-];
-
 function ConfidenceIndicator({ confidence }: { confidence: string }) {
+  const t = useTranslations("campaignRecord");
+  const te = useTranslations("enums");
   const colors: Record<string, string> = {
     high: "text-green-600",
     partial: "text-yellow-600",
     low: "text-red-600",
   };
+  const label = (() => {
+    try { return te(`confidence.${confidence}` as Parameters<typeof te>[0]); } catch { return confidence; }
+  })();
   return (
     <span className={`text-sm font-medium ${colors[confidence] || "text-gray-500"}`}>
-      Confidence: {confidence}
+      {t("confidence")}: {label}
     </span>
   );
 }
@@ -106,14 +106,20 @@ function ModuleSection({
   onEdit: (key: string, value: unknown) => void;
   isPending: boolean;
 }) {
+  const t = useTranslations("campaignRecord");
+  const te = useTranslations("enums");
   const [expanded, setExpanded] = useState(name === "meta" || name === "strategy_decisions");
+
+  const moduleLabel = (() => {
+    try { return t(`modules.${name}` as Parameters<typeof t>[0]); } catch { return name; }
+  })();
 
   if (!data || Object.keys(data).length === 0) {
     return (
       <div className="border rounded p-4 opacity-60">
         <div className="flex items-center justify-between">
-          <h3 className="font-medium text-sm text-gray-500">{MODULE_LABELS[name]}</h3>
-          <span className="text-xs text-gray-400">No data extracted</span>
+          <h3 className="font-medium text-sm text-gray-500">{moduleLabel}</h3>
+          <span className="text-xs text-gray-400">{t("noDataExtracted")}</span>
         </div>
       </div>
     );
@@ -125,8 +131,8 @@ function ModuleSection({
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between"
       >
-        <h3 className="font-medium text-sm">{MODULE_LABELS[name]}</h3>
-        <span className="text-gray-400 text-xs">{expanded ? "collapse" : "expand"}</span>
+        <h3 className="font-medium text-sm">{moduleLabel}</h3>
+        <span className="text-gray-400 text-xs">{expanded ? t("collapse") : t("expand")}</span>
       </button>
       {expanded && (
         <div className="mt-3 space-y-2">
@@ -141,21 +147,26 @@ function ModuleSection({
             // Enum fields: render as dropdown
             const enumOptions = ENUM_FIELDS[editKey];
             if (enumOptions && isPending) {
+              // Determine which enum namespace to use for options
+              const enumNs = editKey === "meta.campaign_type" ? "campaignType" : "budgetTier";
               return (
                 <div key={field} className="text-sm">
                   <label className="text-xs text-gray-500 block mb-1">
                     {field.replace(/_/g, " ")}
-                    {isEdited && <span className="ml-1 text-blue-500">(edited)</span>}
+                    {isEdited && <span className="ml-1 text-blue-500">{t("edited")}</span>}
                   </label>
                   <select
                     value={String(currentValue ?? "")}
                     onChange={(e) => onEdit(editKey, e.target.value)}
                     className="w-full border rounded px-2 py-1 text-sm"
                   >
-                    <option value="">-- select --</option>
-                    {enumOptions.map((opt) => (
-                      <option key={opt} value={opt}>{opt.replace(/_/g, " ")}</option>
-                    ))}
+                    <option value="">{t("selectPlaceholder")}</option>
+                    {enumOptions.map((opt) => {
+                      const optLabel = (() => {
+                        try { return te(`${enumNs}.${opt}` as Parameters<typeof te>[0]); } catch { return opt.replace(/_/g, " "); }
+                      })();
+                      return <option key={opt} value={opt}>{optLabel}</option>;
+                    })}
                   </select>
                 </div>
               );
@@ -166,7 +177,7 @@ function ModuleSection({
                 <div key={field} className="text-sm">
                   <label className="text-xs text-gray-500 block mb-1">
                     {field.replace(/_/g, " ")}
-                    {isEdited && <span className="ml-1 text-blue-500">(edited)</span>}
+                    {isEdited && <span className="ml-1 text-blue-500">{t("edited")}</span>}
                   </label>
                   {isPending ? (
                     <textarea
@@ -178,7 +189,7 @@ function ModuleSection({
                           // invalid JSON, ignore until valid
                         }
                       }}
-                      className="w-full border rounded px-2 py-1 text-sm font-mono min-h-[60px]"
+                      className="w-full border rounded px-2 py-1 text-sm font-mono min-h-[120px]"
                     />
                   ) : (
                     <pre className="text-xs bg-gray-50 rounded p-2 overflow-x-auto">
@@ -193,7 +204,7 @@ function ModuleSection({
               <div key={field} className="text-sm">
                 <label className="text-xs text-gray-500 block mb-1">
                   {field.replace(/_/g, " ")}
-                  {isEdited && <span className="ml-1 text-blue-500">(edited)</span>}
+                  {isEdited && <span className="ml-1 text-blue-500">{t("edited")}</span>}
                 </label>
                 {isPending ? (
                   <input
@@ -225,6 +236,7 @@ function ClientLearningsSection({
   onEdit: (key: string, value: unknown) => void;
   isPending: boolean;
 }) {
+  const t = useTranslations("campaignRecord");
   const [expanded, setExpanded] = useState(false);
 
   const getValue = (field: string) => {
@@ -262,12 +274,12 @@ function ClientLearningsSection({
         className="w-full flex items-center justify-between"
       >
         <div className="flex items-center gap-2">
-          <h3 className="font-medium text-sm">Client Learnings</h3>
+          <h3 className="font-medium text-sm">{t("clientLearnings.title")}</h3>
           <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
             Manual — AE fills after project
           </span>
         </div>
-        <span className="text-gray-400 text-xs">{expanded ? "collapse" : "expand"}</span>
+        <span className="text-gray-400 text-xs">{expanded ? t("collapse") : t("expand")}</span>
       </button>
 
       {expanded && (
@@ -275,7 +287,7 @@ function ClientLearningsSection({
           {/* Decision Style */}
           <div>
             <label className="text-xs text-gray-500 block mb-1">
-              Decision style <span className="text-gray-400">(How this client evaluates and approves work)</span>
+              {t("clientLearnings.decisionStyle")} <span className="text-gray-400">(How this client evaluates and approves work)</span>
             </label>
             {isPending ? (
               <textarea
@@ -294,7 +306,7 @@ function ClientLearningsSection({
           {/* Approved Directions */}
           <div>
             <label className="text-xs text-gray-500 block mb-1">
-              Approved directions <span className="text-gray-400">(What the client liked and signed off on)</span>
+              {t("clientLearnings.approvedDirections")} <span className="text-gray-400">(What the client liked and signed off on)</span>
             </label>
             {isPending ? (
               <div className="space-y-1">
@@ -311,7 +323,7 @@ function ClientLearningsSection({
                       onClick={() => handleListRemove("client_approved_directions", i)}
                       className="text-gray-400 hover:text-red-500 px-1 text-xs"
                     >
-                      ✕
+                      {t("clientLearnings.removeItem")}
                     </button>
                   </div>
                 ))}
@@ -320,7 +332,7 @@ function ClientLearningsSection({
                   onClick={() => handleListAdd("client_approved_directions")}
                   className="text-xs text-blue-600 hover:underline"
                 >
-                  + Add direction
+                  {t("clientLearnings.addItem")}
                 </button>
               </div>
             ) : (
@@ -335,7 +347,7 @@ function ClientLearningsSection({
           {/* Rejected Directions */}
           <div>
             <label className="text-xs text-gray-500 block mb-1">
-              Rejected directions <span className="text-gray-400">(What the client pushed back on — avoid in future)</span>
+              {t("clientLearnings.rejectedDirections")} <span className="text-gray-400">(What the client pushed back on — avoid in future)</span>
             </label>
             {isPending ? (
               <div className="space-y-1">
@@ -352,7 +364,7 @@ function ClientLearningsSection({
                       onClick={() => handleListRemove("client_rejected_directions", i)}
                       className="text-gray-400 hover:text-red-500 px-1 text-xs"
                     >
-                      ✕
+                      {t("clientLearnings.removeItem")}
                     </button>
                   </div>
                 ))}
@@ -361,7 +373,7 @@ function ClientLearningsSection({
                   onClick={() => handleListAdd("client_rejected_directions")}
                   className="text-xs text-blue-600 hover:underline"
                 >
-                  + Add direction
+                  {t("clientLearnings.addItem")}
                 </button>
               </div>
             ) : (
@@ -383,6 +395,8 @@ export default function CampaignDetailPage() {
   const router = useRouter();
   const dispatch = useDispatch<AppDispatch>();
   const recordId = params.recordId as string;
+  const t = useTranslations("campaignRecord");
+  const te = useTranslations("enums");
 
   const { currentRecord, edits, loading, confirming, error } = useSelector(
     (state: RootState) => state.campaigns
@@ -407,10 +421,32 @@ export default function CampaignDetailPage() {
     }
   };
 
+  const [deleting, setDeleting] = useState(false);
+  const handleDelete = async () => {
+    const isConfirmed = currentRecord?.status !== "pending_confirmation";
+    const msg = isConfirmed
+      ? t("deleteConfirmConfirmed")
+      : t("deleteConfirmPending");
+    if (!confirm(msg)) return;
+    setDeleting(true);
+    try {
+      const res = await apiFetch(`/api/v1/campaigns/${recordId}`, { method: "DELETE" });
+      if (res.ok || res.status === 204) {
+        dispatch(addToast({ message: "Record deleted.", type: "success" }));
+        router.push("/campaigns");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        dispatch(addToast({ message: (err as { detail?: string }).detail ?? "Delete failed", type: "error" }));
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto p-8">
-        <p className="text-gray-500">Loading...</p>
+        <p className="text-gray-500">{t("loading")}</p>
       </div>
     );
   }
@@ -427,20 +463,35 @@ export default function CampaignDetailPage() {
 
   const isPending = currentRecord.status === "pending_confirmation";
 
+  const pitchOutcomeLabel = (opt: PitchOutcome): string => {
+    try { return te(`pitchOutcome.${opt}` as Parameters<typeof te>[0]); } catch { return opt; }
+  };
+
   return (
     <div className="max-w-4xl mx-auto p-8">
       <div className="flex items-center justify-between mb-6">
         <div>
           <button onClick={() => router.back()} className="text-sm text-blue-600 hover:underline mb-2">
-            &larr; Back to list
+            {t("backToList")}
           </button>
-          <h1 className="text-xl font-bold">Campaign Record Review</h1>
+          <h1 className="text-xl font-bold">{t("titleFallback")}</h1>
         </div>
         <div className="flex items-center gap-3">
           <ConfidenceIndicator confidence={currentRecord.confidence} />
           <span className={`text-xs px-2 py-1 rounded ${isPending ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700"}`}>
-            {isPending ? "Pending Confirmation" : "Confirmed"}
+            {isPending
+              ? (() => { try { return te("confirmationStatus.pending_confirmation"); } catch { return "Pending"; } })()
+              : (() => { try { return te("confirmationStatus.confirmed"); } catch { return "Confirmed"; } })()
+            }
           </span>
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            title={isPending ? "Delete this record" : "Delete record and remove from knowledge base"}
+            className="text-xs px-2 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 hover:border-red-400 disabled:opacity-50 transition-colors"
+          >
+            {deleting ? t("deleting") : t("deleteButton")}
+          </button>
         </div>
       </div>
 
@@ -496,7 +547,7 @@ export default function CampaignDetailPage() {
             </div>
             {currentRecord.record_type === "proposal" && (
               <div>
-                <span className="text-xs text-gray-500 block mb-1">Pitch Outcome</span>
+                <span className="text-xs text-gray-500 block mb-1">{t("pitchOutcome.label")}</span>
                 <div className="flex gap-1">
                   {PITCH_OUTCOME_OPTIONS.map((opt) => {
                     const current =
@@ -518,7 +569,7 @@ export default function CampaignDetailPage() {
                             : "border-gray-200 text-gray-400 hover:border-gray-400"
                         }`}
                       >
-                        {PITCH_OUTCOME_LABELS[opt]}
+                        {pitchOutcomeLabel(opt)}
                       </button>
                     );
                   })}
@@ -536,7 +587,7 @@ export default function CampaignDetailPage() {
             disabled={confirming}
             className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
           >
-            {confirming ? "Confirming..." : "Confirm Record"}
+            {confirming ? t("confirming") : t("confirmButton")}
           </button>
         </div>
       )}

@@ -8,7 +8,7 @@ function getToken(): string | null {
 }
 
 async function refreshToken(): Promise<boolean> {
-  const refresh = typeof window !== "undefined" ? localStorage.getItem("refresh") : null;
+  const refresh = typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
   if (!refresh) return false;
 
   try {
@@ -20,7 +20,7 @@ async function refreshToken(): Promise<boolean> {
     if (!res.ok) return false;
     const data = await res.json();
     localStorage.setItem("token", data.access_token);
-    if (data.refresh_token) localStorage.setItem("refresh", data.refresh_token);
+    if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
     return true;
   } catch {
     return false;
@@ -69,6 +69,44 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   return res.json();
+}
+
+/**
+ * Auth-aware fetch wrapper for pages that need raw Response access.
+ * Automatically adds the Bearer token, retries once with a refreshed token
+ * on 401, and redirects to /login if the refresh also fails.
+ */
+export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  const token = getToken();
+  const authInit: RequestInit = {
+    ...init,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
+  };
+
+  let res = await fetch(`${API_BASE}${input}`, authInit);
+
+  if (res.status === 401 && token) {
+    const refreshed = await refreshToken();
+    if (refreshed) {
+      const newToken = getToken();
+      res = await fetch(`${API_BASE}${input}`, {
+        ...init,
+        headers: {
+          ...(newToken ? { Authorization: `Bearer ${newToken}` } : {}),
+          ...init?.headers,
+        },
+      });
+    } else {
+      localStorage.removeItem("token");
+      localStorage.removeItem("refresh_token");
+      if (typeof window !== "undefined") window.location.href = "/login";
+    }
+  }
+
+  return res;
 }
 
 export const api = {

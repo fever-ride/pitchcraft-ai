@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -29,6 +30,7 @@ interface ResearchResult {
 }
 
 export default function ResearchPage() {
+  const t = useTranslations("research");
   const [pipelineId, setPipelineId] = useState("");
   const [data, setData] = useState<ResearchResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -63,14 +65,14 @@ export default function ResearchPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-8">
-      <h1 className="text-2xl font-bold mb-6">Research Data</h1>
+      <h1 className="text-2xl font-bold mb-6">{t("title")}</h1>
 
       <div className="flex gap-3 mb-6">
         <input
           type="text"
           value={pipelineId}
           onChange={(e) => setPipelineId(e.target.value)}
-          placeholder="Pipeline ID"
+          placeholder={t("pipelineIdPlaceholder")}
           className="border rounded px-3 py-2 text-sm w-72"
         />
         <button
@@ -78,7 +80,7 @@ export default function ResearchPage() {
           disabled={loading || !pipelineId}
           className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
         >
-          {loading ? "Loading..." : "Load"}
+          {loading ? t("loading") : t("load")}
         </button>
         {data && (
           <button
@@ -86,7 +88,7 @@ export default function ResearchPage() {
             disabled={loading}
             className="px-4 py-2 border border-blue-600 text-blue-600 rounded text-sm hover:bg-blue-50 disabled:opacity-50"
           >
-            Refresh Research
+            {t("refreshResearch")}
           </button>
         )}
       </div>
@@ -95,37 +97,37 @@ export default function ResearchPage() {
         <div className="space-y-6">
           {/* Meta */}
           <div className="flex gap-4 text-xs text-gray-500">
-            {data.from_cache && <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">From Cache</span>}
-            {data.social_data_source && <span>Source: {data.social_data_source}</span>}
-            {data.fetched_at && <span>Fetched: {new Date(data.fetched_at * 1000).toLocaleString()}</span>}
+            {data.from_cache && <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">{t("fromCache")}</span>}
+            {data.social_data_source && <span>{t("source")}{data.social_data_source}</span>}
+            {data.fetched_at && <span>{t("fetched")}{new Date(data.fetched_at * 1000).toLocaleString()}</span>}
           </div>
 
           {/* Recommended Approach */}
           {data.recommended_approach && (
             <div className="bg-blue-50 border border-blue-200 rounded p-4">
-              <h3 className="font-medium text-sm text-blue-800 mb-1">Recommended Approach</h3>
+              <h3 className="font-medium text-sm text-blue-800 mb-1">{t("recommendedApproach")}</h3>
               <p className="text-sm text-blue-700">{data.recommended_approach}</p>
             </div>
           )}
 
           {/* Competitors */}
           <section>
-            <h2 className="text-lg font-semibold mb-3">Competitors ({data.competitors.length})</h2>
+            <h2 className="text-lg font-semibold mb-3">{t("competitors", { count: data.competitors.length })}</h2>
             <div className="space-y-3">
               {data.competitors.map((c, i) => (
                 <div key={i} className="border rounded p-3">
                   <div className="font-medium text-sm">{c.name}</div>
                   <div className="text-xs text-gray-600 mt-1">
-                    <p><strong>Positioning:</strong> {c.positioning}</p>
-                    <p><strong>Recent:</strong> {c.recent_activity}</p>
+                    <p><strong>{t("positioning")}</strong>{c.positioning}</p>
+                    <p><strong>{t("recent")}</strong>{c.recent_activity}</p>
                   </div>
                   {c.social_presence && (
                     <div className="mt-2 text-xs text-gray-500 bg-gray-50 rounded p-2">
-                      <p>Platforms: {c.social_presence.platforms.join(", ")}</p>
-                      <p>Content style: {c.social_presence.content_style}</p>
-                      <p>Engagement: {c.social_presence.engagement_level}</p>
+                      <p>{t("platforms")}{c.social_presence.platforms.join(", ")}</p>
+                      <p>{t("contentStyle")}{c.social_presence.content_style}</p>
+                      <p>{t("engagement")}{c.social_presence.engagement_level}</p>
                       {c.social_presence.notable_campaigns.length > 0 && (
-                        <p>Campaigns: {c.social_presence.notable_campaigns.join(", ")}</p>
+                        <p>{t("campaigns")}{c.social_presence.notable_campaigns.join(", ")}</p>
                       )}
                     </div>
                   )}
@@ -136,16 +138,16 @@ export default function ResearchPage() {
 
           {/* Market Trends */}
           <section>
-            <h2 className="text-lg font-semibold mb-3">Market Trends</h2>
+            <h2 className="text-lg font-semibold mb-3">{t("marketTrends")}</h2>
             <ul className="list-disc pl-5 text-sm space-y-1">
-              {data.market_trends.map((t, i) => <li key={i}>{t}</li>)}
+              {data.market_trends.map((trend, i) => <li key={i}>{trend}</li>)}
             </ul>
           </section>
 
           {/* Content Trends */}
           {data.content_trends && data.content_trends.length > 0 && (
             <section>
-              <h2 className="text-lg font-semibold mb-3">Content Trends</h2>
+              <h2 className="text-lg font-semibold mb-3">{t("contentTrends")}</h2>
               <div className="space-y-2">
                 {data.content_trends.map((ct, i) => (
                   <div key={i} className="border rounded p-2 text-sm">
@@ -161,14 +163,14 @@ export default function ResearchPage() {
           {/* Opportunities + Risks */}
           <div className="grid grid-cols-2 gap-4">
             <section>
-              <h2 className="text-lg font-semibold mb-3">Opportunities</h2>
+              <h2 className="text-lg font-semibold mb-3">{t("opportunities")}</h2>
               <ul className="list-disc pl-5 text-sm space-y-1">
                 {data.opportunities.map((o, i) => <li key={i}>{o}</li>)}
               </ul>
             </section>
             {data.risks && data.risks.length > 0 && (
               <section>
-                <h2 className="text-lg font-semibold mb-3">Risks</h2>
+                <h2 className="text-lg font-semibold mb-3">{t("risks")}</h2>
                 <ul className="list-disc pl-5 text-sm space-y-1 text-red-700">
                   {data.risks.map((r, i) => <li key={i}>{r}</li>)}
                 </ul>

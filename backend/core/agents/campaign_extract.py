@@ -29,7 +29,7 @@ BACKGROUND_PROMPT = {
    - "proposal"：提案/方案/计划书/活动方案——描述将要做什么，尚未执行
    - "campaign"：结案/复盘/总结报告——描述已执行的项目，包含实际结果
 3. meta字段用于检索匹配，尽量填完整
-   - campaign_type：选最接近的枚举大类（launch/branding/conversion/event/crisis/always_on/other）
+   - campaign_type：选最接近的枚举大类（product_launch/brand_campaign/performance/event_activation/big_sale_promo/influencer_kol/crisis_comms/always_on/other）
    - campaign_subtype：用2-6字描述具体活动类型（如"员工家属开放日"、"新品发布会"、"618促销"、"品牌代言活动"），比campaign_type更具体
    - campaign_scenario：用一句话描述驱动本次campaign的宏观业务背景，例如"新品牌进入成熟市场"/"老品牌焕新吸引年轻用户"/"防御竞品新品发布"/"新品类市场教育"；如文档未交代背景则留null
    - budget_tier：【重要】只在文档中明确出现预算金额时填写，否则必须留null
@@ -52,7 +52,7 @@ Rules:
    - "proposal": pitch deck / activity plan / proposal — describes what will be done, not yet executed
    - "campaign": recap report / post-mortem / summary — describes an executed project with actual results
 3. Fill meta fields as completely as possible (used for retrieval matching)
-   - campaign_type: use closest enum (launch/branding/conversion/event/crisis/always_on/other)
+   - campaign_type: use closest enum (product_launch/brand_campaign/performance/event_activation/big_sale_promo/influencer_kol/crisis_comms/always_on/other)
    - campaign_subtype: 2-6 word specific description (e.g. "employee family day", "product launch event", "618 sales campaign") — more specific than campaign_type
    - campaign_scenario: one sentence describing the macro business situation driving this campaign, e.g. "new brand entering a mature market" / "legacy brand repositioning to attract Gen Z" / "defensive response to competitor product launch" / "new category education campaign"; leave null if document provides no context
    - budget_tier: [IMPORTANT] only fill if a budget amount is explicitly stated in the document, otherwise must be null

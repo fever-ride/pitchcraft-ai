@@ -1,11 +1,14 @@
 """Campaign Knowledge Base endpoints: review, confirm, and query campaign records."""
 import logging
+import uuid
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
+from backend.core.config import settings
 from backend.core.database.connection import get_database
 from backend.core.models.campaign_record import ConfirmationStatus
 from backend.core.rag.campaign_index import index_campaign_propositions
@@ -95,6 +98,79 @@ async def search_campaign_records(
     return records
 
 
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".ppt"}
+MAX_FILE_SIZE = 30 * 1024 * 1024  # 30 MB
+CHUNK_SIZE = 64 * 1024
+
+
+@router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
+async def upload_recap(
+    client_id: str = Form(...),
+    file: UploadFile = File(...),
+    project_id: str = Form(""),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Upload a recap / case-study document directly to the Campaign KB.
+
+    Triggers async extraction of campaign records for human review.
+    Associates with a client; project association is optional.
+    """
+    from backend.core.rag.archive_process import process_archive_task
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename required")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    # Verify client exists
+    db = await get_database()
+    client_doc = await db["clients"].find_one({"_id": __import__("bson").ObjectId(client_id)})
+    if not client_doc:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    archive_id = str(uuid.uuid4())
+    storage_dir = Path(settings.file_storage_dir) / client_id
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    dest = storage_dir / f"{archive_id}{ext}"
+
+    total = 0
+    with open(dest, "wb") as f:
+        while chunk := await file.read(CHUNK_SIZE):
+            total += len(chunk)
+            if total > MAX_FILE_SIZE:
+                dest.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail="File exceeds 30 MB limit")
+            f.write(chunk)
+
+    await db["project_archives"].insert_one({
+        "_id": archive_id,
+        "project_id": project_id,
+        "client_id": client_id,
+        "filename": file.filename,
+        "storage_path": str(dest),
+        "status": "pending",
+        "uploaded_by": user.user_id,
+        "uploaded_at": datetime.utcnow(),
+        "source": "campaign_kb_direct",
+    })
+
+    process_archive_task.delay(
+        archive_id=archive_id,
+        storage_path=str(dest),
+        filename=file.filename,
+        client_id=client_id,
+        project_id=project_id,
+        org_id=user.organization_id,
+    )
+
+    return {"archive_id": archive_id, "status": "processing"}
+
+
 @router.get("/{record_id}")
 async def get_campaign_record(
     record_id: str,
@@ -110,6 +186,66 @@ async def get_campaign_record(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     doc["id"] = str(doc.pop("_id"))
     return doc
+
+
+@router.delete("/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_campaign_record(
+    record_id: str,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Delete a campaign record and all associated data.
+
+    Pending records: deletes MongoDB record only.
+    Confirmed records: also purges propositions from MongoDB and Pinecone.
+    """
+    db = await get_database()
+    doc = await db["campaign_records"].find_one({
+        "_id": record_id,
+        "org_id": user.organization_id,
+    })
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+
+    is_confirmed = doc.get("status") == ConfirmationStatus.CONFIRMED.value
+
+    # Always delete the record itself
+    await db["campaign_records"].delete_one({"_id": record_id})
+
+    if is_confirmed:
+        # Clean up propositions + Pinecone in background so response is fast
+        background_tasks.add_task(
+            _purge_confirmed_record, record_id, user.organization_id
+        )
+
+
+async def _purge_confirmed_record(record_id: str, org_id: str):
+    """Remove propositions from MongoDB and Pinecone after a confirmed record is deleted."""
+    from backend.core.rag.indexer import _get_index
+
+    db = await get_database()
+
+    # Get proposition indices before deleting so we can build Pinecone vector IDs
+    prop_docs = await db["campaign_propositions"].find(
+        {"campaign_record_id": record_id}
+    ).to_list(length=200)
+    prop_indices = [p["index"] for p in prop_docs]
+
+    # Delete propositions from MongoDB
+    await db["campaign_propositions"].delete_many({"campaign_record_id": record_id})
+
+    # Delete vectors from Pinecone
+    if prop_indices:
+        vector_ids = [f"camp_{record_id}_{i}" for i in prop_indices]
+        namespace = f"campaign_knowledge_{org_id}"
+        try:
+            index = _get_index()
+            # Pinecone delete accepts up to 1000 IDs per call
+            for start in range(0, len(vector_ids), 1000):
+                index.delete(ids=vector_ids[start:start + 1000], namespace=namespace)
+            logger.info(f"Purged {len(vector_ids)} Pinecone vectors for record {record_id}")
+        except Exception as e:
+            logger.error(f"Pinecone purge failed for record {record_id}: {e}")
 
 
 @router.put("/{record_id}/confirm")

@@ -1,39 +1,45 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+
 interface Props {
   currentNode: string | null;
   status: string;
 }
 
-const STAGES = [
-  { id: "brief_analyzer", label: "Brief" },
-  { id: "research_agent", label: "Research" },
-  { id: "strategy_phase1", label: "Strategy" },
-  { id: "media_planner", label: "Media Plan" },
-  { id: "resource_agent", label: "Resources" },
-  { id: "deck_orchestrator", label: "Deck" },
-  { id: "slide_content", label: "Slides" },
-  { id: "ppt_builder", label: "PPT" },
-];
-
-const NODE_TO_STAGE: Record<string, string> = {
-  brief_analyzer: "brief_analyzer",
-  hitl_brief: "brief_analyzer",
-  research_agent: "research_agent",
-  strategy_phase1: "strategy_phase1",
-  strategy_phase2: "strategy_phase1",
-  brand_check: "strategy_phase1",
-  hitl_strategy: "strategy_phase1",
-  media_planner: "media_planner",
-  hitl_media: "media_planner",
-  resource_agent: "resource_agent",
-  deck_orchestrator: "deck_orchestrator",
-  hitl_structure: "deck_orchestrator",
-  slide_content: "slide_content",
-  narrative_agent: "slide_content",
-  hitl_gallery: "slide_content",
-  ppt_builder: "ppt_builder",
-};
-
 export function PipelineProgress({ currentNode, status }: Props) {
+  const t = useTranslations("pipeline");
+
+  const STAGES = [
+    { id: "brief_analyzer", label: t("progress.brief") },
+    { id: "research_agent", label: t("progress.research") },
+    { id: "strategy_phase1", label: t("progress.strategy") },
+    { id: "media_planner", label: t("progress.mediaPlan") },
+    { id: "resource_agent", label: t("progress.resources") },
+    { id: "deck_orchestrator", label: t("progress.deck") },
+    { id: "slide_content", label: t("progress.slides") },
+    { id: "ppt_builder", label: t("progress.ppt") },
+  ];
+
+  const NODE_TO_STAGE: Record<string, string> = {
+    brief_analyzer: "brief_analyzer",
+    hitl_brief: "brief_analyzer",
+    research_agent: "research_agent",
+    strategy_phase1: "strategy_phase1",
+    strategy_phase2: "strategy_phase1",
+    brand_check: "strategy_phase1",
+    hitl_strategy: "strategy_phase1",
+    media_planner: "media_planner",
+    hitl_media: "media_planner",
+    resource_agent: "resource_agent",
+    deck_orchestrator: "deck_orchestrator",
+    hitl_structure: "deck_orchestrator",
+    slide_content: "slide_content",
+    narrative_agent: "slide_content",
+    hitl_gallery: "slide_content",
+    ppt_builder: "ppt_builder",
+  };
+
   const activeStage = currentNode ? NODE_TO_STAGE[currentNode] : null;
   const activeIdx = STAGES.findIndex((s) => s.id === activeStage);
 

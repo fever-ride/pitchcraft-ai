@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useTranslations } from "next-intl";
 
 interface MediaTier {
   tier: string;
@@ -26,14 +27,8 @@ interface Props {
   onConfirm: (edits?: Record<string, unknown>) => void;
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  awareness: "声量",
-  amplification: "扩散",
-  ugc: "UGC",
-  credibility: "公信力",
-};
-
 export function HitlMedia({ pipelineId, onConfirm }: Props) {
+  const t = useTranslations("pipeline");
   const [plan, setPlan] = useState<MediaPlanData | null>(null);
   const [tiers, setTiers] = useState<MediaTier[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,20 +56,28 @@ export function HitlMedia({ pipelineId, onConfirm }: Props) {
   };
 
   if (loading) {
-    return <div className="p-8 text-center text-gray-500">Generating media plan...</div>;
+    return <div className="p-8 text-center text-gray-500">{t("hitlMedia.loading")}</div>;
   }
 
   if (!plan) {
-    return <div className="p-8 text-center text-red-500">Failed to load media plan.</div>;
+    return <div className="p-8 text-center text-red-500">{t("hitlMedia.loadFailed")}</div>;
   }
+
+  const getRoleLabel = (role: string): string => {
+    const roleKeys = ["awareness", "amplification", "ugc", "credibility"] as const;
+    if (roleKeys.includes(role as typeof roleKeys[number])) {
+      return t(`hitlMedia.roles.${role as typeof roleKeys[number]}`);
+    }
+    return role;
+  };
 
   return (
     <div className="max-w-5xl mx-auto p-8 overflow-y-auto h-full">
-      <h2 className="text-xl font-bold mb-2">Review Media Plan</h2>
+      <h2 className="text-xl font-bold mb-2">{t("hitlMedia.title")}</h2>
 
       {plan.strategy_interpretation && (
         <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-4 text-sm text-blue-800">
-          <span className="font-medium">Strategy Interpretation: </span>
+          <span className="font-medium">{t("hitlMedia.strategyInterpretation")}</span>
           {plan.strategy_interpretation}
         </div>
       )}
@@ -87,25 +90,25 @@ export function HitlMedia({ pipelineId, onConfirm }: Props) {
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="bg-gray-50">
-              <th className="border px-3 py-2 text-left">Channel</th>
-              <th className="border px-3 py-2 text-left">Tier</th>
-              <th className="border px-3 py-2 text-center w-20">Count</th>
-              <th className="border px-3 py-2 text-center w-24">Budget %</th>
-              <th className="border px-3 py-2 text-center w-28">Amount</th>
-              <th className="border px-3 py-2 text-left">Role</th>
-              <th className="border px-3 py-2 text-left">Selection Criteria</th>
+              <th className="border px-3 py-2 text-left">{t("hitlMedia.colChannel")}</th>
+              <th className="border px-3 py-2 text-left">{t("hitlMedia.colTier")}</th>
+              <th className="border px-3 py-2 text-center w-20">{t("hitlMedia.colCount")}</th>
+              <th className="border px-3 py-2 text-center w-24">{t("hitlMedia.colBudgetPct")}</th>
+              <th className="border px-3 py-2 text-center w-28">{t("hitlMedia.colAmount")}</th>
+              <th className="border px-3 py-2 text-left">{t("hitlMedia.colRole")}</th>
+              <th className="border px-3 py-2 text-left">{t("hitlMedia.colCriteria")}</th>
             </tr>
           </thead>
           <tbody>
-            {tiers.map((t, i) => (
+            {tiers.map((tier, i) => (
               <tr key={i} className="hover:bg-gray-50">
-                <td className="border px-3 py-2">{t.channel}</td>
-                <td className="border px-3 py-2">{t.tier}</td>
+                <td className="border px-3 py-2">{tier.channel}</td>
+                <td className="border px-3 py-2">{tier.tier}</td>
                 <td className="border px-2 py-1 text-center">
                   <input
                     type="number"
                     min={0}
-                    value={t.count}
+                    value={tier.count}
                     onChange={(e) => updateTier(i, "count", parseInt(e.target.value) || 0)}
                     className="w-16 border rounded px-1 py-0.5 text-center text-sm"
                   />
@@ -116,22 +119,22 @@ export function HitlMedia({ pipelineId, onConfirm }: Props) {
                     min={0}
                     max={100}
                     step={5}
-                    value={t.budget_percentage}
+                    value={tier.budget_percentage}
                     onChange={(e) => updateTier(i, "budget_percentage", parseFloat(e.target.value) || 0)}
                     className="w-16 border rounded px-1 py-0.5 text-center text-sm"
                   />
                   <span className="text-gray-400 ml-0.5">%</span>
                 </td>
                 <td className="border px-3 py-2 text-center text-gray-500">
-                  {t.budget_absolute != null ? `¥${t.budget_absolute.toLocaleString()}` : "—"}
+                  {tier.budget_absolute != null ? `¥${tier.budget_absolute.toLocaleString()}` : "—"}
                 </td>
                 <td className="border px-3 py-2">
                   <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">
-                    {ROLE_LABELS[t.role] || t.role}
+                    {getRoleLabel(tier.role)}
                   </span>
                 </td>
                 <td className="border px-3 py-2 text-xs text-gray-600 max-w-xs">
-                  {t.selection_criteria}
+                  {tier.selection_criteria}
                 </td>
               </tr>
             ))}
@@ -142,7 +145,7 @@ export function HitlMedia({ pipelineId, onConfirm }: Props) {
       {plan.historical_references.length > 0 && (
         <details className="mb-6">
           <summary className="text-sm font-medium text-blue-600 cursor-pointer">
-            Historical References ({plan.historical_references.length})
+            {t("hitlMedia.historicalRefs", { count: plan.historical_references.length })}
           </summary>
           <ul className="mt-2 text-xs text-gray-600 space-y-1 pl-4 list-disc">
             {plan.historical_references.map((ref, i) => (
@@ -157,10 +160,10 @@ export function HitlMedia({ pipelineId, onConfirm }: Props) {
           onClick={handleConfirm}
           className="px-5 py-2 bg-green-600 text-white rounded font-medium hover:bg-green-700"
         >
-          Confirm Media Plan
+          {t("hitlMedia.confirmMedia")}
         </button>
         <span className="text-xs text-gray-500">
-          You can adjust count and budget % above before confirming.
+          {t("hitlMedia.adjustHint")}
         </span>
       </div>
     </div>

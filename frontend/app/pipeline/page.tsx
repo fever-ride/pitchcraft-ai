@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { useSelector, useDispatch } from "react-redux";
 import { RootState } from "@/store/store";
 import { setPipelineId, reset } from "@/store/pipelineSlice";
@@ -13,8 +14,25 @@ import { HitlStructure } from "@/components/pipeline/HitlStructure";
 import { HitlMedia } from "@/components/pipeline/HitlMedia";
 import { GalleryView } from "@/components/gallery/GalleryView";
 import { PipelineProgress } from "@/components/pipeline/PipelineProgress";
+import { useTranslations } from "next-intl";
+
+type StartHandler = (brief: string, clientId: string, projectId: string, outputLanguage: string) => void;
+
+function BriefInputWithParams({ onSubmit }: { onSubmit: StartHandler }) {
+  const searchParams = useSearchParams();
+  const initialClientId = searchParams.get("client_id") ?? undefined;
+  const initialProjectId = searchParams.get("project_id") ?? undefined;
+  return (
+    <BriefInput
+      onSubmit={onSubmit}
+      initialClientId={initialClientId}
+      initialProjectId={initialProjectId}
+    />
+  );
+}
 
 export default function PipelinePage() {
+  const t = useTranslations("pipeline");
   const dispatch = useDispatch();
   const { pipelineId, status, currentNode } = useSelector(
     (state: RootState) => state.pipeline
@@ -33,7 +51,7 @@ export default function PipelinePage() {
       });
       dispatch(setPipelineId(result.pipeline_id));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to start pipeline");
+      setError(err instanceof Error ? err.message : t("startError"));
     }
   };
 
@@ -48,8 +66,10 @@ export default function PipelinePage() {
   if (!pipelineId) {
     return (
       <div className="max-w-3xl mx-auto p-8">
-        <h1 className="text-2xl font-bold mb-6">New Proposal</h1>
-        <BriefInput onSubmit={handleStart} />
+        <h1 className="text-2xl font-bold mb-6">{t("title")}</h1>
+        <Suspense fallback={<BriefInput onSubmit={handleStart} />}>
+          <BriefInputWithParams onSubmit={handleStart} />
+        </Suspense>
         {error && <p className="mt-4 text-red-600 text-sm">{error}</p>}
       </div>
     );
@@ -94,20 +114,20 @@ export default function PipelinePage() {
 
         {status === "completed" && (
           <div className="flex flex-col items-center justify-center h-full">
-            <h2 className="text-2xl font-bold text-green-700">Proposal Ready</h2>
-            <p className="mt-2 text-gray-600">Your PPT has been generated.</p>
+            <h2 className="text-2xl font-bold text-green-700">{t("proposalReady")}</h2>
+            <p className="mt-2 text-gray-600">{t("proposalReadyDesc")}</p>
             <div className="mt-6 flex gap-3">
               <a
                 href={`/proposals/${pipelineId}`}
                 className="px-4 py-2 bg-green-600 text-white rounded"
               >
-                View & Download
+                {t("viewDownload")}
               </a>
               <button
                 onClick={() => dispatch(reset())}
                 className="px-4 py-2 bg-blue-600 text-white rounded"
               >
-                Start New Proposal
+                {t("startNew")}
               </button>
             </div>
           </div>
@@ -117,7 +137,7 @@ export default function PipelinePage() {
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto" />
-              <p className="mt-4 text-gray-600">Processing: {currentNode}</p>
+              <p className="mt-4 text-gray-600">{t("processing")} {currentNode}</p>
             </div>
           </div>
         )}

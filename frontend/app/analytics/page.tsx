@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTranslations } from "next-intl";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -36,6 +37,7 @@ interface BriefStats {
 }
 
 export default function AnalyticsPage() {
+  const t = useTranslations("analytics");
   const [pipeline, setPipeline] = useState<PipelineMetrics | null>(null);
   const [cache, setCache] = useState<CacheStats | null>(null);
   const [feedback, setFeedback] = useState<FeedbackStats | null>(null);
@@ -61,37 +63,37 @@ export default function AnalyticsPage() {
   }, []);
 
   if (loading) {
-    return <div className="p-8 text-center text-gray-500">Loading analytics...</div>;
+    return <div className="p-8 text-center text-gray-500">{t("loading")}</div>;
   }
 
   return (
     <div className="max-w-6xl mx-auto p-8">
-      <h1 className="text-2xl font-bold mb-8">Analytics Dashboard</h1>
+      <h1 className="text-2xl font-bold mb-8">{t("title")}</h1>
 
       {/* Top-level KPIs */}
       <div className="grid grid-cols-4 gap-4 mb-8">
-        <StatCard label="Total Pipelines" value={pipeline?.pipeline_count ?? 0} />
+        <StatCard label={t("kpis.totalPipelines")} value={pipeline?.pipeline_count ?? 0} />
         <StatCard
-          label="Avg Duration"
+          label={t("kpis.avgDuration")}
           value={`${pipeline?.avg_duration_s ?? 0}s`}
-          sub={`Max: ${pipeline?.max_duration_s ?? 0}s`}
+          sub={t("kpis.maxDuration", { value: `${pipeline?.max_duration_s ?? 0}s` })}
         />
         <StatCard
-          label="Avg LLM Calls"
+          label={t("kpis.avgLlmCalls")}
           value={pipeline?.avg_llm_calls ?? 0}
-          sub="Budget: 30 max"
+          sub={t("kpis.llmBudget")}
         />
         <StatCard
-          label="Resource Trigger Rate"
+          label={t("kpis.resourceTriggerRate")}
           value={`${pipeline?.resource_agent_trigger_rate ?? 0}%`}
-          sub="of all pipelines"
+          sub={t("kpis.resourceSub")}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-6 mb-8">
         {/* Stage Durations */}
         <section className="border rounded p-4">
-          <h2 className="font-semibold text-sm mb-3">Stage Performance</h2>
+          <h2 className="font-semibold text-sm mb-3">{t("stagePerformance")}</h2>
           {pipeline?.stage_durations && Object.keys(pipeline.stage_durations).length > 0 ? (
             <div className="space-y-2">
               {Object.entries(pipeline.stage_durations).map(([stage, data]) => (
@@ -109,23 +111,23 @@ export default function AnalyticsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-xs text-gray-500">No stage data yet.</p>
+            <p className="text-xs text-gray-500">{t("noStageData")}</p>
           )}
         </section>
 
         {/* Feedback Stats */}
         <section className="border rounded p-4">
-          <h2 className="font-semibold text-sm mb-3">Client Feedback</h2>
+          <h2 className="font-semibold text-sm mb-3">{t("clientFeedback")}</h2>
           {feedback && feedback.total_feedback > 0 ? (
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-2 text-center">
-                <MiniStat label="Total" value={feedback.total_feedback} />
-                <MiniStat label="Triggered Rerun" value={`${feedback.rerun_trigger_rate}%`} />
-                <MiniStat label="Approved Dirs" value={feedback.with_approved_directions} />
+                <MiniStat label={t("feedbackTotal")} value={feedback.total_feedback} />
+                <MiniStat label={t("feedbackRerun")} value={`${feedback.rerun_trigger_rate}%`} />
+                <MiniStat label={t("feedbackApproved")} value={feedback.with_approved_directions} />
               </div>
               {Object.keys(feedback.target_distribution).length > 0 && (
                 <div>
-                  <p className="text-xs text-gray-500 mb-1">By Target:</p>
+                  <p className="text-xs text-gray-500 mb-1">{t("byTarget")}</p>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(feedback.target_distribution).map(([target, count]) => (
                       <span key={target} className="text-xs bg-gray-100 rounded px-2 py-0.5">
@@ -137,7 +139,7 @@ export default function AnalyticsPage() {
               )}
             </div>
           ) : (
-            <p className="text-xs text-gray-500">No feedback data yet.</p>
+            <p className="text-xs text-gray-500">{t("noFeedback")}</p>
           )}
         </section>
       </div>
@@ -145,22 +147,22 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-2 gap-6">
         {/* Cache Stats */}
         <section className="border rounded p-4">
-          <h2 className="font-semibold text-sm mb-3">Research Cache</h2>
+          <h2 className="font-semibold text-sm mb-3">{t("researchCache")}</h2>
           <div className="grid grid-cols-2 gap-2 text-center">
-            <MiniStat label="Cached Entries" value={cache?.cached_research_entries ?? 0} />
-            <MiniStat label="TTL" value={`${cache?.ttl_days ?? 30} days`} />
+            <MiniStat label={t("cachedEntries")} value={cache?.cached_research_entries ?? 0} />
+            <MiniStat label={t("ttl")} value={t("ttlDays", { value: cache?.ttl_days ?? 30 })} />
           </div>
         </section>
 
         {/* Version Stats */}
         <section className="border rounded p-4">
-          <h2 className="font-semibold text-sm mb-3">Version History</h2>
+          <h2 className="font-semibold text-sm mb-3">{t("versionHistory")}</h2>
           {brief && brief.total_versions > 0 ? (
             <div className="space-y-2">
               <div className="grid grid-cols-3 gap-2 text-center">
-                <MiniStat label="Versions" value={brief.total_versions} />
-                <MiniStat label="Reruns" value={brief.rerun_count} />
-                <MiniStat label="Rollbacks" value={brief.rollback_count} />
+                <MiniStat label={t("versions")} value={brief.total_versions} />
+                <MiniStat label={t("reruns")} value={brief.rerun_count} />
+                <MiniStat label={t("rollbacks")} value={brief.rollback_count} />
               </div>
               {Object.keys(brief.trigger_distribution).length > 0 && (
                 <div className="flex flex-wrap gap-2">
@@ -173,7 +175,7 @@ export default function AnalyticsPage() {
               )}
             </div>
           ) : (
-            <p className="text-xs text-gray-500">No version data yet.</p>
+            <p className="text-xs text-gray-500">{t("noVersionData")}</p>
           )}
         </section>
       </div>

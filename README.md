@@ -832,10 +832,13 @@ pitchcraft/
 │   ├── app/                      # Next.js App Router pages
 │   │   ├── pipeline/             # Pipeline execution + HITL confirmation UIs
 │   │   ├── proposals/[id]/       # Proposal detail + FeedbackPanel + VersionPanel
-│   │   ├── clients/              # Client management
+│   │   ├── clients/              # Client list/create; links to client detail
+│   │   ├── clients/[clientId]/   # Client detail: projects, brand profile, resource library
+│   │   ├── projects/[projectId]/ # Project detail: overview/edit, proposals tab, archive upload
 │   │   ├── files/                # File library (upload, visual ref thumbnails)
 │   │   ├── resources/            # Resource library (list, filter, Excel import)
-│   │   ├── campaigns/            # Campaign KB review (pending list, detail/edit, confirm)
+│   │   ├── campaigns/            # Campaign KB: upload recap docs, review pending records
+│   │   ├── campaigns/[recordId]/ # Campaign record review/edit/confirm/delete
 │   │   ├── research/             # Research data display + refresh
 │   │   └── analytics/            # Analytics dashboard (KPIs, stage perf, feedback stats)
 │   ├── components/
@@ -844,10 +847,12 @@ pitchcraft/
 │   │   ├── feedback/             # FeedbackPanel (Node 6)
 │   │   ├── versions/             # VersionPanel (history, diff, rollback)
 │   │   ├── ui/                   # Toast
-│   │   └── layout/               # Nav, shell
+│   │   └── layout/               # Nav, shell, LanguageSwitcher
 │   ├── store/                    # Redux Toolkit (pipelineSlice, campaignsSlice, resourcesSlice, toastSlice)
 │   ├── hooks/                    # useWebSocket, usePipeline
-│   └── lib/                      # api.ts (HTTP client), ws.ts (WebSocket)
+│   ├── lib/                      # api.ts (HTTP client), ws.ts (WebSocket)
+│   ├── i18n/                     # next-intl server config (cookie-based locale)
+│   └── messages/                 # zh.json + en.json — all UI translations
 ├── infrastructure/
 │   ├── docker/
 │   │   └── docker-compose.yml    # 8 services with healthchecks
@@ -858,6 +863,7 @@ pitchcraft/
 │   └── backfill_resource_profiles.py  # LLM-infer tier/style/audience for existing resources
 ├── .github/workflows/ci.yml      # pytest + lint + frontend build (3 parallel jobs)
 ├── docs/dev-notes/               # Development notes and issue tracking
+├── CLAUDE.md                     # Claude Code guide (dev workflow, auth, Campaign KB flow)
 ├── PRD.md                        # Product requirements document
 ├── Architecture.md               # Technical architecture spec
 └── ROADMAP.md                    # Phased development plan
@@ -870,48 +876,89 @@ pitchcraft/
 ### Prerequisites
 
 - Docker & Docker Compose
-- Node.js 18+
-- Python 3.11+
+- `make` (pre-installed on macOS/Linux)
 
 ### Environment Variables
 
+Create `.env` at the **repo root** (not inside `backend/`):
+
 ```bash
-# backend/.env
-ANTHROPIC_API_KEY=sk-ant-...        # Claude API
-PINECONE_API_KEY=...                 # Vector store
-TAVILY_API_KEY=tvly-...              # Web search
-GOOGLE_CLIENT_ID=...                 # OAuth
+# Required
+ANTHROPIC_API_KEY=sk-ant-...
+PINECONE_API_KEY=...
+PINECONE_INDEX_NAME=pitchcraft
+JWT_SECRET_KEY=<run: python3 -c "import secrets; print(secrets.token_hex(32))">
+
+# Token expiry (default 7 days — keeps dev sessions alive longer)
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=10080
+
+# Optional — leave blank to disable
+TAVILY_API_KEY=tvly-...
+OPENAI_API_KEY=...
+GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 MICROSOFT_CLIENT_ID=...
 MICROSOFT_CLIENT_SECRET=...
-MONGODB_URI=mongodb://...
-REDIS_URL=redis://localhost:6379
-JWT_SECRET=...
 ```
+
+MongoDB, Redis, Celery, and the embedding service URLs are set automatically by Docker Compose and do not need to be in `.env`.
 
 ### Run
 
 ```bash
-# Start all services
-docker compose up -d
+# Start all 7 services (backend, frontend, worker, embedding, mongodb, redis, nginx)
+make up
 
-# Backend API:  http://localhost:8000
-# Frontend:     http://localhost:3000
-# API docs:     http://localhost:8000/docs
+# URLs once running:
+#   Frontend:   http://localhost:3000
+#   Backend:    http://localhost:8000
+#   API docs:   http://localhost:8000/docs
 ```
 
-### Development
+### Common commands
 
 ```bash
-# Backend
-cd backend && pip install -r requirements.txt
-uvicorn api.main:app --reload
+make up                  # Start all services (detached)
+make down                # Stop all services
+make ps                  # Show container status and health
+make logs                # Tail all logs
+make logs s=backend      # Tail a single service
+make restart s=frontend  # Restart one service (same image, no rebuild)
+make build s=backend     # Rebuild image for a service
+make build s=frontend    # Rebuild image for a service
+```
+
+### After editing code
+
+Docker containers do **not** hot-reload. Local file changes have no effect until you rebuild the image and recreate the container:
+
+```bash
+# 1. Rebuild the image for the changed service
+make build s=backend    # changed Python code or requirements.txt
+make build s=frontend   # changed Next.js code or package.json
+
+# 2. Recreate the container with the new image
+make up
+```
+
+`make restart s=<service>` only restarts the process inside the container — it does **not** pick up code changes. Always use `make build` + `make up` after editing source files.
+
+### First-time login
+
+No seed data is required. Register a new account at `http://localhost:3000/login` → **Create Account** tab.
+
+### Local development (without Docker)
+
+```bash
+# Backend (from repo root)
+pip install -r backend/requirements.txt
+uvicorn backend.api.main:app --reload
 
 # Frontend
 cd frontend && npm install && npm run dev
 
 # Tests
-cd backend && pytest tests/ -v
+pytest backend/tests/ -v
 ```
 
 ---
@@ -926,9 +973,11 @@ cd backend && pytest tests/ -v
 
 **Phase 4 (Resource Intelligence & Project Archive)**: Complete. Resource profile enrichment, archive pipeline, progressive accumulation, contextual embedding, source location tracking, adaptive chunking all done. Remaining: external social data API integration (low priority), HITL UI for source citations (frontend).
 
-**Phase 5 (Campaign Knowledge Base)**: Core complete. Schema design (5-dimension CampaignRecord), 3-call parallel extraction pipeline, confirmation API, proposition indexing, per-agent retrieval integration, and self-verification (`verify_retrieval_sufficiency`) all implemented. All pipeline agents now query campaign_knowledge with agent-specific profiles. Remaining: retrieval quality feedback (5.7), distilled insights (5.9).
+**Phase 5 (Campaign Knowledge Base)**: Core complete. Schema design (5-dimension CampaignRecord), 3-call parallel extraction pipeline, confirmation API, proposition indexing, per-agent retrieval integration, and self-verification (`verify_retrieval_sufficiency`) all implemented. All pipeline agents now query campaign_knowledge with agent-specific profiles. Frontend complete: Campaign KB page with upload panel (client dropdown with inline client creation, auto-polling after upload), record review/edit/confirm/delete UI, and full confirmed-record deletion with Pinecone cleanup. Campaign type taxonomy updated to 9 professional enums (product_launch/brand_campaign/performance/event_activation/big_sale_promo/influencer_kol/crisis_comms/always_on/other). Remaining: retrieval quality feedback (5.7), distilled insights (5.9).
 
 **Phase 6 (Media Planning Intelligence)**: Complete. New Media Planning Agent sits between Strategy P2 and Resource Agent. Transforms strategy output into structured tier-level media matrix (top/mid/koc/media) with per-tier budget allocation. Resource data model enhanced with `tier`, multi-dimensional `content_style_v2`, and structured `audience_demographics`. Resource Agent now performs per-tier retrieval using `selection_criteria` as query + `tier` as metadata filter. HITL editable table for matrix confirmation. Budget flows: Brief → Strategy (channel-level) → Media Planner (tier-level) → Resource Agent (execution).
+
+**Frontend i18n**: Complete. Full zh ↔ EN UI language switching via next-intl v3 (cookie-based, no URL prefix). All 17 pages/components migrated. Sidebar language switcher toggles locale instantly. Two independent language dimensions: UI display language (next-intl) and pipeline content language (`output_language` in PipelineState) are fully separated. Message files: `frontend/messages/zh.json` + `en.json` covering 13 namespaces. See CLAUDE.md §Internationalisation for how to add translations to new pages.
 
 See [ROADMAP.md](./ROADMAP.md) for detailed progress.
 
@@ -936,6 +985,7 @@ See [ROADMAP.md](./ROADMAP.md) for detailed progress.
 
 ## Documentation
 
+- [CLAUDE.md](./CLAUDE.md): Claude Code guide — dev workflow, auth pattern, Campaign KB flow, gotchas
 - [PRD](./PRD.md): Product requirements, user journey, feature specs
 - [Architecture](./Architecture.md): Technical design, data models, API specs
 - [Roadmap](./ROADMAP.md): Phased development plan

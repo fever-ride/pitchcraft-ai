@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useTranslations } from "next-intl";
 
 interface SlideStructure {
   slide_index: number;
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function HitlStructure({ pipelineId, onConfirm }: Props) {
+  const t = useTranslations("pipeline");
   const [structure, setStructure] = useState<SlideStructure[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -54,14 +56,14 @@ export function HitlStructure({ pipelineId, onConfirm }: Props) {
   };
 
   if (loading) {
-    return <div className="p-8 text-center text-gray-500">Loading deck structure...</div>;
+    return <div className="p-8 text-center text-gray-500">{t("hitlStructure.loading")}</div>;
   }
 
   return (
     <div className="max-w-3xl mx-auto p-8 overflow-y-auto h-full">
-      <h2 className="text-xl font-bold mb-4">Review Deck Structure</h2>
+      <h2 className="text-xl font-bold mb-4">{t("hitlStructure.title")}</h2>
       <p className="text-sm text-gray-600 mb-6">
-        Reorder, remove, or add slides before content generation.
+        {t("hitlStructure.subtitle")}
       </p>
 
       <div className="space-y-2 mb-6">
@@ -100,7 +102,7 @@ export function HitlStructure({ pipelineId, onConfirm }: Props) {
               onClick={() => removeSlide(i)}
               className="text-xs text-red-400 hover:text-red-600"
             >
-              Remove
+              {t("hitlStructure.removeSlide")}
             </button>
           </div>
         ))}
@@ -111,14 +113,14 @@ export function HitlStructure({ pipelineId, onConfirm }: Props) {
           onClick={addSlide}
           className="px-3 py-1 border rounded text-sm text-gray-600 hover:bg-gray-50"
         >
-          + Add Slide
+          {t("hitlStructure.addSlide")}
         </button>
         <div className="flex-1" />
         <button
           onClick={() => onConfirm({ edits: { deck_structure: structure } })}
           className="px-4 py-2 bg-green-600 text-white rounded font-medium"
         >
-          Confirm Structure ({structure.length} slides)
+          {t("hitlStructure.confirmStructure", { count: structure.length })}
         </button>
       </div>
     </div>

@@ -1308,3 +1308,105 @@ C. 跨字段效率洞察：至少1条综合多字段的推导命题
 | RAG Recall 低但检索算法看起来正常 | 先查 retrieved_ids，确认是否是内容表达问题，再考虑算法优化 |
 | Proposition / chunk 写法 | 执行细节（投放数量）≠ 战略概念（平台角色）；绝对数字 ≠ 比较结论。两者都需要，各有其检索价值 |
 | LLM 内容提取的默认行为 | LLM 倾向于忠实复述原文，不会主动推导；跨字段结论和比较性表述必须在 prompt 里显式要求 |
+
+---
+
+## Issue #41: Celery fork worker 中 `asyncio.run()` 报 `RuntimeError: Event loop is closed`
+
+**现象**：
+
+上传第一个文档后处理正常；上传第二个（或同一个 worker 进程接收第二个任务）时，Celery worker 日志立刻报错并重试：
+
+```
+RuntimeError: Event loop is closed
+Task backend.core.rag.archive_process.process_archive_task[...] raised unexpected: RuntimeError('Event loop is closed')
+```
+
+文件状态停留在 `"processing"` 或未被标记为 `"failed"`（因为 `_mark_status` 的 `asyncio.run()` 也一起挂了）。
+
+**根本原因**：
+
+Celery 默认使用 `prefork` 池（`fork` 模式）。每个 worker 进程会被反复复用来执行多个任务。
+
+`asyncio.run()` 在第一次调用时创建一个新的事件循环，任务结束后 **关闭并销毁** 这个循环。当同一个 worker 进程接收第二个任务时，进程内部的事件循环状态已被标记为 `closed`，而 `asyncio.run()` 不会检测到这个状态并新建循环——它会尝试在已关闭的循环上执行，立即抛出 `RuntimeError: Event loop is closed`。
+
+这是 Celery 社区有据可查的经典问题，任何在 Celery 任务里用 `asyncio.run()` 包裹 `async` 代码都会触发。
+
+**受影响文件**（修复前都直接调用 `asyncio.run()`）：
+
+- `backend/core/rag/archive_process.py`
+- `backend/core/rag/visual_process.py`
+- `backend/core/rag/process.py`
+
+**修复方案**：
+
+在 `backend/core/tasks.py` 提取共享 helper `run_async()`，每次调用都 **显式新建** 一个事件循环，执行完后关闭并清空：
+
+```python
+# backend/core/tasks.py
+import asyncio
+
+def run_async(coro):
+    """Run an async coroutine in a fresh event loop.
+
+    Always creates a new loop instead of relying on asyncio.run(), which fails
+    in Celery forked workers after the first task closes the previous loop.
+    Every Celery task that wraps async code should use this helper.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
+        asyncio.set_event_loop(None)
+```
+
+所有任务文件统一改为：
+
+```python
+# Before（会在第二次任务时崩溃）
+import asyncio
+asyncio.run(_process_archive(...))
+
+# After
+from backend.core.tasks import celery_app, run_async
+run_async(_process_archive(...))
+```
+
+**额外踩坑——错误处理里也要用 `run_async()`，且要单独 try/catch**：
+
+原来的 except 块里直接 `asyncio.run(_mark_status(...))` 也会崩溃，导致文件状态既没有被标记为 `failed`，也没有正常重试——静默失败。
+
+```python
+# 修复后的任务结构
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=60)
+def process_archive_task(self, ...):
+    try:
+        run_async(_process_archive(...))
+    except Exception as exc:
+        logger.error(f"Archive processing failed: {exc}")
+        try:
+            run_async(_mark_status(archive_id, "failed", str(exc)))  # 单独 try/catch
+        except Exception as mark_exc:
+            logger.error(f"Failed to mark archive as failed: {mark_exc}")
+        raise self.retry(exc=exc)
+```
+
+**为什么 `asyncio.new_event_loop()` 可以解决**：
+
+`asyncio.run()` 内部调用的是 `loop = events.new_event_loop()` + `loop.run_until_complete(main)` + `loop.close()`，但它还会调用 `events.set_event_loop(None)` 来清理全局引用。问题是在某些 Python 版本和 Celery 的 fork 场景下，循环的 `_closed` 标志会在 fork 后被继承，导致后续检查认为"已有循环且已关闭"。
+
+显式调用 `asyncio.new_event_loop()` 绕过了所有这些全局状态检查，强制创建一个全新的循环对象，保证每次任务都有干净的起点。
+
+**教训**：
+
+| 场景 | 做法 |
+|---|---|
+| Celery 任务需要调用 async 代码 | 一律使用 `run_async()` from `backend.core.tasks`，禁止直接用 `asyncio.run()` |
+| 任务的 except 块里也有 async 操作 | 单独再包一层 try/except，防止"标记失败"本身也失败 |
+| 文件上传后状态卡在 `processing` 不动 | 先查 `make logs s=worker`，看是否有 `RuntimeError: Event loop is closed` |
+| 新增 Celery 任务文件 | 模板参考 `archive_process.py`，所有 `async` 调用都走 `run_async()` |

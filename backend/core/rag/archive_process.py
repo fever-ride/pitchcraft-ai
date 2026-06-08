@@ -1,5 +1,4 @@
 """Project archive processing: parse report → extract → distribute to multiple stores."""
-import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -10,7 +9,7 @@ from backend.core.database.connection import get_database
 from backend.core.database.repositories.resources import ResourceRepository
 from backend.core.rag.parser import parse_file
 from backend.core.rag.resource_import import refresh_resource_embedding
-from backend.core.tasks import celery_app
+from backend.core.tasks import celery_app, run_async
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +26,13 @@ def process_archive_task(
 ):
     """Celery task: parse recap report → LLM extraction → distribute results."""
     try:
-        asyncio.run(_process_archive(archive_id, storage_path, filename, client_id, project_id, org_id))
+        run_async(_process_archive(archive_id, storage_path, filename, client_id, project_id, org_id))
     except Exception as exc:
         logger.error(f"Archive processing failed for {archive_id}: {exc}")
-        asyncio.run(_mark_status(archive_id, "failed", str(exc)))
+        try:
+            run_async(_mark_status(archive_id, "failed", str(exc)))
+        except Exception as mark_exc:
+            logger.error(f"Failed to mark archive {archive_id} as failed: {mark_exc}")
         raise self.retry(exc=exc)
 
 

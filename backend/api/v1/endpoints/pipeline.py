@@ -12,7 +12,7 @@ router = APIRouter()
 
 
 class StartPipelineRequest(BaseModel):
-    project_id: str
+    project_id: str = ""
     client_id: str
     raw_brief: str
     output_language: str = "auto"  # "zh" | "en" | "auto"

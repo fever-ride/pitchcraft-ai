@@ -41,7 +41,7 @@ async def get_current_user(
         user_id = payload.get("sub")
         organization_id = payload.get("org_id")
         role = payload.get("role")
-        if not user_id or not organization_id or not role:
+        if not user_id or organization_id is None or not role:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
         return CurrentUser(
             user_id=user_id,

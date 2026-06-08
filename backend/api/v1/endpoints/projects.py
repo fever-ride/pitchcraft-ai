@@ -20,10 +20,14 @@ CHUNK_SIZE = 64 * 1024
 class CreateProjectRequest(BaseModel):
     client_id: str
     name: str
+    description: str = ""
+    deadline: str = ""   # ISO date string e.g. "2025-09-30", optional
 
 
 class UpdateProjectRequest(BaseModel):
     name: str | None = None
+    description: str | None = None
+    deadline: str | None = None
     status: str | None = None
     custom_deck_structure: list[dict] | None = None
     assigned_accounts: list[str] | None = None
@@ -45,6 +49,8 @@ async def create_project(request: CreateProjectRequest, user: CurrentUser = Depe
     project_id = await repo.create({
         "client_id": request.client_id,
         "name": request.name,
+        "description": request.description,
+        "deadline": request.deadline,
         "assigned_accounts": [user.user_id],
         "status": "draft",
         "custom_deck_structure": None,
