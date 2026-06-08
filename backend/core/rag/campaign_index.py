@@ -212,7 +212,8 @@ async def extract_propositions(
     # (happens when with_structured_output tool_calling silently fails for some records,
     #  typically due to very long meta prefixes causing tool_call response issues)
     if not result.propositions:
-        import json as _json, re as _re
+        import json as _json
+        import re as _re
         from backend.core.agents.llm import get_llm
         json_hint = (
             "\n\n**输出格式：只返回一个JSON对象，不要包含任何其他文字，格式为：{\"propositions\": [\"命题1\", \"命题2\", ...]}"

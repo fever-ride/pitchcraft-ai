@@ -84,7 +84,6 @@ HEADER_ALIASES = {
     "擅长类目": "categories",
     "垂类": "categories",
     "内容品类": "categories",
-    "内容类型": "categories",
     "行业": "categories",
     # content style
     "内容风格": "content_style",
@@ -263,6 +262,7 @@ async def preview_import(file_bytes: bytes) -> dict:
     row_count = len(rows) - 1
 
     recognized: list[dict] = []
+    ignored: list[dict] = []
     unrecognized: list[str] = []
 
     for h in raw_headers:
