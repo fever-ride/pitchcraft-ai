@@ -117,7 +117,15 @@ export const api = {
     });
   },
 
-  confirmNode(pipelineId: string, data: { node: string; action: string; feedback?: string; edits?: Record<string, unknown> }) {
+  confirmNode(pipelineId: string, data: {
+    node: string;
+    action: string;
+    feedback?: string;
+    edits?: Record<string, unknown>;
+    refresh_research?: boolean;
+    rerun_from?: string;
+    flagged_indices?: number[];
+  }) {
     return request<{ status: string }>(`/api/v1/pipeline/${pipelineId}/confirm`, {
       method: "POST",
       body: JSON.stringify(data),

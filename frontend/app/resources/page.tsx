@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useTranslations } from "next-intl";
 
@@ -8,6 +8,7 @@ import type { AppDispatch, RootState } from "@/store/store";
 import {
   fetchResources,
   importExcel,
+  setScope,
   setClientId,
   setTypeFilter,
   clearImportResult,
@@ -32,43 +33,91 @@ const typeLabel = (type: string) => {
 export default function ResourcesPage() {
   const t = useTranslations("resources");
   const dispatch = useDispatch<AppDispatch>();
-  const { resources, loading, importing, importResult, clientId, typeFilter } = useSelector(
-    (state: RootState) => state.resources
-  );
+  const { resources, loading, importing, importResult, error, scope, clientId, typeFilter } =
+    useSelector((state: RootState) => state.resources);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch whenever scope / clientId / typeFilter changes
   useEffect(() => {
-    if (clientId) {
-      dispatch(fetchResources({ clientId, typeFilter }));
+    if (scope === "shared" || (scope === "client" && clientId)) {
+      dispatch(fetchResources({ scope, clientId, typeFilter }));
     }
-  }, [dispatch, clientId, typeFilter]);
+  }, [dispatch, scope, clientId, typeFilter]);
 
+  // Toast on successful import, then reload
   useEffect(() => {
     if (importResult) {
       dispatch(addToast({ message: importResult, type: "success" }));
       dispatch(clearImportResult());
-      dispatch(fetchResources({ clientId, typeFilter }));
+      dispatch(fetchResources({ scope, clientId, typeFilter }));
     }
   }, [importResult]);
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Toast on import/fetch errors
+  useEffect(() => {
+    if (error) {
+      dispatch(addToast({ message: error, type: "error" }));
+    }
+  }, [error]);
+
+  const handleImportClick = () => {
+    // Guard: client scope requires a clientId
+    if (scope === "client" && !clientId) {
+      dispatch(addToast({ message: t("needClientId"), type: "error" }));
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !clientId) return;
-    dispatch(importExcel({ file, clientId }));
+    if (!file) return;
+    dispatch(importExcel({ file, scope, clientId }));
     e.target.value = "";
   };
+
+  const emptyMessage = scope === "shared" ? t("noResourcesShared") : t("noResourcesClient");
 
   return (
     <div className="max-w-5xl mx-auto p-8">
       <h1 className="text-2xl font-bold mb-6">{t("title")}</h1>
 
-      <div className="flex gap-3 mb-6 items-center">
-        <input
-          type="text"
-          value={clientId}
-          onChange={(e) => dispatch(setClientId(e.target.value))}
-          placeholder={t("clientIdPlaceholder")}
-          className="border rounded px-3 py-2 text-sm w-48"
-        />
+      {/* Scope toggle */}
+      <div className="flex gap-1 mb-4 bg-gray-100 rounded-lg p-1 w-fit">
+        <button
+          onClick={() => dispatch(setScope("shared"))}
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            scope === "shared"
+              ? "bg-white shadow text-gray-900"
+              : "text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          {t("agencyPool")}
+        </button>
+        <button
+          onClick={() => dispatch(setScope("client"))}
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            scope === "client"
+              ? "bg-white shadow text-gray-900"
+              : "text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          {t("clientResources")}
+        </button>
+      </div>
+
+      {/* Filters row */}
+      <div className="flex gap-3 mb-6 items-center flex-wrap">
+        {scope === "client" && (
+          <input
+            type="text"
+            value={clientId}
+            onChange={(e) => dispatch(setClientId(e.target.value))}
+            placeholder={t("clientIdPlaceholder")}
+            className="border rounded px-3 py-2 text-sm w-48"
+          />
+        )}
         <select
           value={typeFilter}
           onChange={(e) => dispatch(setTypeFilter(e.target.value))}
@@ -81,22 +130,32 @@ export default function ResourcesPage() {
           <option value="vendor">Vendor</option>
           <option value="placement">Placement</option>
         </select>
-        <label className="px-4 py-2 bg-green-600 text-white rounded text-sm cursor-pointer hover:bg-green-700">
+
+        {/* Import button — always clickable, guard fires toast on bad state */}
+        <button
+          onClick={handleImportClick}
+          disabled={importing}
+          className="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           {importing ? t("importing") : t("importExcel")}
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={handleImport}
-            className="hidden"
-            disabled={importing || !clientId}
-          />
-        </label>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          onChange={handleFileChange}
+          className="hidden"
+        />
       </div>
 
       {loading && <p className="text-gray-500 text-sm">{t("loading")}</p>}
 
-      {!loading && resources.length === 0 && (
-        <p className="text-gray-500 text-sm">{t("noResources")}</p>
+      {!loading && scope === "client" && !clientId && (
+        <p className="text-gray-400 text-sm italic">{t("needClientId")}</p>
+      )}
+
+      {!loading && (scope === "shared" || clientId) && resources.length === 0 && (
+        <p className="text-gray-500 text-sm">{emptyMessage}</p>
       )}
 
       {!loading && resources.length > 0 && (
@@ -107,13 +166,21 @@ export default function ResourcesPage() {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-medium text-sm">{r.name}</span>
                   {typeLabel(r.type)}
+                  {r.scope === "client" && (
+                    <span className="text-xs bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded border border-blue-200">
+                      client
+                    </span>
+                  )}
                 </div>
-                <div className="text-xs text-gray-500 flex gap-4">
+                <div className="text-xs text-gray-500 flex gap-4 flex-wrap">
                   {r.platforms && r.platforms.length > 0 && (
-                    <span className="flex gap-1 flex-wrap">
+                    <span className="flex gap-2 flex-wrap">
                       {r.platforms.map((p: { name: string; followers_count?: number }) => (
                         <span key={p.name} className="text-xs text-gray-500">
-                          {p.name}{p.followers_count ? ` ${(p.followers_count / 10000).toFixed(1)}万` : ""}
+                          {p.name}
+                          {p.followers_count
+                            ? ` ${(p.followers_count / 10000).toFixed(1)}万`
+                            : ""}
                         </span>
                       ))}
                     </span>
@@ -127,7 +194,12 @@ export default function ResourcesPage() {
               {r.tags && r.tags.length > 0 && (
                 <div className="flex gap-1 flex-wrap">
                   {r.tags.map((tag, i) => (
-                    <span key={i} className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{tag}</span>
+                    <span
+                      key={i}
+                      className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded"
+                    >
+                      {tag}
+                    </span>
                   ))}
                 </div>
               )}

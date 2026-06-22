@@ -37,8 +37,11 @@ export default function PipelinePage() {
   const { pipelineId, status, currentNode } = useSelector(
     (state: RootState) => state.pipeline
   );
-  const { sendEvent } = usePipelineSocket(pipelineId);
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  // WebSocket is receive-only: dispatches Redux actions on progress events
+  usePipelineSocket(pipelineId);
 
   const handleStart = async (brief: string, clientId: string, projectId: string, outputLanguage: string) => {
     try {
@@ -55,12 +58,50 @@ export default function PipelinePage() {
     }
   };
 
-  const handleConfirm = (node: string, edits?: Record<string, unknown>) => {
-    sendEvent({ event: "hitl_response", node, action: "confirm", edits });
+  const handleConfirm = async (node: string, edits?: Record<string, unknown>) => {
+    if (!pipelineId || confirming) return;
+    setConfirming(true);
+    try {
+      await api.confirmNode(pipelineId, { node, action: "confirm", edits });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : t("confirmError"));
+    } finally {
+      setConfirming(false);
+    }
   };
 
-  const handleRevise = (node: string, feedback: string) => {
-    sendEvent({ event: "hitl_response", node, action: "revise", feedback });
+  const handleRevise = async (node: string, feedback: string, refreshResearch?: boolean) => {
+    if (!pipelineId || confirming) return;
+    setConfirming(true);
+    try {
+      await api.confirmNode(pipelineId, {
+        node,
+        action: "revise",
+        feedback,
+        refresh_research: refreshResearch,
+      });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : t("confirmError"));
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const handleRerun = async (node: string, rerunFrom: string, refreshResearch?: boolean) => {
+    if (!pipelineId || confirming) return;
+    setConfirming(true);
+    try {
+      await api.confirmNode(pipelineId, {
+        node,
+        action: "rerun",
+        rerun_from: rerunFrom,
+        refresh_research: refreshResearch,
+      });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : t("confirmError"));
+    } finally {
+      setConfirming(false);
+    }
   };
 
   if (!pipelineId) {
@@ -79,12 +120,20 @@ export default function PipelinePage() {
     <div className="h-screen flex flex-col">
       <PipelineProgress currentNode={currentNode} status={status} />
 
+      {error && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700">
+          {error}
+          <button onClick={() => setError(null)} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-hidden">
         {currentNode === "hitl_brief" && (
           <HitlBrief
             pipelineId={pipelineId}
             onConfirm={(edits) => handleConfirm("hitl_brief", edits)}
             onRevise={(fb) => handleRevise("hitl_brief", fb)}
+            disabled={confirming}
           />
         )}
 
@@ -92,7 +141,9 @@ export default function PipelinePage() {
           <HitlStrategy
             pipelineId={pipelineId}
             onConfirm={() => handleConfirm("hitl_strategy")}
-            onRevise={(fb) => handleRevise("hitl_strategy", fb)}
+            onRevise={(fb, refresh) => handleRevise("hitl_strategy", fb, refresh)}
+            onRerun={(rerunFrom, refresh) => handleRerun("hitl_strategy", rerunFrom, refresh)}
+            disabled={confirming}
           />
         )}
 
@@ -100,6 +151,7 @@ export default function PipelinePage() {
           <HitlMedia
             pipelineId={pipelineId}
             onConfirm={(edits) => handleConfirm("hitl_media", edits)}
+            disabled={confirming}
           />
         )}
 
@@ -107,6 +159,7 @@ export default function PipelinePage() {
           <HitlStructure
             pipelineId={pipelineId}
             onConfirm={(edits) => handleConfirm("hitl_structure", edits)}
+            disabled={confirming}
           />
         )}
 

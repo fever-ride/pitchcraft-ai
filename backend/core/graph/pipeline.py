@@ -2,7 +2,9 @@ import asyncio
 import json
 import time
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from langgraph.types import interrupt
 
 from backend.core.agents.brief_analyzer import analyze_brief
 from backend.core.agents.deck import (
@@ -20,6 +22,33 @@ from backend.core.agents.strategy import (
     run_strategy_phase2,
 )
 from backend.core.graph.state import PipelineState
+
+# Canonical node execution order — used by PipelineExecutor for rerun predecessor lookup.
+_CANONICAL_SEQUENCE = [
+    "brief_analyzer",
+    "hitl_brief",
+    "research_agent",
+    "strategy_phase1",
+    "strategy_phase2",
+    "brand_check",
+    "hitl_strategy",
+    "media_planner",
+    "hitl_media",
+    "resource_agent",
+    "deck_orchestrator",
+    "hitl_structure",
+    "slide_content",
+    "narrative_agent",
+    "hitl_gallery",
+    "ppt_builder",
+]
+
+
+def _route_after_hitl_media(state: PipelineState) -> str:
+    """Skip resource_agent when no resource types are needed (e.g. internal pitch)."""
+    if not state.get("resource_types_needed"):
+        return "deck_orchestrator"
+    return "resource_agent"
 
 
 def build_pipeline() -> StateGraph:
@@ -46,9 +75,11 @@ def build_pipeline() -> StateGraph:
 
     graph.add_edge("brief_analyzer", "hitl_brief")
 
+    # Fan-out: research and strategy phase 1 run in parallel after brief confirmation
     graph.add_edge("hitl_brief", "research_agent")
     graph.add_edge("hitl_brief", "strategy_phase1")
 
+    # Fan-in: strategy phase 2 waits for both research and phase 1
     graph.add_edge("research_agent", "strategy_phase2")
     graph.add_edge("strategy_phase1", "strategy_phase2")
 
@@ -57,20 +88,31 @@ def build_pipeline() -> StateGraph:
 
     graph.add_edge("hitl_strategy", "media_planner")
     graph.add_edge("media_planner", "hitl_media")
-    graph.add_edge("hitl_media", "resource_agent")
+
+    # Conditional: skip resource_agent if resource_types_needed is empty
+    graph.add_conditional_edges(
+        "hitl_media",
+        _route_after_hitl_media,
+        {"resource_agent": "resource_agent", "deck_orchestrator": "deck_orchestrator"},
+    )
     graph.add_edge("resource_agent", "deck_orchestrator")
     graph.add_edge("deck_orchestrator", "hitl_structure")
 
     graph.add_edge("hitl_structure", "slide_content")
 
+    # Serial: narrative_agent runs after slide_content, hitl_gallery waits for narrative
     graph.add_edge("slide_content", "narrative_agent")
-    graph.add_edge("slide_content", "hitl_gallery")
     graph.add_edge("narrative_agent", "hitl_gallery")
 
     graph.add_edge("hitl_gallery", "ppt_builder")
     graph.add_edge("ppt_builder", END)
 
     return graph
+
+
+def build_compiled_pipeline(checkpointer=None):
+    """Compile the pipeline graph with an optional checkpointer (defaults to MemorySaver)."""
+    return build_pipeline().compile(checkpointer=checkpointer or MemorySaver())
 
 
 async def brief_analyzer_node(state: PipelineState) -> dict:
@@ -89,14 +131,21 @@ async def brief_analyzer_node(state: PipelineState) -> dict:
 
 
 async def hitl_brief_node(state: PipelineState) -> dict:
-    return {}
+    response = interrupt({"structured_brief": state.get("structured_brief", {})})
+
+    updates: dict = {}
+    if response.get("edits"):
+        merged = dict(state.get("structured_brief", {}))
+        merged.update(response["edits"])
+        updates["structured_brief"] = merged
+    updates["brief_confirmed"] = True
+    return updates
 
 
 async def research_agent_node(state: PipelineState) -> dict:
     brief = state.get("structured_brief", {})
     force_refresh = state.get("rerun_refresh_research", False)
     budget = state.get("request_budget")
-    # Use competitor names extracted by Brief Analyzer for targeted searches
     competitor_names: list[str] = brief.get("competitors", [])
     result = await run_research(
         brief=brief,
@@ -168,7 +217,29 @@ async def brand_check_node(state: PipelineState) -> dict:
 
 
 async def hitl_strategy_node(state: PipelineState) -> dict:
-    return {}
+    response = interrupt({
+        "strategy_result": state.get("strategy_result", {}),
+        "research_result": state.get("research_result", {}),
+        "brand_check_passed": state.get("brand_check_passed"),
+    })
+
+    action = response.get("action", "confirm")
+    if action == "rerun":
+        # Signal the executor to abort this run and restart from rerun_from.
+        # PipelineExecutor._stream_run detects "rerun_from" in node updates and
+        # uses aupdate_state + goto to restart natively — no skip-shim needed.
+        return {
+            "rerun_from": response.get("rerun_from", ""),
+            "rerun_refresh_research": response.get("refresh_research", False),
+        }
+    if action == "confirm":
+        return {"strategy_confirmed": True}
+    # "revise" or any other action: store feedback + research flag for potential rerun
+    return {
+        "strategy_confirmed": False,
+        "strategy_feedback": response.get("feedback", ""),
+        "rerun_refresh_research": response.get("refresh_research", False),
+    }
 
 
 async def media_planner_node(state: PipelineState) -> dict:
@@ -188,7 +259,12 @@ async def media_planner_node(state: PipelineState) -> dict:
 
 
 async def hitl_media_node(state: PipelineState) -> dict:
-    return {}
+    response = interrupt({"media_plan": state.get("media_plan", {})})
+
+    updates: dict = {"media_plan_confirmed": True}
+    if response.get("edits") and "media_plan" in response["edits"]:
+        updates["media_plan"] = response["edits"]["media_plan"]
+    return updates
 
 
 async def resource_agent_node(state: PipelineState) -> dict:
@@ -230,7 +306,13 @@ async def deck_orchestrator_node(state: PipelineState) -> dict:
 
 
 async def hitl_structure_node(state: PipelineState) -> dict:
-    return {}
+    response = interrupt({"deck_structure": state.get("deck_structure", [])})
+
+    updates: dict = {"structure_confirmed": True}
+    edits = response.get("edits", {})
+    if edits and "deck_structure" in edits:
+        updates["deck_structure"] = edits["deck_structure"]
+    return updates
 
 
 async def slide_content_node(state: PipelineState) -> dict:
@@ -277,7 +359,24 @@ async def narrative_agent_node(state: PipelineState) -> dict:
 
 
 async def hitl_gallery_node(state: PipelineState) -> dict:
-    return {}
+    response = interrupt({
+        "slides": state.get("slides", []),
+        "narrative_suggestions": state.get("narrative_suggestions", []),
+    })
+
+    updates: dict = {"slides_confirmed": True}
+    flagged = response.get("flagged_indices", [])
+    if flagged:
+        slides = list(state.get("slides", []))
+        for idx in flagged:
+            if idx < len(slides):
+                slides[idx] = {
+                    **slides[idx],
+                    "status": "flagged",
+                    "feedback": response.get("feedback", ""),
+                }
+        updates["slides"] = slides
+    return updates
 
 
 async def ppt_builder_node(state: PipelineState) -> dict:

@@ -58,7 +58,6 @@ class CreateResourceRequest(BaseModel):
     metadata: dict = {}
 
 
-
 def _enrich_with_freshness(doc: dict) -> dict:
     """Add freshness info and pricing disclaimer to resource response."""
     doc["_id"] = str(doc["_id"])
@@ -88,16 +87,29 @@ def _enrich_with_freshness(doc: dict) -> dict:
 
 @router.get("")
 async def list_resources(
-    client_id: str,
+    scope: str = "shared",         # "shared" | "client" | "" (both)
+    client_id: str = "",
     type: str | None = None,
     status_filter: str | None = None,
     min_followers: int | None = None,
     user: CurrentUser = Depends(get_current_user),
 ):
+    """List resources.
+
+    scope="shared"  → agency-wide pool (no client_id needed)
+    scope="client"  → client-specific pool (client_id required)
+    scope=""        → both pools merged
+    """
+    if scope == "client" and not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required when scope=client")
+
+    org_id = user.organization_id
     db = await get_database()
     repo = ResourceRepository(db)
     docs = await repo.find_filtered(
         client_id=client_id,
+        org_id=org_id,
+        scope=scope,
         type=type,
         status_filter=status_filter,
         min_followers=min_followers,
@@ -108,14 +120,21 @@ async def list_resources(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_resource(
     request: CreateResourceRequest,
-    client_id: str,
     background_tasks: BackgroundTasks,
+    scope: str = "shared",
+    client_id: str = "",
     user: CurrentUser = Depends(get_current_user),
 ):
+    if scope == "client" and not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required when scope=client")
+
+    org_id = user.organization_id
     db = await get_database()
     repo = ResourceRepository(db)
     doc = request.model_dump()
+    doc["org_id"] = org_id
     doc["client_id"] = client_id
+    doc["scope"] = scope
     doc["status"] = ResourceStatus.ACTIVE.value
     doc["last_verified_at"] = datetime.utcnow()
     # Convert flat platform/followers/profile_url to platforms list if platforms not provided
@@ -134,7 +153,7 @@ async def create_resource(
         doc.pop("profile_url", None)
     resource_id = await repo.create(doc)
     doc["_id"] = resource_id  # needed by refresh_resource_embedding
-    background_tasks.add_task(refresh_resource_embedding, doc, client_id)
+    background_tasks.add_task(refresh_resource_embedding, doc)
     return {"status": "created", "id": resource_id}
 
 
@@ -221,8 +240,7 @@ async def update_resource(
     await repo.update(resource_id, updates)
 
     updated_doc = await repo.get_by_id(resource_id)
-    client_id = updated_doc["client_id"]
-    background_tasks.add_task(refresh_resource_embedding, updated_doc, client_id)
+    background_tasks.add_task(refresh_resource_embedding, updated_doc)
 
     return {"status": "updated", "id": resource_id}
 
@@ -252,16 +270,20 @@ async def preview_import(
 @router.post("/import/confirm", status_code=status.HTTP_202_ACCEPTED)
 async def confirm_import(
     file: UploadFile = File(...),
-    client_id: str = Form(...),
+    scope: str = Form(default="shared"),
+    client_id: str = Form(default=""),
     column_mapping: str = Form(default="{}"),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Trigger import with a user-confirmed column mapping (from /import/preview).
 
+    scope: "shared" (agency pool, default) or "client" (requires client_id)
     column_mapping: JSON object mapping raw header names to schema field names.
                     Use "ignore" as the value to explicitly skip a column.
     Example: {"达人账号": "ignore", "联系方式": "notes", "转发率": "past_cpe"}
     """
+    if scope == "client" and not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required when scope=client")
     if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
     content = await file.read()
@@ -273,22 +295,33 @@ async def confirm_import(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="column_mapping must be valid JSON")
 
-    storage_dir = Path(settings.file_storage_dir) / "resource_imports" / client_id
+    org_id = user.organization_id
+    pool_id = org_id if scope == "shared" else client_id
+    storage_dir = Path(settings.file_storage_dir) / "resource_imports" / pool_id
     storage_dir.mkdir(parents=True, exist_ok=True)
     storage_path = storage_dir / f"{uuid.uuid4().hex}.xlsx"
     storage_path.write_bytes(content)
 
-    task = import_resources_task.delay(str(storage_path), client_id, override_mapping or None)
+    task = import_resources_task.delay(
+        str(storage_path), client_id, override_mapping or None, org_id, scope
+    )
     return {"task_id": task.id, "status": "queued"}
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
 async def import_resources(
     file: UploadFile = File(...),
-    client_id: str = Form(...),
+    scope: str = Form(default="shared"),
+    client_id: str = Form(default=""),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Kick off a background Celery task for bulk Excel import. Returns task_id for polling."""
+    """Kick off a background Celery task for bulk Excel import. Returns task_id for polling.
+
+    scope="shared" → imports into the agency-wide pool (no client_id needed)
+    scope="client" → imports into a client-specific pool (client_id required)
+    """
+    if scope == "client" and not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required when scope=client")
     if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
 
@@ -296,13 +329,15 @@ async def import_resources(
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Excel file exceeds 10 MB limit")
 
+    org_id = user.organization_id
     # Save to shared storage volume (accessible by both API and Celery worker containers)
-    storage_dir = Path(settings.file_storage_dir) / "resource_imports" / client_id
+    pool_id = org_id if scope == "shared" else client_id
+    storage_dir = Path(settings.file_storage_dir) / "resource_imports" / pool_id
     storage_dir.mkdir(parents=True, exist_ok=True)
     storage_path = storage_dir / f"{uuid.uuid4().hex}.xlsx"
     storage_path.write_bytes(content)
 
-    task = import_resources_task.delay(str(storage_path), client_id)
+    task = import_resources_task.delay(str(storage_path), client_id, None, org_id, scope)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -328,14 +363,23 @@ async def get_import_status(
 
 @router.post("/repair-embeddings", status_code=status.HTTP_202_ACCEPTED)
 async def repair_embeddings(
-    client_id: str,
     background_tasks: BackgroundTasks,
+    scope: str = "shared",
+    client_id: str = "",
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Rebuild Pinecone vectors for all resources of a client.
+    """Rebuild Pinecone vectors for all resources of a given pool.
 
     Use after a failed import where MongoDB records exist but Pinecone vectors are missing.
     Runs in the background — returns immediately.
     """
-    background_tasks.add_task(repair_resource_embeddings, client_id)
-    return {"status": "started", "message": f"Rebuilding embeddings for {client_id} in background"}
+    if scope == "client" and not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required when scope=client")
+    org_id = user.organization_id
+    background_tasks.add_task(
+        repair_resource_embeddings,
+        client_id=client_id,
+        org_id=org_id,
+        scope=scope,
+    )
+    return {"status": "started", "message": f"Rebuilding embeddings for scope={scope} in background"}

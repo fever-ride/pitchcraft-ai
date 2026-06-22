@@ -77,7 +77,7 @@ async def _process_archive(
     # Store campaign record for human review
     await _store_campaign_record(campaign_dict, client_id, project_id, archive_id, org_id)
 
-    await _distribute_to_resources(extraction, client_id)
+    await _distribute_to_resources(extraction, client_id, org_id)
 
 
 async def _store_campaign_record(
@@ -101,7 +101,7 @@ async def _store_campaign_record(
 
 
 
-async def _distribute_to_resources(extraction, client_id: str):
+async def _distribute_to_resources(extraction, client_id: str, org_id: str = ""):
     """Update resource collaboration_history and refresh embeddings from performance data."""
     if not extraction.resource_performances:
         return
@@ -110,7 +110,8 @@ async def _distribute_to_resources(extraction, client_id: str):
     repo = ResourceRepository(db)
 
     for perf in extraction.resource_performances:
-        doc = await repo.find_by_name(client_id, perf.name)
+        # Search both shared and client pools (scope="" means both)
+        doc = await repo.find_by_name(org_id=org_id, name=perf.name, client_id=client_id, scope="")
         if not doc:
             continue
 
@@ -121,7 +122,7 @@ async def _distribute_to_resources(extraction, client_id: str):
         }
         await repo.add_collaboration_record(doc["_id"], collab_record)
         updated_doc = await repo.get_by_id(doc["_id"])
-        await refresh_resource_embedding(updated_doc, client_id)
+        await refresh_resource_embedding(updated_doc)
 
 
 async def _mark_status(archive_id: str, status: str, error: str = ""):

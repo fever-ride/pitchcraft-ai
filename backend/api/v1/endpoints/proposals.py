@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -95,7 +95,10 @@ async def list_feedback(proposal_id: str, user: CurrentUser = Depends(get_curren
 
 @router.post("/{proposal_id}/feedback", status_code=status.HTTP_201_CREATED, response_model=FeedbackResponse)
 async def submit_feedback(
-    proposal_id: str, request: FeedbackRequest, user: CurrentUser = Depends(get_current_user)
+    proposal_id: str,
+    request: FeedbackRequest,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
 ):
     executor = PipelineExecutor(proposal_id)
     state = await executor.load_state()
@@ -133,10 +136,13 @@ async def submit_feedback(
         bp_repo = BrandProfileRepository(db)
         await bp_repo.add_feedback_directions(client_id, rejected=request.rejected_directions)
 
-    # Trigger rerun if requested
+    # Trigger rerun if requested — start a fresh run from the suggested node.
+    # executor.resume() only works while a pipeline is paused at a HITL interrupt;
+    # after completion, we must call run() directly as a background task.
     rerun_triggered = False
     if request.trigger_rerun and suggested_node and state:
-        await executor.resume({"action": "rerun", "rerun_from": suggested_node})
+        rerun_executor = PipelineExecutor(proposal_id)
+        background_tasks.add_task(rerun_executor.start, state, suggested_node)
         rerun_triggered = True
 
     return FeedbackResponse(

@@ -1,6 +1,6 @@
 # Architecture: Pitchcraft
 
-**Version**: v0.2
+**Version**: v0.3
 **Status**: Draft
 **Last updated**: 2026-05
 **Related**: PRD v0.4
@@ -64,9 +64,9 @@
 ┌──────────────────┐            ┌──────────────────────┐
 │   TASK QUEUE     │            │    EXTERNAL TOOLS    │
 │  Celery + Redis  │            │  - Tavily Search     │
-│  - PPT generation │            │  - Anthropic API     │
-│  - File indexing  │            │  - python-pptx       │
-│  - Research tasks │            │                      │
+│  - File indexing  │            │  - Anthropic API     │
+│  - Archive extract│            │  - python-pptx       │
+│  - Feedback embed │            │                      │
 └──────────────────┘            └──────────────────────┘
            │
            ▼
@@ -151,9 +151,9 @@ class PipelineState(TypedDict, total=False):
 Research Agent and Strategy Phase 1 launch simultaneously (fan-out). Strategy Phase 2 waits for both to complete (fan-in). In LangGraph, when multiple edges point to the same node, it automatically waits for all upstream nodes:
 
 ```python
-# Fan-out: both start after brief confirmation
-graph.add_edge("brief_confirmed", "research_agent")
-graph.add_edge("brief_confirmed", "strategy_phase1")
+# Fan-out: both start after brief HITL confirmation
+graph.add_edge("hitl_brief", "research_agent")
+graph.add_edge("hitl_brief", "strategy_phase1")
 
 # Fan-in: strategy_phase2 waits for both
 graph.add_edge("research_agent", "strategy_phase2")
@@ -572,7 +572,7 @@ Based on stage_metrics data:
 |-----------|-----------|---------|-------|
 | API framework | FastAPI | 0.115 | Async REST + WebSocket |
 | Auth | Google OAuth + Microsoft OAuth + JWT | - | NextAuth on frontend, JWT tokens on backend |
-| Agent orchestration | LangGraph | 0.2 | State machine + HITL support |
+| Agent orchestration | LangGraph | 1.x + langgraph-checkpoint-redis | State machine, interrupt-based HITL, AsyncRedisSaver checkpoint |
 | LLM | Claude Sonnet | - | Primary model |
 | Embedding | BGE-M3 (self-hosted) | - | Multilingual (Chinese + English), strong marketing terminology support |
 | Web search | Tavily | - | Research Agent search tool |
@@ -858,73 +858,42 @@ WS     /ws/pipeline/{pipeline_id}           # Real-time agent execution status
 
 ## 9. WebSocket Events
 
-The frontend receives pipeline execution status in real time via WebSocket for streaming display and HITL interaction:
+WebSocket (`/ws/pipeline/{pipeline_id}`) is **receive-only** for the frontend — the server pushes progress events. HITL responses are **not** sent over WebSocket; they go via `POST /api/v1/pipeline/{id}/confirm` (HTTP).
 
 ```
-Server → Client:
-{
-  "event": "agent_started",
-  "agent": "research_agent",
-  "message": "Searching competitor information..."
-}
+Server → Client (push-only):
 
-{
-  "event": "agent_completed",
-  "agent": "strategy_agent",
-  "output": { ...strategy_result }
-}
+{ "event": "node_entered",        "node": "research_agent" }
+{ "event": "node_entered",        "node": "strategy_phase2" }
 
 {
   "event": "hitl_required",
-  "node": "node_2_strategy",
-  "data": { ...strategy_result },
-  "message": "Please confirm strategy direction"
+  "node": "hitl_strategy",
+  "data": { "strategy_result": {...}, "research_result": {...}, "brand_check_passed": true }
 }
 
 {
   "event": "slide_generated",
   "slide_index": 3,
-  "total_slides": 15,
   "content": { ...slide_content }
 }
 
-{
-  "event": "narrative_suggestions",
-  "suggestions": [
-    { "page": 3, "issue": "Insight on page 3 conflicts with strategy on page 5" },
-    { "page": 7, "issue": "Budget allocation conflicts with channel priorities" }
-  ]
-}
+{ "event": "pipeline_complete",   "pptx_path": "/data/outputs/xxx.pptx" }
 
-{
-  "event": "pipeline_completed",
-  "pptx_url": "/api/v1/proposals/xxx/download"
-}
+Client → Server: (ignored by server — WebSocket is receive-only)
+```
 
-{
-  "event": "budget_warning",
-  "message": "LLM calls at 80% of limit"
-}
+**HITL confirm flow (HTTP, not WebSocket):**
 
-{
-  "event": "fallback_triggered",
-  "agent": "research_agent",
-  "reason": "Tavily unavailable, switched to DuckDuckGo"
-}
-
-Client → Server:
-{
-  "event": "hitl_response",
-  "node": "node_2_strategy",
-  "action": "confirm",
-  "feedback": "Big Idea direction is off, want more tech-focused",
-  "refresh_research": false
-}
-
-{
-  "event": "research_refresh",
-  "node": "node_2_strategy"
-}
+```
+Frontend detects hitl_required event
+    → displays HITL UI for the paused node
+    → user confirms / revises / reruns
+    → POST /api/v1/pipeline/{id}/confirm
+      body: { "node": "hitl_strategy", "action": "confirm", "edits": {...} }
+    → backend: executor.resume_pipeline(response)
+    → graph resumes from LangGraph checkpoint
+    → next node_entered / hitl_required / pipeline_complete events arrive over WebSocket
 ```
 
 ---
@@ -935,7 +904,7 @@ Client → Server:
 services:
   frontend:        # Next.js,  Port 3000
   backend:         # FastAPI,  Port 8000
-  worker:          # Celery Worker (file processing + PPT generation)
+  worker:          # Celery Worker (file indexing, archive extraction, feedback embedding)
   embedding:       # BGE-M3 embedding service (Port 8001)
   redis:           # Port 6379 (Celery broker + pipeline state)
   mongodb:         # Port 27017
@@ -978,76 +947,36 @@ GitHub Actions triggers
 
 ## 12. Project Directory Structure
 
+See [README.md §Project Structure](./README.md) for the authoritative directory tree (kept in sync with the actual codebase). Key paths:
+
 ```
 pitchcraft/
 ├── backend/
-│   ├── api/
-│   │   ├── main.py
-│   │   └── v1/
-│   │       ├── endpoints/
-│   │       │   ├── auth.py
-│   │       │   ├── users.py
-│   │       │   ├── clients.py
-│   │       │   ├── projects.py
-│   │       │   ├── files.py
-│   │       │   ├── pipeline.py
-│   │       │   ├── proposals.py
-│   │       │   ├── resources.py
-│   │       │   └── analytics.py
-│   │       ├── permissions.py       # Role-based permission checks
-│   │       └── websocket.py
+│   ├── api/v1/endpoints/         # auth, files, pipeline, resources, proposals, campaigns, research, analytics
 │   ├── core/
-│   │   ├── agents/
-│   │   │   ├── brief_analyzer.py
-│   │   │   ├── research_agent.py
-│   │   │   ├── strategy_agent.py
-│   │   │   ├── resource_agent.py
-│   │   │   ├── deck_orchestrator.py
-│   │   │   ├── slide_content_agent.py
-│   │   │   ├── narrative_agent.py
-│   │   │   └── ppt_builder.py
-│   │   ├── graph/
-│   │   │   ├── pipeline.py          # LangGraph main flow
-│   │   │   ├── state.py             # PipelineState definition
-│   │   │   └── nodes.py             # Node functions
-│   │   ├── rag/
-│   │   │   ├── indexer.py           # File vectorization
-│   │   │   └── retriever.py         # Retrieval logic
-│   │   ├── language/
-│   │   │   ├── detector.py          # Language detection
-│   │   │   └── prompts.py           # Chinese/English prompt templates
-│   │   ├── stability/
-│   │   │   ├── budget.py            # Request Budget
-│   │   │   └── fallback.py          # Fallback chains
-│   │   ├── database/
-│   │   │   └── repositories/        # MongoDB operations
-│   │   ├── models/                  # Pydantic models
-│   │   ├── tasks.py                 # Celery tasks
-│   │   └── config.py
-│   ├── tests/
-│   │   └── unit/
+│   │   ├── agents/               # brief_analyzer, research, strategy, media_planner,
+│   │   │                         # resource, deck, campaign_extract, schemas, ppt_builder
+│   │   ├── graph/                # pipeline.py (LangGraph nodes + edges)
+│   │   │                         # executor.py  (start / resume_pipeline / rerun, AsyncRedisSaver)
+│   │   │                         # state.py     (PipelineState, RequestBudget)
+│   │   ├── rag/                  # indexer, retriever, resource_import, campaign_index,
+│   │   │                         # campaign_retriever, archive_process, visual_*, feedback_embedder
+│   │   ├── language/             # router.py, prompts.py (CN/EN templates)
+│   │   ├── stability/            # budget.py, fallback.py
+│   │   ├── models/               # resource, media_plan, feedback, campaign_record
+│   │   └── database/repositories/
+│   ├── tests/                    # 179 unit + integration tests
 │   └── requirements.txt
 ├── frontend/
-│   ├── app/                         # Next.js App Router
-│   ├── components/
-│   │   ├── pipeline/                # Pipeline execution view
-│   │   ├── hitl/                    # HITL confirmation components
-│   │   ├── gallery/                 # Node 4 Gallery Review
-│   │   │   ├── GalleryView.tsx      # Main layout (thumbnails + preview + progress)
-│   │   │   ├── SlideThumbnail.tsx   # Thumbnail with status indicator
-│   │   │   ├── SlidePreview.tsx     # Current slide preview
-│   │   │   └── NarrativePanel.tsx   # Narrative suggestions panel
-│   │   ├── deck-preview/            # PPT preview
-│   │   └── analytics/               # Dashboard
-│   ├── store/                       # Redux
-│   ├── hooks/
-│   │   └── usePipelineSocket.ts     # WebSocket hook
-│   └── types/
+│   ├── app/                      # Next.js App Router pages
+│   ├── components/               # pipeline/, gallery/, feedback/, versions/, layout/
+│   ├── store/                    # Redux slices: pipeline, campaigns, resources, toast
+│   ├── hooks/                    # usePipelineSocket, usePipeline
+│   ├── lib/                      # api.ts (apiFetch), ws.ts
+│   └── messages/                 # zh.json + en.json (next-intl)
 ├── infrastructure/
-│   └── docker/
-│       └── docker-compose.yml
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-└── README.md
+│   ├── docker/docker-compose.yml # 8 services
+│   └── terraform/                # AWS ECS Fargate + ALB + ElastiCache
+├── scripts/                      # generate_templates, migrate_vectors, backfill_resource_profiles
+└── .github/workflows/ci.yml      # pytest + lint + frontend build (3 parallel jobs)
 ```

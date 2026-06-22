@@ -1,31 +1,11 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-function getToken(): string | null {
-  return typeof window !== "undefined" ? localStorage.getItem("token") : null;
-}
-
-async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Request failed: ${res.status}`);
-  }
-  return res.json();
-}
+import { apiFetch } from "@/lib/api";
 
 export interface Resource {
   _id: string;
   name: string;
   type: string;
+  scope?: "shared" | "client";
   platforms?: Array<{
     name: string;
     followers_raw?: string;
@@ -47,6 +27,7 @@ interface ResourcesState {
   importing: boolean;
   importResult: string | null;
   error: string | null;
+  scope: "shared" | "client";
   clientId: string;
   typeFilter: string;
 }
@@ -57,33 +38,60 @@ const initialState: ResourcesState = {
   importing: false,
   importResult: null,
   error: null,
+  scope: "shared",
   clientId: "",
   typeFilter: "",
 };
 
 export const fetchResources = createAsyncThunk(
   "resources/fetchResources",
-  async ({ clientId, typeFilter }: { clientId: string; typeFilter: string }) => {
-    if (!clientId) return [];
-    const params = new URLSearchParams({ client_id: clientId });
+  async ({
+    scope,
+    clientId,
+    typeFilter,
+  }: {
+    scope: "shared" | "client";
+    clientId: string;
+    typeFilter: string;
+  }) => {
+    if (scope === "client" && !clientId) return [];
+    const params = new URLSearchParams({ scope });
+    if (scope === "client" && clientId) params.set("client_id", clientId);
     if (typeFilter) params.set("type", typeFilter);
-    return fetchJson<Resource[]>(`/api/v1/resources?${params}`);
+    const res = await apiFetch(`/api/v1/resources?${params}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Request failed: ${res.status}`);
+    }
+    return res.json() as Promise<Resource[]>;
   }
 );
 
 export const importExcel = createAsyncThunk(
   "resources/importExcel",
-  async ({ file, clientId }: { file: File; clientId: string }) => {
-    const token = getToken();
+  async ({
+    file,
+    scope,
+    clientId,
+  }: {
+    file: File;
+    scope: "shared" | "client";
+    clientId: string;
+  }) => {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("client_id", clientId);
-    const res = await fetch(`${API_BASE}/api/v1/resources/import`, {
+    formData.append("scope", scope);
+    if (scope === "client" && clientId) {
+      formData.append("client_id", clientId);
+    }
+    const res = await apiFetch("/api/v1/resources/import", {
       method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     });
-    if (!res.ok) throw new Error("Import failed");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Import failed");
+    }
     const data = await res.json();
     return data.imported || 0;
   }
@@ -93,6 +101,11 @@ const resourcesSlice = createSlice({
   name: "resources",
   initialState,
   reducers: {
+    setScope(state, action: PayloadAction<"shared" | "client">) {
+      state.scope = action.payload;
+      state.resources = [];
+      state.error = null;
+    },
     setClientId(state, action: PayloadAction<string>) {
       state.clientId = action.payload;
     },
@@ -120,6 +133,7 @@ const resourcesSlice = createSlice({
       .addCase(importExcel.pending, (state) => {
         state.importing = true;
         state.importResult = null;
+        state.error = null;
       })
       .addCase(importExcel.fulfilled, (state, action) => {
         state.importing = false;
@@ -132,6 +146,6 @@ const resourcesSlice = createSlice({
   },
 });
 
-export const { setClientId, setTypeFilter, clearImportResult } = resourcesSlice.actions;
+export const { setScope, setClientId, setTypeFilter, clearImportResult } = resourcesSlice.actions;
 
 export default resourcesSlice.reducer;

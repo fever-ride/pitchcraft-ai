@@ -6,10 +6,10 @@ This file is the primary reference for Claude Code sessions working on this code
 
 ## Project Overview
 
-Pitchcraft is an AI-powered proposal automation platform for PR/marketing agencies. It converts a client brief into a presentation-ready PowerPoint deck using an 8-agent LangGraph pipeline with human-in-the-loop checkpoints.
+Pitchcraft is an AI-powered proposal automation platform for PR/marketing agencies. It converts a client brief into a presentation-ready PowerPoint deck using a LangGraph pipeline (8 LLM agents, 5 in-graph HITL checkpoints) with request-per-pause HTTP resume.
 
 **Stack:**
-- Backend: FastAPI + LangGraph + Celery + MongoDB + Pinecone
+- Backend: FastAPI + LangGraph (`AsyncRedisSaver` checkpoint) + Celery (async jobs only) + MongoDB + Pinecone
 - Frontend: Next.js 14 (App Router) + Redux Toolkit + Tailwind CSS
 - Infrastructure: Docker Compose (8 services), Terraform (AWS ECS Fargate)
 - AI: Anthropic Claude via `langchain_anthropic`, embeddings via sentence-transformers
@@ -53,6 +53,12 @@ Celery tasks (e.g., archive processing, proposition indexing) run in the `worker
 
 ```bash
 make logs s=worker
+```
+
+**Proposal pipeline** runs in the `backend` container via FastAPI `BackgroundTasks` — not Celery. Tail pipeline progress with:
+
+```bash
+make logs s=backend
 ```
 
 ---
@@ -101,7 +107,7 @@ All pages live in `frontend/app/` and use the Next.js App Router.
 | Route | File | Purpose |
 |-------|------|---------|
 | `/login` | `app/login/page.tsx` | Register / login |
-| `/pipeline` | `app/pipeline/page.tsx` | Run a new proposal pipeline; all 6 HITL checkpoints |
+| `/pipeline` | `app/pipeline/page.tsx` | Run a new proposal pipeline; 5 in-graph HITL checkpoints |
 | `/proposals/[id]` | `app/proposals/[id]/page.tsx` | Proposal detail, feedback, version history |
 | `/clients` | `app/clients/page.tsx` | List/create clients; links to client detail |
 | `/clients/[clientId]` | `app/clients/[clientId]/page.tsx` | Client detail: projects, brand profile, resource library |
@@ -179,7 +185,99 @@ The delete button is always visible on the record detail page (`/campaigns/[reco
 
 ---
 
+## Proposal Pipeline — Full Flow
+
+The proposal pipeline is a LangGraph `StateGraph` with `interrupt()` on 5 HITL nodes. Execution is **stateless per HTTP request** — no long-lived coroutine, no Redis pub/sub for resume.
+
+### State layers (do not confuse them)
+
+| Layer | Storage | Purpose |
+|-------|---------|---------|
+| LangGraph checkpoint | `AsyncRedisSaver`, `thread_id=pipeline_id` | Graph execution state across `start` / `resume_pipeline` calls; survives process restarts |
+| App state snapshot | Redis `pipeline:{id}:state` | Human-readable dict for frontend GET endpoints; updated after each non-HITL node |
+| Status | Redis `pipeline:{id}:status` | `{status, current_node}` for polling |
+| Node timings | Redis `pipeline:{id}:timings` | Accumulated per-node metrics across execution segments |
+
+`RequestBudget` is excluded from Redis JSON — recreated fresh on each `start()` / `resume_pipeline()` call.
+
+### 1. Start pipeline
+
+**Entry point:** `/pipeline` page → Brief Input
+
+1. Frontend POSTs to `POST /api/v1/pipeline/start` with `client_id`, `raw_brief`, `output_language`
+2. Backend returns `{pipeline_id, status: "started"}` (202)
+3. `BackgroundTasks` calls `executor.start(initial_state)` — runs until first `interrupt()` or completion, then **returns**
+
+### 2. Real-time progress (WebSocket, receive-only)
+
+Frontend opens `ws://.../ws/pipeline/{pipeline_id}` via `usePipelineSocket`.
+
+Server pushes: `node_entered`, `hitl_required`, `slide_generated`, `pipeline_complete`.
+
+**HITL responses are NOT sent over WebSocket.** Clients may send messages but the server ignores them.
+
+### 3. HITL confirm / revise / rerun (HTTP)
+
+When status is `paused`, frontend calls `POST /api/v1/pipeline/{id}/confirm` via `api.confirmNode()`:
+
+```typescript
+await api.confirmNode(pipelineId, {
+  node: "hitl_brief",       // must match current paused node
+  action: "confirm",        // "confirm" | "revise" | "rerun"
+  edits: { ... },           // optional field edits
+  feedback: "...",          // for revise
+  refresh_research: true,   // optional
+  rerun_from: "research_agent",  // for action="rerun" at hitl_strategy
+  flagged_indices: [2, 5],  // for hitl_gallery
+});
+```
+
+Backend starts `executor.resume_pipeline(response)` as a short-lived background task → `Command(resume=response)` → runs until next interrupt or completion.
+
+**5 in-graph HITL nodes:** `hitl_brief` → `hitl_strategy` → `hitl_media` → `hitl_structure` → `hitl_gallery`
+
+Post-pipeline client feedback on `/proposals/[id]` can trigger rerun — separate from in-graph HITL.
+
+### 4. Graph topology highlights
+
+- Fan-out: `hitl_brief` → `research_agent` ∥ `strategy_phase1` → fan-in at `strategy_phase2`
+- Conditional: `hitl_media` → `resource_agent` or skip to `deck_orchestrator` when `resource_types_needed=[]`
+- Serial: `slide_content` → `narrative_agent` → `hitl_gallery` (not parallel)
+
+### 5. Rerun
+
+**External rerun** (`POST /api/v1/pipeline/{id}/rerun` or proposal feedback):
+- `executor.start(redis_state, start_from=node)` loads app state, primes checkpointer via `aupdate_state(as_node=predecessor)`, streams from node
+
+**Inline rerun** (HITL Strategy `action="rerun"`):
+- Handled within a single `resume_pipeline()` call — `_stream_run` detects `rerun_from` in node output, primes checkpointer, restreams
+
+`RERUN_SUGGESTIONS` in `backend/core/models/feedback.py` maps feedback targets to nodes (`strategy_phase2`, `deck_orchestrator`, `slide_content`, `resource_agent`).
+
+### 6. Key executor methods
+
+| Method | When | Returns |
+|--------|------|---------|
+| `start(initial_state)` | `POST /start` | Exits at first HITL interrupt or completion |
+| `resume_pipeline(response)` | `POST /confirm` | Exits at next interrupt or completion |
+| `start(state, start_from=node)` | `POST /rerun`, feedback rerun | Same as start with primed checkpoint |
+
+---
+
 ## Backend Endpoints
+
+### Key pipeline endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/pipeline/start` | Start pipeline → background `executor.start()` |
+| `POST` | `/api/v1/pipeline/{id}/confirm` | HITL response → background `executor.resume_pipeline()` |
+| `POST` | `/api/v1/pipeline/{id}/rerun` | Rerun from node → background `executor.start(state, start_from)` |
+| `GET` | `/api/v1/pipeline/{id}/status` | Current status + confirmation flags |
+| `GET` | `/api/v1/pipeline/{id}/brief` | Structured brief for HITL 1 |
+| `GET` | `/api/v1/pipeline/{id}/strategy` | Strategy + research for HITL 2 |
+| `GET` | `/api/v1/pipeline/{id}/media-plan` | Media plan for HITL 3 |
+| `GET` | `/api/v1/pipeline/{id}/slides` | Slides + narrative for HITL 5 |
 
 ### Key campaign endpoints
 
@@ -235,6 +333,55 @@ CampaignRecord
 
 `record_type`: `"proposal"` (pitch deck) or `"campaign"` (recap with results)
 `status`: `"pending_confirmation"` → `"confirmed"`
+
+---
+
+### Resource (KOL / Media / Vendor / Placement)
+
+A Resource is a **person or entity**, not a platform account. Multi-platform KOLs are one record with a `platforms` list.
+
+```
+Resource
+├── org_id: str                              — always set from JWT; used for shared pool isolation
+├── client_id: str                           — empty for shared resources
+├── scope: "shared" | "client"              — "shared" = agency-wide pool; "client" = client-specific
+├── name, type, tier, tags, pricing, status
+├── platforms: list[PlatformEntry]           — one entry per platform
+│    └── PlatformEntry: name, followers_raw, followers_count, profile_url
+├── primary_platform: str                    — normalize_platform(platforms[0].name), for Pinecone filter
+├── total_followers_count: int | None        — sum across all platforms, display/reference only
+├── categories, content_style, content_style_v2 (ContentStyle)
+├── audience_tags, audience_demographics (AudienceDemographics)
+├── past_cpe, engagement_rate
+├── contact                                  — email / phone / WeChat (non-URL)
+│   [Media-specific]
+├── outlet_type, beat, publish_frequency
+│   [Vendor-specific]
+├── service_type, region, capacity
+│   [Placement-specific]
+└── placement_type, location, audience_reach, available_formats
+```
+
+**Shared vs. client pool**:
+- Default is `scope="shared"` — resource belongs to the agency's org-wide pool
+- `scope="client"` — resource is exclusive to a specific client (e.g. contracted exclusively)
+- The resource agent (`run_resource_agent`) queries **both** pools when running a pipeline: shared namespace `shared_{prefix}_{org_id}` + client namespace `{prefix}_{client_id}`
+- UI scope toggle: "Agency Pool" tab fetches `scope=shared` (no client_id needed); "Client Resources" tab requires a client_id
+
+**Pinecone namespaces**:
+- Shared: `shared_resource_kol_{org_id}` / `shared_resource_media_{org_id}` / etc.
+- Client: `resource_kol_{client_id}` / `resource_media_{client_id}` / etc.
+- `resource_namespace(rtype, id_str, scope="client"|"shared")` resolves the namespace
+
+**tier**: explicit only — filled by user or imported from Excel. Never auto-computed from follower count. `null` means unknown.
+
+**Import**: `parse_resource_excel()` handles multi-platform strings automatically:
+- `平台: 抖音+小红书` + `粉丝数: 抖音88万+小红书32万` → two PlatformEntry items with per-platform counts
+- `平台: 抖音+小红书` + `粉丝数: 52万` (undivided) → two entries, per-platform count=None, total_followers_count=520000
+- `序号` and other structural columns are in `KNOWN_IGNORE_COLUMNS` and are silently dropped before LLM inference
+- `类型` → `categories` (content genre); `资源类型` → `type` (kol/koc/media)
+
+**Pinecone filter**: `{"platforms": {"$in": ["xiaohongshu", "douyin"]}}` — array metadata, supports `$in` natively.
 
 ---
 
@@ -357,15 +504,19 @@ Prompt variants live in `backend/core/language/prompts.py` (pipeline agents) and
 
 5. **Background tasks vs sync**: confirmed record deletion runs Pinecone cleanup as a FastAPI `BackgroundTask` so the HTTP response returns immediately.
 
-6. **Celery task visibility**: async processing only shows up in `make logs s=worker`. The frontend polls for results rather than listening to a webhook.
+6. **Celery vs pipeline**: Celery async jobs (archive extraction, campaign indexing) log to `make logs s=worker`. The **proposal pipeline** runs in the backend via `BackgroundTasks` — use `make logs s=backend`. Campaign KB upload polls for results; pipeline uses WebSocket for progress + HTTP for HITL confirm.
 
-7. **Full file rewrite for large TSX files**: when making multiple edits to large files (> 300 lines), use `Write` with the entire new content rather than multiple `Edit` calls. Partial edits on large files can leave stale trailing content.
+7. **Pipeline HITL: HTTP confirm, not WebSocket**: never send `hitl_response` over WebSocket. Use `api.confirmNode()` → `POST /pipeline/{id}/confirm`. WebSocket is receive-only.
 
-8. **ObjectId vs string IDs**: MongoDB `_id` is an `ObjectId` for most collections except `campaign_records` (which uses a plain UUID string). Use `bson.ObjectId(client_id)` when querying clients/projects/resources.
+8. **Pipeline state: two Redis layers**: `AsyncRedisSaver` checkpoint (graph resume) vs `pipeline:{id}:state` (frontend GET). Don't assume one replaces the other.
 
-9. **i18n: `useTranslations` is a React hook** — it can only be called inside a component function body, not at module level. Badge helper functions that need translations must be converted to React components.
+9. **Full file rewrite for large TSX files**: when making multiple edits to large files (> 300 lines), use `Write` with the entire new content rather than multiple `Edit` calls. Partial edits on large files can leave stale trailing content.
 
-10. **i18n: `npm ci` in Dockerfile** — the Dockerfile uses `npm install --legacy-peer-deps` (not `npm ci`) because `npm ci` breaks when the local npm version differs from the container's npm version and generates an incompatible lockfile. Don't revert this to `npm ci`.
+10. **ObjectId vs string IDs**: MongoDB `_id` is an `ObjectId` for most collections except `campaign_records` (which uses a plain UUID string). Use `bson.ObjectId(client_id)` when querying clients/projects/resources.
+
+11. **i18n: `useTranslations` is a React hook** — it can only be called inside a component function body, not at module level. Badge helper functions that need translations must be converted to React components.
+
+12. **i18n: `npm ci` in Dockerfile** — the Dockerfile uses `npm install --legacy-peer-deps` (not `npm ci`) because `npm ci` breaks when the local npm version differs from the container's npm version and generates an incompatible lockfile. Don't revert this to `npm ci`.
 
 ---
 
@@ -399,10 +550,23 @@ Frontend has no test suite yet.
 - `frontend/app/campaigns/[recordId]/page.tsx` — review/edit/confirm UI
 
 ### Pipeline
-- `backend/core/graph/pipeline.py` — LangGraph node definitions
-- `backend/core/graph/executor.py` — run/rerun logic
-- `backend/core/graph/state.py` — PipelineState schema
-- `frontend/app/pipeline/page.tsx` — pipeline UI with all HITL checkpoints
+- `backend/core/graph/pipeline.py` — LangGraph `StateGraph`, 5 `interrupt()` HITL nodes, conditional Resource skip
+- `backend/core/graph/executor.py` — `start()` / `resume_pipeline()` / `_prime_checkpointer_for_rerun()`; `AsyncRedisSaver`
+- `backend/core/graph/state.py` — `PipelineState` schema, `RequestBudget`
+- `backend/api/v1/endpoints/pipeline.py` — `POST /start`, `POST /confirm`, `POST /rerun`, GET data endpoints
+- `backend/api/v1/websocket.py` — receive-only WebSocket progress broadcast
+- `backend/api/v1/endpoints/proposals.py` — post-completion feedback rerun → `executor.start(state, start_from)`
+- `frontend/app/pipeline/page.tsx` — pipeline UI; HITL via `api.confirmNode()` (HTTP)
+- `frontend/hooks/usePipelineSocket.ts` — WebSocket receive-only; dispatches Redux on progress events
+- `frontend/components/gallery/GalleryView.tsx` — HITL 5 gallery confirm with `flagged_indices`
+
+### Resource Library
+- `backend/core/models/resource.py` — Resource / PlatformEntry / ResourceType schemas; `parse_follower_count`, `normalize_platform`
+- `backend/core/rag/resource_import.py` — Excel import: `parse_resource_excel`, `_build_platforms`, `resource_to_text`, `HEADER_ALIASES`, `KNOWN_IGNORE_COLUMNS`
+- `backend/core/agents/resource.py` — resource retrieval agent; `_build_metadata_filter` (Pinecone platform filter)
+- `backend/api/v1/endpoints/resources.py` — REST API (CRUD + import preview/confirm)
+- `frontend/app/resources/page.tsx` — resource list UI + Excel import flow
+- `frontend/store/resourcesSlice.ts` — Redux slice + Resource TypeScript interface
 
 ### Auth
 - `backend/api/v1/endpoints/auth.py` — register/login/refresh

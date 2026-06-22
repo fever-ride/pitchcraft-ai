@@ -7,15 +7,27 @@ import { useTranslations } from "next-intl";
 interface Props {
   pipelineId: string;
   onConfirm: () => void;
-  onRevise: (feedback: string) => void;
+  onRevise: (feedback: string, refreshResearch?: boolean) => void;
+  onRerun: (rerunFrom: string, refreshResearch?: boolean) => void;
+  disabled?: boolean;
 }
 
-export function HitlStrategy({ pipelineId, onConfirm, onRevise }: Props) {
+const RERUN_NODES = [
+  { value: "brief_analyzer", label: "Re-analyze brief" },
+  { value: "research_agent", label: "Re-run research" },
+  { value: "strategy_phase1", label: "Re-run strategy phase 1" },
+  { value: "strategy_phase2", label: "Re-run strategy phase 2" },
+];
+
+export function HitlStrategy({ pipelineId, onConfirm, onRevise, onRerun, disabled }: Props) {
   const t = useTranslations("pipeline");
   const [strategy, setStrategy] = useState<Record<string, unknown>>({});
   const [research, setResearch] = useState<Record<string, unknown>>({});
   const [brandCheckPassed, setBrandCheckPassed] = useState<boolean | null>(null);
   const [feedback, setFeedback] = useState("");
+  const [refreshResearch, setRefreshResearch] = useState(false);
+  const [showRerun, setShowRerun] = useState(false);
+  const [rerunFrom, setRerunFrom] = useState("research_agent");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -61,28 +73,83 @@ export function HitlStrategy({ pipelineId, onConfirm, onRevise }: Props) {
         </div>
       </details>
 
-      <div className="flex items-center gap-3 pt-4 border-t">
-        <button
-          onClick={onConfirm}
-          className="px-4 py-2 bg-green-600 text-white rounded font-medium"
-        >
-          {t("hitlStrategy.confirmStrategy")}
-        </button>
-        <input
-          type="text"
-          value={feedback}
-          onChange={(e) => setFeedback(e.target.value)}
-          placeholder={t("hitlStrategy.feedbackPlaceholder")}
-          className="flex-1 border rounded px-3 py-2 text-sm"
-        />
-        <button
-          onClick={() => {
-            if (feedback.trim()) onRevise(feedback);
-          }}
-          className="px-4 py-2 bg-yellow-500 text-white rounded font-medium"
-        >
-          {t("hitlStrategy.requestRevision")}
-        </button>
+      <div className="space-y-3 pt-4 border-t">
+        {/* Row 1: Confirm */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onConfirm}
+            disabled={disabled}
+            className="px-4 py-2 bg-green-600 text-white rounded font-medium disabled:opacity-50"
+          >
+            {t("hitlStrategy.confirmStrategy")}
+          </button>
+        </div>
+
+        {/* Row 2: Revise with feedback */}
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder={t("hitlStrategy.feedbackPlaceholder")}
+            className="flex-1 border rounded px-3 py-2 text-sm"
+          />
+          <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
+            <input
+              type="checkbox"
+              checked={refreshResearch}
+              onChange={(e) => setRefreshResearch(e.target.checked)}
+              className="w-3.5 h-3.5"
+            />
+            {t("hitlStrategy.refreshResearch")}
+          </label>
+          <button
+            onClick={() => { if (feedback.trim()) onRevise(feedback, refreshResearch); }}
+            disabled={disabled || !feedback.trim()}
+            className="px-4 py-2 bg-yellow-500 text-white rounded font-medium disabled:opacity-50"
+          >
+            {t("hitlStrategy.requestRevision")}
+          </button>
+        </div>
+
+        {/* Row 3: Rerun (collapsed by default) */}
+        <div>
+          <button
+            onClick={() => setShowRerun((v) => !v)}
+            className="text-xs text-gray-500 underline"
+          >
+            {showRerun ? "Hide rerun options" : "Rerun from a specific node →"}
+          </button>
+          {showRerun && (
+            <div className="mt-2 flex items-center gap-3 p-3 bg-gray-50 rounded border">
+              <select
+                value={rerunFrom}
+                onChange={(e) => setRerunFrom(e.target.value)}
+                className="border rounded px-2 py-1.5 text-sm"
+              >
+                {RERUN_NODES.map((n) => (
+                  <option key={n.value} value={n.value}>{n.label}</option>
+                ))}
+              </select>
+              <label className="flex items-center gap-1 text-xs text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={refreshResearch}
+                  onChange={(e) => setRefreshResearch(e.target.checked)}
+                  className="w-3.5 h-3.5"
+                />
+                {t("hitlStrategy.refreshResearch")}
+              </label>
+              <button
+                onClick={() => onRerun(rerunFrom, refreshResearch)}
+                disabled={disabled}
+                className="px-3 py-1.5 bg-orange-500 text-white rounded text-sm font-medium disabled:opacity-50"
+              >
+                Rerun
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

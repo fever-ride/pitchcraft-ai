@@ -66,8 +66,15 @@ def _build_metadata_filter(
     return filters
 
 
-async def _validate_recommendations(result: ResourceResult, client_id: str) -> ResourceResult:
-    """Post-validation: verify recommended resources exist in MongoDB and are active."""
+async def _validate_recommendations(
+    result: ResourceResult,
+    client_id: str = "",
+    org_id: str = "",
+) -> ResourceResult:
+    """Post-validation: verify recommended resources exist in MongoDB and are active.
+
+    Searches both the shared agency pool and the client-specific pool.
+    """
     if not result.recommended_resources:
         return result
 
@@ -76,7 +83,8 @@ async def _validate_recommendations(result: ResourceResult, client_id: str) -> R
 
     validated = []
     for rec in result.recommended_resources:
-        doc = await repo.find_by_name(client_id, rec.name)
+        # scope="" → searches shared + client pools
+        doc = await repo.find_by_name(org_id=org_id, name=rec.name, client_id=client_id, scope="")
         if doc:
             if doc.get("status", ResourceStatus.ACTIVE.value) == ResourceStatus.INACTIVE.value:
                 result.missing_resources.append(f"{rec.name} (inactive)")
@@ -93,7 +101,7 @@ async def run_resource_agent(
     big_idea: str,
     channels: list[dict],
     resource_types_needed: list[str],
-    client_id: str,
+    client_id: str = "",
     content_tone: str = "",
     audience_insight: str = "",
     category: str = "",
@@ -104,6 +112,7 @@ async def run_resource_agent(
 ) -> ResourceResult | dict:
     """Match resources from DB based on typed strategy fields.
 
+    Queries both the shared agency pool (org_id) and the client-specific pool (client_id).
     Semantic query: big_idea + content_tone + audience_insight + category
     Metadata filter: status=active, platform (for KOL/KOC)
     """
@@ -121,6 +130,21 @@ async def run_resource_agent(
         query_parts.append(category)
     search_query = " ".join(query_parts)
 
+    def _namespaces_for_type(rtype: str) -> list[str]:
+        """Return all Pinecone namespaces to query for a given resource type.
+
+        Searches the shared agency pool (if org_id set) and the client-specific
+        pool (if client_id set). Deduplicates in case they map to the same namespace.
+        """
+        nss = []
+        if org_id:
+            nss.append(resource_namespace(rtype, org_id, scope="shared"))
+        if client_id:
+            nss.append(resource_namespace(rtype, client_id, scope="client"))
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        return [n for n in nss if not (n in seen or seen.add(n))]  # type: ignore[arg-type]
+
     all_results = []
     if media_plan and media_plan.get("tiers"):
         # Tiered retrieval: per-tier query with tier-specific criteria
@@ -129,13 +153,15 @@ async def run_resource_agent(
             tier_label = tier_spec.get("tier", "")
             channel_name = tier_spec.get("channel", "")
             rtype = _infer_resource_type(tier_label, channel_name)
-            ns = resource_namespace(rtype, client_id)
+            namespaces = _namespaces_for_type(rtype)
+            if not namespaces:
+                continue
             meta_filter = _build_metadata_filter(rtype, channels)
             if tier_label:
                 meta_filter["tier"] = {"$eq": tier_label}
             results = await retrieve(
                 query=tier_query,
-                namespaces=[ns],
+                namespaces=namespaces,
                 top_k=tier_spec.get("count", 5) + 3,
                 score_threshold=0.25,
                 metadata_filter=meta_filter,
@@ -145,11 +171,13 @@ async def run_resource_agent(
     else:
         # Fallback: generic retrieval per resource type (no media plan)
         for rtype in resource_types_needed:
-            ns = resource_namespace(rtype, client_id)
+            namespaces = _namespaces_for_type(rtype)
+            if not namespaces:
+                continue
             meta_filter = _build_metadata_filter(rtype, channels)
             results = await retrieve(
                 query=search_query,
-                namespaces=[ns],
+                namespaces=namespaces,
                 top_k=8,
                 score_threshold=0.3,
                 metadata_filter=meta_filter,
@@ -201,5 +229,5 @@ async def run_resource_agent(
         messages, output_schema=ResourceResult, budget=budget, temperature=0.2, max_tokens=2048
     )
 
-    result = await _validate_recommendations(result, client_id)
+    result = await _validate_recommendations(result, client_id=client_id, org_id=org_id or "")
     return result

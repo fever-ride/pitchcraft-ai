@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -74,7 +75,9 @@ FRESHNESS_THRESHOLD_DAYS = 180
 
 class Resource(BaseModel):
     id: str | None = Field(None, alias="_id")
-    client_id: str
+    org_id: str = ""                                      # always set from JWT org; used for shared pool isolation
+    client_id: str = ""                                   # empty for shared resources
+    scope: Literal["shared", "client"] = "shared"        # "shared"=agency pool, "client"=client-specific
     type: ResourceType
     name: str
     tags: list[str] = []
@@ -139,8 +142,12 @@ class Resource(BaseModel):
         return f"data may be outdated ({months} months since last verification)"
 
 
-def resource_namespace(resource_type: str, client_id: str) -> str:
-    """Resolve Pinecone namespace for a resource type."""
+def resource_namespace(resource_type: str, id_str: str, scope: str = "client") -> str:
+    """Resolve Pinecone namespace for a resource type.
+
+    scope="client": {prefix}_{id_str}         — client-specific pool; id_str = client_id
+    scope="shared": shared_{prefix}_{id_str}  — agency-wide pool;    id_str = org_id
+    """
     type_map = {
         "kol": "resource_kol",
         "koc": "resource_kol",  # KOC shares namespace with KOL
@@ -149,7 +156,9 @@ def resource_namespace(resource_type: str, client_id: str) -> str:
         "placement": "resource_placement",
     }
     prefix = type_map.get(resource_type, "resource_kol")
-    return f"{prefix}_{client_id}"
+    if scope == "shared":
+        return f"shared_{prefix}_{id_str}"
+    return f"{prefix}_{id_str}"
 
 
 PLATFORM_ALIASES = {

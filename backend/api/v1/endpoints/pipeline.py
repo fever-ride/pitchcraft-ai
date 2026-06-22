@@ -20,10 +20,12 @@ class StartPipelineRequest(BaseModel):
 
 class ConfirmRequest(BaseModel):
     node: str
-    action: str  # "confirm" or "revise"
+    action: str             # "confirm" | "revise" | "rerun"
     feedback: str | None = None
     refresh_research: bool = False
     edits: dict | None = None
+    rerun_from: str | None = None       # for action="rerun" from hitl_strategy
+    flagged_indices: list[int] = []     # for hitl_gallery
 
 
 class RerunRequest(BaseModel):
@@ -50,34 +52,44 @@ async def start_pipeline(
     }
 
     executor = PipelineExecutor(pipeline_id)
-    background_tasks.add_task(executor.run, initial_state)
+    background_tasks.add_task(executor.start, initial_state)
 
     return {"pipeline_id": pipeline_id, "status": "started"}
 
 
-@router.post("/{pipeline_id}/confirm")
+@router.post("/{pipeline_id}/confirm", status_code=status.HTTP_202_ACCEPTED)
 async def confirm_node(
     pipeline_id: str,
     request: ConfirmRequest,
+    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(get_current_user),
 ):
+    """Submit a HITL response to resume the pipeline.
+
+    Starts a short-lived background task that feeds the response via Command(resume=...)
+    into the LangGraph checkpoint and runs until the next interrupt or completion.
+    Returns 202 immediately — the pipeline continues asynchronously.
+    """
     executor = PipelineExecutor(pipeline_id)
     current = await executor.get_status()
 
     if current.get("status") != "paused":
         raise HTTPException(status_code=400, detail="Pipeline is not paused at a HITL node")
 
-    await executor.resume({
+    response = {
         "action": request.action,
         "feedback": request.feedback,
         "refresh_research": request.refresh_research,
         "edits": request.edits,
-    })
+        "rerun_from": request.rerun_from,
+        "flagged_indices": request.flagged_indices,
+    }
+    background_tasks.add_task(executor.resume_pipeline, response)
 
-    return {"status": "resumed", "node": request.node}
+    return {"status": "accepted", "node": request.node}
 
 
-@router.post("/{pipeline_id}/rerun")
+@router.post("/{pipeline_id}/rerun", status_code=status.HTTP_202_ACCEPTED)
 async def rerun_from_node(
     pipeline_id: str,
     request: RerunRequest,
@@ -96,7 +108,7 @@ async def rerun_from_node(
         state["strategy_feedback"] = request.feedback
 
     new_executor = PipelineExecutor(pipeline_id)
-    background_tasks.add_task(new_executor.run, state, request.rerun_from)
+    background_tasks.add_task(new_executor.start, state, request.rerun_from)
 
     return {"status": "rerun_started", "from_node": request.rerun_from}
 

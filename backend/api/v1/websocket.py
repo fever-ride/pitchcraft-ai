@@ -1,3 +1,14 @@
+"""WebSocket manager for pipeline progress broadcasting.
+
+Clients connect to /ws/pipeline/{pipeline_id} to receive real-time events:
+  - node_entered       — a pipeline node has started executing
+  - hitl_required      — pipeline is paused at a HITL checkpoint (with interrupt data)
+  - slide_generated    — a slide was generated (slide_index + content)
+  - pipeline_complete  — pipeline finished (pptx_path)
+
+HITL responses are NOT sent through WebSocket in Option B.
+Use POST /api/v1/pipeline/{id}/confirm to submit a HITL response.
+"""
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter()
@@ -62,32 +73,15 @@ manager = ConnectionManager()
 
 @router.websocket("/ws/pipeline/{pipeline_id}")
 async def pipeline_websocket(websocket: WebSocket, pipeline_id: str):
+    """Receive-only WebSocket for pipeline progress events.
+
+    Clients should only LISTEN here. HITL responses must be sent via
+    POST /api/v1/pipeline/{pipeline_id}/confirm (HTTP).
+    """
     await manager.connect(pipeline_id, websocket)
     try:
+        # Keep connection alive; ignore any incoming messages
         while True:
-            data = await websocket.receive_json()
-            event_type = data.get("event")
-
-            if event_type == "hitl_response":
-                from backend.core.graph.executor import PipelineExecutor
-
-                executor = PipelineExecutor(pipeline_id)
-                await executor.resume({
-                    "action": data.get("action", "confirm"),
-                    "feedback": data.get("feedback"),
-                    "refresh_research": data.get("refresh_research", False),
-                    "edits": data.get("edits"),
-                    "flagged_indices": data.get("flagged_indices"),
-                })
-
-            elif event_type == "research_refresh":
-                from backend.core.graph.executor import PipelineExecutor
-
-                executor = PipelineExecutor(pipeline_id)
-                await executor.resume({
-                    "action": "revise",
-                    "refresh_research": True,
-                })
-
+            await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(pipeline_id, websocket)

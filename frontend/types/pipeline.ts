@@ -32,10 +32,13 @@ export interface NarrativeSuggestion {
   issue: string;
 }
 
-export interface HitlEvent {
-  event: "hitl_response";
+/** Payload for POST /api/v1/pipeline/{id}/confirm */
+export interface HitlConfirmRequest {
   node: string;
-  action: "confirm" | "revise";
+  action: "confirm" | "revise" | "rerun";
   feedback?: string;
+  edits?: Record<string, unknown>;
   refresh_research?: boolean;
+  rerun_from?: string;
+  flagged_indices?: number[];
 }

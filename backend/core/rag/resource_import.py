@@ -549,18 +549,33 @@ def resource_to_text(r: dict) -> str:
     return " | ".join(parts)
 
 
-async def refresh_resource_embedding(doc: dict, client_id: str):
-    """Re-embed a single resource and upsert to Pinecone. Used after any field update."""
+def _resolve_resource_namespace(doc: dict) -> str:
+    """Derive the correct Pinecone namespace from a resource doc's scope fields."""
     rtype = doc.get("type", "kol").lower()
     if rtype not in VALID_TYPES:
         rtype = "kol"
-    ns = resource_namespace(rtype, client_id)
+    scope = doc.get("scope", "client")
+    if scope == "shared":
+        org_id = doc.get("org_id", "")
+        return resource_namespace(rtype, org_id, scope="shared")
+    else:
+        client_id = doc.get("client_id", "")
+        return resource_namespace(rtype, client_id, scope="client")
+
+
+async def refresh_resource_embedding(doc: dict, _client_id: str = ""):
+    """Re-embed a single resource and upsert to Pinecone. Used after any field update.
+
+    Derives the Pinecone namespace from the doc's scope/org_id/client_id fields.
+    The optional _client_id parameter is kept for backward compatibility but not used.
+    """
+    ns = _resolve_resource_namespace(doc)
     text = resource_to_text(doc)
     embeddings = await embed_texts([text])
     resource_id = str(doc.get("_id", ""))
     extra_meta = {
         "name": doc.get("name", ""),
-        "type": doc.get("type", rtype),
+        "type": doc.get("type", "kol"),
         "tier": doc.get("tier", ""),
         "platforms": [normalize_platform(p["name"]) for p in doc.get("platforms", []) if p.get("name")],
         "primary_platform": doc.get("primary_platform", ""),
@@ -573,10 +588,19 @@ async def refresh_resource_embedding(doc: dict, client_id: str):
 
 async def import_resources(
     file_bytes: bytes,
-    client_id: str,
+    client_id: str = "",
     override_mapping: dict[str, str] | None = None,
+    org_id: str = "",
+    scope: str = "shared",
 ) -> dict:
-    """Full import pipeline: parse → dedup → DB (bulk) → embed → Pinecone (grouped by type)."""
+    """Full import pipeline: parse → dedup → DB (bulk) → embed → Pinecone (grouped by type).
+
+    scope="shared": import into agency-wide pool (org_id used for namespace; client_id ignored)
+    scope="client": import into client-specific pool (client_id required)
+    """
+    if scope == "client" and not client_id:
+        return {"imported": 0, "error": "client_id is required for client-scoped import"}
+
     parse_result = parse_resource_excel(file_bytes, override_mapping=override_mapping)
     resources = parse_result.resources
     if not resources:
@@ -590,8 +614,12 @@ async def import_resources(
     db = await get_database()
     repo = ResourceRepository(db)
 
-    # Dedup: skip resources whose name already exists for this client
-    existing_names = await repo.get_names_set(client_id)
+    # Dedup: skip resources whose name already exists in the target pool
+    existing_names = await repo.get_names_set(
+        client_id=client_id,
+        org_id=org_id,
+        scope=scope,
+    )
     new_resources = [r for r in resources if r.get("name", "").lower() not in existing_names]
     skipped = len(resources) - len(new_resources)
 
@@ -604,10 +632,17 @@ async def import_resources(
             "ignored_columns": parse_result.ignored_columns,
         }
 
-    # Bulk insert — motor sets _id on each dict in-place
+    # Attach scope metadata to every record
     for r in new_resources:
+        r["org_id"] = org_id
         r["client_id"] = client_id
+        r["scope"] = scope
+
+    # Bulk insert — motor sets _id on each dict in-place
     await repo.create_many(new_resources)
+
+    # Resolve the id_str used for namespace: org_id for shared, client_id for client
+    ns_id = org_id if scope == "shared" else client_id
 
     # Group by type for namespace-specific embedding + upsert
     by_type: dict[str, list[dict]] = defaultdict(list)
@@ -619,7 +654,7 @@ async def import_resources(
 
     namespaces_used = []
     for rtype, group in by_type.items():
-        ns = resource_namespace(rtype, client_id)
+        ns = resource_namespace(rtype, ns_id, scope=scope)
         texts = [resource_to_text(r) for r in group]
         embeddings = await embed_texts(texts)
 
@@ -643,7 +678,7 @@ async def import_resources(
 
         upsert_vectors(
             namespace=ns,
-            file_id=f"import_{client_id}_{rtype}",
+            file_id=f"import_{ns_id}_{rtype}",
             chunks=texts,
             embeddings=embeddings,
             extra_metadata=extra_metadata,
@@ -661,8 +696,12 @@ async def import_resources(
     }
 
 
-async def repair_resource_embeddings(client_id: str) -> dict:
-    """Re-embed ALL resources for a client and upsert to Pinecone.
+async def repair_resource_embeddings(
+    client_id: str = "",
+    org_id: str = "",
+    scope: str = "client",
+) -> dict:
+    """Re-embed ALL resources for a given pool and upsert to Pinecone.
 
     Fixes orphaned records: resources present in MongoDB but missing from Pinecone
     due to a failed import (embed/Pinecone error after DB insert).
@@ -672,16 +711,21 @@ async def repair_resource_embeddings(client_id: str) -> dict:
     repo = ResourceRepository(db)
 
     # Include all statuses so inactive resources also get their vectors repaired
-    docs = await repo.find({"client_id": client_id}, limit=5000)
+    pool_q = repo._pool_query(org_id=org_id, client_id=client_id, scope=scope)
+    if not pool_q:
+        logger.warning("repair_resource_embeddings: called with no pool identifiers")
+        return {"repaired": 0, "errors": 0, "total": 0}
+
+    docs = await repo.find(pool_q, limit=5000)
     if not docs:
-        logger.info(f"repair_resource_embeddings: no resources found for {client_id}")
+        logger.info(f"repair_resource_embeddings: no resources found for scope={scope} client={client_id} org={org_id}")
         return {"repaired": 0, "errors": 0, "total": 0}
 
     repaired = 0
     errors = 0
     for doc in docs:
         try:
-            await refresh_resource_embedding(doc, client_id)
+            await refresh_resource_embedding(doc)
             repaired += 1
         except Exception as e:
             logger.error(
@@ -690,7 +734,7 @@ async def repair_resource_embeddings(client_id: str) -> dict:
             errors += 1
 
     logger.info(
-        f"repair_resource_embeddings: {client_id} → repaired={repaired}, errors={errors}"
+        f"repair_resource_embeddings: scope={scope} → repaired={repaired}, errors={errors}"
     )
     return {"repaired": repaired, "errors": errors, "total": len(docs)}
 
@@ -709,15 +753,19 @@ def make_import_task():
     def import_resources_task(
         self,
         storage_path: str,
-        client_id: str,
+        client_id: str = "",
         override_mapping: dict | None = None,
+        org_id: str = "",
+        scope: str = "shared",
     ) -> dict:
         """Celery task: bulk Excel import — runs embed + Pinecone upsert in background."""
         try:
             file_bytes = Path(storage_path).read_bytes()
-            return asyncio.run(import_resources(file_bytes, client_id, override_mapping=override_mapping))
+            return asyncio.run(
+                import_resources(file_bytes, client_id, override_mapping=override_mapping, org_id=org_id, scope=scope)
+            )
         except Exception as exc:
-            logger.error(f"import_resources_task failed for {client_id}: {exc}")
+            logger.error(f"import_resources_task failed for client={client_id} org={org_id}: {exc}")
             raise self.retry(exc=exc)
         finally:
             Path(storage_path).unlink(missing_ok=True)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect } from "react";
 import { useDispatch } from "react-redux";
 import {
   setCurrentNode,
@@ -13,15 +13,20 @@ import {
 
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
 
+/**
+ * Opens a WebSocket connection for the given pipeline and dispatches
+ * Redux actions as events arrive.
+ *
+ * HITL responses are sent via HTTP (POST /api/v1/pipeline/{id}/confirm),
+ * not through this WebSocket.
+ */
 export function usePipelineSocket(pipelineId: string | null) {
   const dispatch = useDispatch();
-  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!pipelineId) return;
 
     const ws = new WebSocket(`${WS_BASE}/ws/pipeline/${pipelineId}`);
-    wsRef.current = ws;
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -68,12 +73,4 @@ export function usePipelineSocket(pipelineId: string | null) {
       ws.close();
     };
   }, [pipelineId, dispatch]);
-
-  const sendEvent = useCallback((event: Record<string, unknown>) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(event));
-    }
-  }, []);
-
-  return { sendEvent };
 }

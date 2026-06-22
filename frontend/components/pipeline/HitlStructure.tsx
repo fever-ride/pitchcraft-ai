@@ -14,9 +14,10 @@ interface SlideStructure {
 interface Props {
   pipelineId: string;
   onConfirm: (edits?: Record<string, unknown>) => void;
+  disabled?: boolean;
 }
 
-export function HitlStructure({ pipelineId, onConfirm }: Props) {
+export function HitlStructure({ pipelineId, onConfirm, disabled }: Props) {
   const t = useTranslations("pipeline");
   const [structure, setStructure] = useState<SlideStructure[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,8 +118,9 @@ export function HitlStructure({ pipelineId, onConfirm }: Props) {
         </button>
         <div className="flex-1" />
         <button
-          onClick={() => onConfirm({ edits: { deck_structure: structure } })}
-          className="px-4 py-2 bg-green-600 text-white rounded font-medium"
+          onClick={() => onConfirm({ deck_structure: structure })}
+          disabled={disabled}
+          className="px-4 py-2 bg-green-600 text-white rounded font-medium disabled:opacity-50"
         >
           {t("hitlStructure.confirmStructure", { count: structure.length })}
         </button>

@@ -1,12 +1,14 @@
 # Pitchcraft
 
-AI-powered proposal automation platform for PR/marketing agency Account teams. Converts a client brief into a presentation-ready PowerPoint deck in under 30 minutes, with human oversight at every critical decision.
+AI-powered pitch automation platform for PR and marketing agencies. Built on a multi-agent workflow. Give it a client brief, get a presentation-ready PowerPoint deck in under 30 minutes.
 
 ## Why Pitchcraft
 
-Account teams at agencies spend 3 to 5 days per pitch doing largely repeatable work: competitor research, strategy frameworks, deck structuring, KOL matching, content writing. Pitchcraft compresses this to under 30 minutes by automating the repeatable parts while keeping humans in the loop for judgment calls and client relationship decisions.
+Agency account teams spend 3 to 5 days per pitch on work that follows the same pattern every time: competitor research, strategy frameworks, KOL matching, deck structuring, and copy writing. PitchCraft replaces this with a coordinated pipeline of specialized AI agents, each handling a distinct stage of the pitch process. The repeatable 80% gets automated. Teams stay focused on what actually requires their judgment: client nuance, creative instinct, and relationship decisions.
 
-**Target users:** Account / Lead Account / Admin roles at PR, advertising, and integrated marketing agencies.
+Unlike generic marketing automation tools, PitchCraft is purpose-built for agency pitch workflows. Every critical decision surfaces for human review before the pipeline moves forward.
+
+Built for Account Executives, Account Leads, and Admins at PR, advertising, and integrated marketing agencies.
 
 ---
 
@@ -14,7 +16,7 @@ Account teams at agencies spend 3 to 5 days per pitch doing largely repeatable w
 
 ### Multi-Agent Pipeline
 
-Eight specialized AI agents orchestrated via LangGraph with **parallel execution**, **conditional branching**, **6 HITL checkpoints**, and **feedback-driven rerun** from any upstream node:
+Ten LangGraph nodes (eight LLM agents + two utility nodes) orchestrated with **parallel fan-out/fan-in**, **conditional branching**, **5 in-graph HITL checkpoints**, and **feedback-driven rerun** from any upstream node:
 
 ```
 Brief Input
@@ -25,13 +27,13 @@ Brief Input
 └────────┬────────┘
          │
     ┌────┴────┐           ┌───────────────────────────────────────────┐
-    ▼         ▼           │  LangGraph fan-out: two agents run        │
-┌────────┐ ┌───────────┐ │  concurrently via asyncio.gather().       │
-│Research│ │Strategy P1 │ │  P1 uses only Brief + Brand Library;      │
-│  Agent │ │(no research│ │  Research uses web search only.           │
-│        │ │  needed)   │ │  Fan-in barrier: both must finish before  │
-└───┬────┘ └─────┬─────┘ │  Phase 2 can start.                       │
-    │            │        └───────────────────────────────────────────┘
+    ▼         ▼           │  LangGraph fan-out: parallel edges from   │
+┌────────┐ ┌───────────┐ │  hitl_brief. P1 uses Brief + Brand Lib;   │
+│Research│ │Strategy P1 │ │  Research uses web search only.           │
+│  Agent │ │(no research│ │  Fan-in barrier at strategy_phase2: both  │
+│        │ │  needed)   │ │  must finish before Phase 2 can start.    │
+└───┬────┘ └─────┬─────┘ └───────────────────────────────────────────┘
+    │            │
     └─────┬──────┘
           ▼
 ┌──────────────────────┐  ┌───────────────────────────────────────────┐
@@ -64,46 +66,46 @@ Brief Input
            │
            ▼
 ┌──────────────────────┐  ┌───────────────────────────────────────────┐
-│ Slide Content Agent   │  │  Streaming: each completed slide pushed   │
-│                       │  │  to frontend via WebSocket immediately.    │
-│ Narrative Agent ──────│──│─ Runs NON-BLOCKING in parallel with       │
-│ (coherence advisor)   │  │  slide generation. Outputs suggestions    │
-└──────────┬───────────┘  │  with page references, never blocks flow.  │
-           │              └───────────────────────────────────────────┘
+│ Slide Content Agent   │  │  Generates all slides in one node; batch-   │
+│                       │  │  pushes to frontend via WebSocket when done.  │
+│ Narrative Agent ──────│──│  Runs serially after slides (not parallel). │
+│ (coherence advisor)   │  │  Outputs page-level suggestions.            │
+└──────────┬───────────┘  └───────────────────────────────────────────┘
            │  ← HITL Node 5: Gallery Review (batch mark + regenerate)
            ▼
 ┌──────────────────────┐
 │     PPT Builder       │ → .pptx download + web preview
 └──────────┬───────────┘
+           ▼
+      Proposal Complete
            │
-           │  ← HITL Node 6: Client feedback
+           │  (Post-pipeline feedback on /proposals/[id] — not an in-graph HITL node)
            │
-           │    ┌──────────────────────────────────────────────────┐
-           └───▶│  FEEDBACK-DRIVEN RERUN                            │
-                │                                                    │
-                │  Client says "strategy direction is wrong"         │
-                │       → system suggests: rerun from Strategy P2    │
-                │  Client says "slide 7 content is off-brand"        │
-                │       → system suggests: rerun from Slide Content  │
-                │  Client says "wrong KOL selection"                 │
-                │       → system suggests: rerun from Resource Agent │
-                │                                                    │
-                │  Executor receives start_from="strategy_phase2"    │
-                │  and re-executes from that node forward,           │
-                │  preserving all upstream state.                    │
-                │                                                    │
-                │  Each rerun auto-saves a new VERSION SNAPSHOT.     │
-                └─────────────────────┬────────────────────────────┘
-                                      │
-                                      ▼ (pipeline resumes from target node)
+           ▼
+    ┌──────────────────────────────────────────────────┐
+    │  FEEDBACK-DRIVEN RERUN (after completion)         │
+    │                                                    │
+    │  Client says "strategy direction is wrong"         │
+    │       → system suggests: rerun from Strategy P2    │
+    │  Client says "slide 7 content is off-brand"        │
+    │       → system suggests: rerun from Slide Content  │
+    │  Client says "wrong KOL selection"                 │
+    │       → system suggests: rerun from Resource Agent │
+    │                                                    │
+    │  executor.start(state, start_from=node) primes   │
+    │  AsyncRedisSaver checkpoint and re-executes from   │
+    │  target node forward, preserving upstream state.   │
+    │                                                    │
+    │  Each rerun auto-saves a new VERSION SNAPSHOT.     │
+    └──────────────────────────────────────────────────┘
 ```
 
 ### Pipeline Orchestration Details
 
 **1. Parallel Execution with Data Dependencies**
-- Research Agent and Strategy Phase 1 run concurrently via `asyncio.gather`. Neither depends on the other.
-- Strategy Phase 2 cannot start until both complete (fan-in barrier).
-- Narrative Agent runs in parallel with Slide Content Agent. It is purely advisory with no flow control.
+- Research Agent and Strategy Phase 1 run concurrently via LangGraph fan-out edges from `hitl_brief`. Neither depends on the other.
+- Strategy Phase 2 cannot start until both complete (fan-in barrier at `strategy_phase2`).
+- Narrative Agent runs **serially** after Slide Content Agent (`slide_content → narrative_agent → hitl_gallery`). It is purely advisory and does not gate slide generation.
 
 **2. Conditional Branching**
 - Resource Agent reads `state["resource_types_needed"]` (typed `list[str]`, written by Strategy Phase 2) to determine which resource types to retrieve
@@ -111,12 +113,29 @@ Brief Input
 - When `resource_types_needed = []`, the Resource Agent skips entirely (zero latency, zero LLM cost)
 - Deck Orchestrator uses three-tier template lookup: project-saved structure > client default > LLM generation
 
-**3. Stateful HITL Pause/Resume**
-- Pipeline state is checkpointed to Redis before every node and at every HITL pause
-- On HITL pause, the executor publishes a WebSocket event and blocks on Redis pub/sub (`wait_for_resume`)
-- Frontend receives the event, renders the confirmation UI. When the user responds, a Redis publish unblocks the executor.
-- State survives up to 24 hours. Users can take hours to respond without losing progress.
-- The pipeline is a Celery task. The WebSocket server and the executor are separate processes communicating via Redis.
+**3. Stateful HITL Pause/Resume (request-per-pause)**
+
+Two Redis layers serve different purposes:
+
+| Layer | Key | Purpose |
+|-------|-----|---------|
+| LangGraph checkpoint | `AsyncRedisSaver`, `thread_id=pipeline_id` | Graph execution state across HTTP requests; survives process restarts |
+| App state snapshot | `pipeline:{id}:state` | Human-readable dict for frontend GET endpoints; updated after each non-HITL node |
+| Node timings | `pipeline:{id}:timings` | Accumulated per-node wall-clock metrics across execution segments |
+
+HITL uses **stateless, short-lived background tasks** — no long-lived coroutine, no Redis pub/sub:
+
+```
+POST /pipeline/start          → executor.start()        → runs until interrupt → task ends
+POST /pipeline/{id}/confirm   → executor.resume_pipeline() → Command(resume=...) → interrupt or done → task ends
+(repeat for each of the 5 in-graph HITL checkpoints)
+```
+
+- On interrupt: executor sets status `paused`, saves app state, broadcasts `hitl_required` over WebSocket, and **returns**.
+- On user confirm: frontend calls `POST /pipeline/{id}/confirm` (HTTP, not WebSocket). A new background task resumes from the LangGraph checkpoint.
+- WebSocket (`/ws/pipeline/{id}`) is **receive-only** for progress events (`node_entered`, `hitl_required`, `slide_generated`, `pipeline_complete`).
+- Pipeline runs as **FastAPI BackgroundTasks** in the API process. Celery handles archive extraction, visual indexing, and other async jobs — not the main proposal pipeline.
+- Redis keys expire after 24 hours. Users can take hours to respond without losing progress.
 
 **4. Feedback-Driven Partial Rerun (Non-Linear Control Flow)**
 
@@ -125,18 +144,18 @@ The most architecturally interesting piece. After pipeline completion:
 ```python
 RERUN_SUGGESTIONS = {
     FeedbackTarget.STRATEGY:   "strategy_phase2",    # re-derive Big Idea + channels
-    FeedbackTarget.MEDIA_PLAN: "media_planner",      # re-plan tier matrix + budget split
     FeedbackTarget.STRUCTURE:  "deck_orchestrator",  # re-plan slide structure
     FeedbackTarget.SLIDE:      "slide_content",      # regenerate slide copy
     FeedbackTarget.RESOURCE:   "resource_agent",     # re-match resources
-    FeedbackTarget.OVERALL:    "parallel_research_strategy",  # full redo
+    FeedbackTarget.OVERALL:    "strategy_phase2",    # full strategy redo
 }
 ```
 
 When client feedback triggers a rerun:
-- Executor skips all nodes before `start_from` in the `node_sequence`
-- Upstream state (brief, research, etc.) is preserved from Redis
-- Only downstream nodes re-execute
+- `executor.start(redis_state, start_from=node)` loads app state from Redis and primes the LangGraph checkpointer via `aupdate_state(as_node=predecessor)`
+- Graph resumes natively at `start_from` without re-traversing earlier nodes
+- Upstream state (brief, research, etc.) is preserved in Redis + checkpoint
+- Inline rerun from HITL Strategy (`action="rerun"`) is handled within a single `resume_pipeline()` call
 - Rejected directions from feedback are injected as constraints into Strategy Phase 2's prompt. This prevents the system from repeating mistakes.
 - Approved directions are embedded into the brand_spec Pinecone namespace, improving future runs for this client.
 
@@ -195,21 +214,22 @@ Every pipeline completion (initial or rerun) triggers an automatic version save:
 | **Strategy P2** | `research_result` + `strategy_insight` + rejected directions + campaign_knowledge (strategy_decisions, communication_plan, outcome) | `strategy_result{}` (JSON contract) | Big Idea, communication logic, channels, resource_types, budget_allocation, KPIs, timeline. Avoids previously rejected directions. References historical campaign outcomes. |
 | **Media Planner** | `big_idea`, `channels`, `budget_allocation`, `audience_insight`, `content_tone`, `kpis` + campaign_knowledge (media_plan, execution, outcome) | `MediaPlan` (tiers[], rationale, historical_references) | Transforms strategy language into media requirements. Designs tier matrix (top/mid/koc/media) with role, count, and budget per tier. `selection_criteria` fields drive downstream Resource Agent retrieval. `_compute_absolute_budgets()` calculates tier amounts from channel-level budget. |
 | **Resource Agent** | `state["resource_types_needed"]`, `state["channels"]`, `state["big_idea"]`, `state["media_plan"]` + campaign_knowledge (execution, outcome) | `ResourceResult` (Pydantic) | With media_plan: per-tier retrieval using selection_criteria as query + tier as metadata filter. Without: generic per-type retrieval (backward compatible). Pinecone metadata filter (status=active, platform, tier). Post-validation: verifies every LLM recommendation exists in MongoDB, filters inactive/hallucinated entries. Returns freshness warnings for stale data (>6 months). |
-| **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG + campaign_knowledge (deck_info, communication_plan) | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project > client > LLM generation). Campaign history provides past deck structures for inspiration. Content Agent: per-slide generation with brand tone from RAG. Narrative Agent: non-blocking coherence check with page-level issue refs. |
+| **Deck System** | `big_idea`, `channels`, `kpis`, brand RAG + campaign_knowledge (deck_info, communication_plan) | `deck_structure[]`, `slides[]`, `narrative_suggestions[]` | Orchestrator: three-tier template lookup (project > client > LLM generation). Content Agent: generates all slides in one pass, batch-pushed via WebSocket. Narrative Agent: runs after slides, outputs page-level coherence suggestions. |
 | **PPT Builder** | `slides[]`, template | `pptx_path` | python-pptx assembly. 5 templates (social, PR, integrated, brand_refresh, default). |
 
 ### Human-in-the-Loop (HITL)
 
-Six pause points. At each one the executor checkpoints state, publishes a WebSocket event, blocks on Redis pub/sub, and resumes when the user responds.
+Five in-graph pause points during pipeline execution (`hitl_brief` → `hitl_strategy` → `hitl_media` → `hitl_structure` → `hitl_gallery`). At each one the executor saves checkpoint + app state, broadcasts `hitl_required` over WebSocket, and returns. The user resumes via `POST /pipeline/{id}/confirm`.
+
+Post-pipeline client feedback on `/proposals/[id]` can trigger a targeted rerun — this is separate from the in-graph HITL flow.
 
 | Node | What the User Sees | What They Can Do | What Happens Next |
 |------|-------------------|------------------|-------------------|
-| 1 | Parsed brief fields + clarification questions | Confirm / edit fields | Pipeline continues to parallel phase |
-| 2 | Strategy result + research summary + brand check status | Confirm / reject / request research refresh | If rejected: re-executes strategy with feedback. If refresh: re-runs research first. |
-| 3 | Media plan matrix (channel × tier table with count + budget %) | Edit count / budget % per tier, confirm | Resource Agent retrieves per confirmed tier matrix |
-| 4 | Proposed slide structure (titles, ordering) | Add / remove / reorder slides | Deck generation uses modified structure |
-| 5 | Full slide gallery + narrative suggestions panel | Mark slides for regeneration (batch) | Flagged slides re-generated, others preserved |
-| 6 | Final proposal + feedback form | Tag feedback target + directions | Triggers targeted rerun from appropriate node |
+| 1 `hitl_brief` | Parsed brief fields + clarification questions | Confirm / edit fields | Pipeline continues to parallel Research + Strategy P1 |
+| 2 `hitl_strategy` | Strategy result + research summary + brand check status | Confirm / revise / rerun from upstream node | Revise stores feedback; rerun restarts from selected node within same resume call |
+| 3 `hitl_media` | Media plan matrix (channel × tier table with count + budget %) | Edit count / budget % per tier, confirm | Resource Agent retrieves per confirmed tier matrix (or skips if no resources needed) |
+| 4 `hitl_structure` | Proposed slide structure (titles, ordering) | Add / remove / reorder slides | Slide generation uses modified structure |
+| 5 `hitl_gallery` | Full slide gallery + narrative suggestions panel | Mark slides flagged, confirm all | Flagged slides re-generated; others preserved → PPT build |
 
 ### Client Feedback Loop (Learning System)
 
@@ -224,8 +244,8 @@ Feedback submitted
     ├─ rejected_directions[] ──▶ Stored in feedback collection
     │                            (injected as constraints next time Strategy P2 runs)
     │
-    └─ trigger_rerun ──────────▶ RERUN_SUGGESTIONS[target] → start_from node
-                                  (executor skips upstream, re-runs downstream)
+    └─ trigger_rerun ──────────▶ RERUN_SUGGESTIONS[target] → executor.start(state, start_from)
+                                  (checkpointer primed; downstream re-executes)
 ```
 
 Over multiple proposals for the same client, the system accumulates brand knowledge:
@@ -565,7 +585,7 @@ Key design choices:
 
 - **Request Budget**: max 30 LLM calls, 10 search calls, 300s timeout per pipeline run
 - **Fallback Chains**: Tavily > DuckDuckGo > internal-only. Each external dependency has a deterministic fallback.
-- **Semantic Cache**: Redis-backed, 30-day TTL, keyed by `client_id:competitor:date_bucket`
+- **Research Cache**: MongoDB-backed (`research_results` collection), 30-day reuse window keyed by `(client_id, brief_hash)`; not a Redis TTL cache — results are permanent records, reuse window is a business logic parameter
 - **Per-stage metrics**: timing, token usage, success/failure tracked in MongoDB `stage_metrics` collection
 
 ### Data Integrity & Anti-Hallucination
@@ -638,7 +658,7 @@ Three layers of caching prevent repeated computation:
 
 | Layer | What it caches | TTL | Bypass mechanism |
 |-------|---------------|-----|------------------|
-| Redis pipeline state | Full PipelineState between HITL pauses | 24h | User can resume hours later without re-running completed nodes |
+| Redis pipeline state | LangGraph checkpoint (`AsyncRedisSaver`) + app state snapshot between HITL pauses | 24h | User can resume hours later via `POST /confirm` without re-running completed nodes |
 | Semantic research cache | Web search + social data results | 30 days | `force_refresh=True` when user clicks "refresh research" |
 | Rerun state preservation | Upstream node outputs during partial rerun | Session | `start_from="strategy_phase2"` skips earlier nodes, preserves their results |
 
@@ -710,26 +730,27 @@ LLM is never responsible for flow decisions. It only handles the task within its
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          Client (Browser)                            │
-│   Next.js 14 · TypeScript · WebSocket (real-time pipeline updates)   │
+│   Next.js 14 · HTTP (HITL confirm) · WebSocket (progress push)       │
 └─────────────────────────┬──────────────────────────┬────────────────┘
                           │ HTTP/REST                 │ WebSocket
                           ▼                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           Nginx (Reverse Proxy)                       │
-└─────────────────────────┬──────────────────────────┬────────────────┘
-                          │                          │
-                          ▼                          ▼
-┌──────────────────────────────────────┐  ┌────────────────────────────┐
-│         FastAPI Backend               │  │   WebSocket Server          │
-│  • REST API (auth, files, pipeline)   │  │   • Pipeline status push    │
-│  • JWT auth (Google/MS OAuth + email) │  │   • HITL event delivery     │
-│  • Task dispatch to Celery            │  │   • Slide streaming          │
-└─────────────┬────────────────────────┘  └────────────────────────────┘
+└─────────────────────────┬──────────────────────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────┐
+│         FastAPI Backend               │
+│  • REST API (auth, files, pipeline)   │
+│  • PipelineExecutor via BackgroundTasks│
+│  • WebSocket pipeline progress push   │
+│  • JWT auth (Google/MS OAuth + email) │
+└─────────────┬────────────────────────┘
               │
               ▼
 ┌──────────────────────────────────────┐
 │          Celery Workers               │
-│  • PipelineExecutor (LangGraph)       │
+│  • Archive / campaign extraction      │
 │  • Visual file processing (600s TL)   │
 │  • Feedback embedding                 │
 └──┬────────────┬──────────┬───────────┘
@@ -752,15 +773,15 @@ LLM is never responsible for flow decisions. It only handles the task within its
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Frontend | Next.js 14, TypeScript, Tailwind CSS | App Router, WebSocket hooks, Gallery Review UI |
-| Backend API | FastAPI, Pydantic | REST endpoints, JWT auth, request validation |
-| Task Queue | Celery + Redis | Async pipeline execution, visual processing |
-| Agent Orchestration | LangGraph | Fan-out/fan-in parallelism, HITL pauses, conditional branching |
+| Frontend | Next.js 14, TypeScript, Tailwind CSS | App Router, HTTP HITL confirm, WebSocket progress hooks, Gallery Review UI |
+| Backend API | FastAPI, Pydantic | REST endpoints, JWT auth, pipeline BackgroundTasks |
+| Task Queue | Celery + Redis | Archive processing, visual indexing, feedback embedding (not main pipeline) |
+| Agent Orchestration | LangGraph + AsyncRedisSaver | Fan-out/fan-in parallelism, interrupt-based HITL, conditional branching |
 | LLM | Claude (Anthropic) | Strategy generation, content writing, visual analysis |
 | Vector Store | Pinecone | Namespace-isolated RAG (brand, project, resource) |
 | Embedding | BGE-M3 (self-hosted) | Multilingual dense+sparse embeddings |
 | Database | MongoDB | Multi-tenant data (orgs, users, clients, projects, proposals) |
-| Cache | Redis | Semantic research cache (30-day TTL), pub/sub for WebSocket |
+| Cache | Redis | LangGraph checkpoint, pipeline app state, semantic research cache (30-day TTL) |
 | PPT Generation | python-pptx | Template-based slide assembly |
 | Visual Processing | LibreOffice headless + pdftoppm | PPTX/PDF → PNG rendering for style analysis |
 | Auth | Google OAuth, Microsoft OAuth, JWT | Multi-provider SSO + email/password fallback |
@@ -816,7 +837,7 @@ pitchcraft/
 │   │   ├── agents/               # brief_analyzer.py, research.py, strategy.py, media_planner.py,
 │   │   │                         # resource.py, deck.py, campaign_extract.py, schemas.py,
 │   │   │                         # social_data.py, visual_analysis.py
-│   │   ├── graph/                # pipeline.py (LangGraph nodes), executor.py (run/rerun),
+│   │   ├── graph/                # pipeline.py (LangGraph nodes), executor.py (start/resume/rerun),
 │   │   │                         # state.py (PipelineState)
 │   │   ├── rag/                  # indexer.py, retriever.py, cache.py, resource_import.py,
 │   │   │                         # campaign_index.py, campaign_retriever.py,
@@ -826,7 +847,7 @@ pitchcraft/
 │   │   ├── stability/            # budget.py (RequestBudget), fallback.py (FallbackChain)
 │   │   ├── models/               # resource.py, media_plan.py, feedback.py, campaign_record.py
 │   │   └── database/             # connection.py, repositories (mongo collections)
-│   ├── tests/                    # 105 unit tests + integration suite + load tests
+│   ├── tests/                    # 179 unit tests + integration suite + load tests
 │   └── Dockerfile                # Python 3.11 + LibreOffice headless + poppler-utils
 ├── frontend/
 │   ├── app/                      # Next.js App Router pages
