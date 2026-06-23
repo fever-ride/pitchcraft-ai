@@ -219,14 +219,26 @@ async def test_native_rerun_skips_predecessor_nodes():
 
     runs: list[str] = []
 
-    def node_a(s): runs.append("a"); return {"val": 1}
-    def node_b(s): runs.append("b"); return {"val": (s.get("val") or 0) + 10}
-    def node_c(s): runs.append("c"); return {"val": (s.get("val") or 0) + 100}
+    def node_a(s):
+        runs.append("a")
+        return {"val": 1}
+
+    def node_b(s):
+        runs.append("b")
+        return {"val": (s.get("val") or 0) + 10}
+
+    def node_c(s):
+        runs.append("c")
+        return {"val": (s.get("val") or 0) + 100}
 
     g = StateGraph(S)
-    g.add_node("a", node_a); g.add_node("b", node_b); g.add_node("c", node_c)
+    g.add_node("a", node_a)
+    g.add_node("b", node_b)
+    g.add_node("c", node_c)
     g.set_entry_point("a")
-    g.add_edge("a", "b"); g.add_edge("b", "c"); g.add_edge("c", END)
+    g.add_edge("a", "b")
+    g.add_edge("b", "c")
+    g.add_edge("c", END)
     graph = g.compile(checkpointer=MemorySaver())
 
     config = {"configurable": {"thread_id": "test_rerun"}}
@@ -262,10 +274,21 @@ async def test_native_rerun_fan_in():
 
     ran: list[str] = []
 
-    def r_node(s): ran.append("research"); return {"r": "new_research"}
-    def p_node(s): ran.append("phase1"); return {"p": "new_phase1"}
-    def phase2(s): ran.append("phase2"); return {"combined": f'{s.get("r")}+{s.get("p")}'}
-    def end_node(s): ran.append("end"); return {}
+    def r_node(s):
+        ran.append("research")
+        return {"r": "new_research"}
+
+    def p_node(s):
+        ran.append("phase1")
+        return {"p": "new_phase1"}
+
+    def phase2(s):
+        ran.append("phase2")
+        return {"combined": f'{s.get("r")}+{s.get("p")}'}
+
+    def end_node(s):
+        ran.append("end")
+        return {}
 
     g = StateGraph(S)
     g.add_node("research_agent", r_node)
