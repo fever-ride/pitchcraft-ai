@@ -1,4 +1,4 @@
-import asyncio
+import time
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -6,9 +6,22 @@ from pydantic import BaseModel
 
 from backend.api.v1.permissions import CurrentUser, get_current_user
 from backend.core.graph.executor import PipelineExecutor
-from backend.core.graph.state import RequestBudget
 
 router = APIRouter()
+
+
+async def _require_owner(executor: PipelineExecutor, user: CurrentUser) -> dict:
+    """Load pipeline state and verify the requesting user's org owns this pipeline.
+
+    Raises 404 if the pipeline doesn't exist, 403 if the org doesn't match.
+    Returns the loaded state so callers don't need a second load_state() call.
+    """
+    state = await executor.load_state()
+    if not state:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    if state.get("org_id") != user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return state
 
 
 class StartPipelineRequest(BaseModel):
@@ -71,10 +84,21 @@ async def confirm_node(
     Returns 202 immediately — the pipeline continues asynchronously.
     """
     executor = PipelineExecutor(pipeline_id)
+    await _require_owner(executor, user)
     current = await executor.get_status()
 
     if current.get("status") != "paused":
         raise HTTPException(status_code=400, detail="Pipeline is not paused at a HITL node")
+
+    current_node = current.get("current_node")
+    if not current_node or request.node != current_node:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Pipeline is paused at '{current_node}', not '{request.node}'",
+        )
+
+    # Optimistic lock: reject duplicate confirms while resume is in flight
+    await executor.set_status("running", current_node)
 
     response = {
         "action": request.action,
@@ -97,10 +121,7 @@ async def rerun_from_node(
     user: CurrentUser = Depends(get_current_user),
 ):
     executor = PipelineExecutor(pipeline_id)
-    state = await executor.load_state()
-
-    if not state:
-        raise HTTPException(status_code=404, detail="Pipeline state not found")
+    state = await _require_owner(executor, user)
 
     state["rerun_from"] = request.rerun_from
     state["rerun_refresh_research"] = request.refresh_research
@@ -113,16 +134,36 @@ async def rerun_from_node(
     return {"status": "rerun_started", "from_node": request.rerun_from}
 
 
+@router.post("/{pipeline_id}/recover", status_code=status.HTTP_200_OK)
+async def recover_pipeline(
+    pipeline_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Recover a pipeline stuck in 'running' after a process restart.
+
+    Reads the LangGraph checkpoint:
+    - If paused at a HITL interrupt → restores status to 'paused' (user can re-confirm)
+    - Otherwise → marks status as 'error' (user should rerun)
+    """
+    executor = PipelineExecutor(pipeline_id)
+    await _require_owner(executor, user)
+    result = await executor.recover(stale_threshold=0)  # caller decides staleness
+    return result
+
+
 @router.get("/{pipeline_id}/status")
 async def get_pipeline_status(
     pipeline_id: str, user: CurrentUser = Depends(get_current_user)
 ):
     executor = PipelineExecutor(pipeline_id)
+    state = await _require_owner(executor, user)
     status_info = await executor.get_status()
-    state = await executor.load_state()
 
-    if not state and status_info.get("status") == "unknown":
-        raise HTTPException(status_code=404, detail="Pipeline not found")
+    # Auto-recover pipelines that appear stuck in 'running' for > 5 minutes
+    if status_info.get("status") == "running":
+        if time.time() - status_info.get("updated_at", 0) > 300:
+            await executor.recover(stale_threshold=300)
+            status_info = await executor.get_status()
 
     return {
         "pipeline_id": pipeline_id,
@@ -142,9 +183,7 @@ async def get_brief(
     pipeline_id: str, user: CurrentUser = Depends(get_current_user)
 ):
     executor = PipelineExecutor(pipeline_id)
-    state = await executor.load_state()
-    if not state:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
+    state = await _require_owner(executor, user)
     return {
         "structured_brief": state.get("structured_brief", {}),
         "raw_brief": state.get("raw_brief", ""),
@@ -156,9 +195,7 @@ async def get_strategy(
     pipeline_id: str, user: CurrentUser = Depends(get_current_user)
 ):
     executor = PipelineExecutor(pipeline_id)
-    state = await executor.load_state()
-    if not state:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
+    state = await _require_owner(executor, user)
     return {
         "strategy_result": state.get("strategy_result", {}),
         "research_result": state.get("research_result", {}),
@@ -171,9 +208,7 @@ async def get_media_plan(
     pipeline_id: str, user: CurrentUser = Depends(get_current_user)
 ):
     executor = PipelineExecutor(pipeline_id)
-    state = await executor.load_state()
-    if not state:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
+    state = await _require_owner(executor, user)
     return {
         "media_plan": state.get("media_plan", {}),
     }
@@ -184,9 +219,7 @@ async def get_slides(
     pipeline_id: str, user: CurrentUser = Depends(get_current_user)
 ):
     executor = PipelineExecutor(pipeline_id)
-    state = await executor.load_state()
-    if not state:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
+    state = await _require_owner(executor, user)
     return {
         "slides": state.get("slides", []),
         "narrative_suggestions": state.get("narrative_suggestions", []),

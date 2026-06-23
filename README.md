@@ -137,6 +137,13 @@ POST /pipeline/{id}/confirm   → executor.resume_pipeline() → Command(resume=
 - Pipeline runs as **FastAPI BackgroundTasks** in the API process. Celery handles archive extraction, visual indexing, and other async jobs — not the main proposal pipeline.
 - Redis keys expire after 24 hours. Users can take hours to respond without losing progress.
 
+**HITL implementation highlights**
+
+- **Two Redis roles — do not mix**: `AsyncRedisSaver` holds opaque LangGraph execution state for `Command(resume=...)`. `pipeline:{id}:state` holds a human-readable business snapshot for GET endpoints (`/brief`, `/strategy`, `/slides`). They serve different consumers; neither replaces the other.
+- **Confirm optimistic lock** (`POST /confirm`): after validating `status == paused` and `request.node == current_node`, the handler immediately sets `status: running` before scheduling `resume_pipeline()`. Prevents duplicate Confirm clicks from launching two background tasks against the same checkpoint.
+- **Rerun priming matches graph topology**: `_RERUN_PREDECESSORS` maps each node to direct predecessor(s); fan-in at `strategy_phase2` simulates both `research_agent` and `strategy_phase1`. `get_rerun_predecessors()` adjusts `deck_orchestrator` dynamically — `hitl_media` when Resource Agent was skipped, `resource_agent` otherwise — aligned with the conditional edge after `hitl_media`.
+- **Continuous app-state snapshots**: after every non-HITL node in `_stream_run`, the executor writes `pipeline:{id}:state` (not only at HITL pauses). Frontend reads stay fresh; partial progress survives mid-segment crashes and seeds external reruns.
+
 **4. Feedback-Driven Partial Rerun (Non-Linear Control Flow)**
 
 The most architecturally interesting piece. After pipeline completion:

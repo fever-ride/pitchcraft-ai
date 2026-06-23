@@ -72,6 +72,24 @@ _RERUN_PREDECESSORS: dict[str, list[str]] = {
 }
 
 
+def get_rerun_predecessors(state: dict, rerun_from: str) -> list[str] | None:
+    """Return predecessor node(s) to prime the checkpointer for ``rerun_from``.
+
+    ``deck_orchestrator`` is dynamic: when Resource Agent was skipped
+    (empty ``resource_types_needed``), the graph path is hitl_media → deck_orchestrator.
+    """
+    if rerun_from == "deck_orchestrator":
+        resource_types = state.get("resource_types_needed") or []
+        resource_result = state.get("resource_result") or {}
+        if resource_types and not resource_result.get("skipped"):
+            return ["resource_agent"]
+        return ["hitl_media"]
+
+    if rerun_from not in _RERUN_PREDECESSORS:
+        return None
+    return _RERUN_PREDECESSORS[rerun_from]
+
+
 class PipelineExecutor:
     def __init__(self, pipeline_id: str):
         self.pipeline_id = pipeline_id
@@ -117,6 +135,52 @@ class PipelineExecutor:
 
     async def _save_timings(self, timings: dict[str, float]):
         await self.redis.set(self._timings_key, json.dumps(timings), ex=86400)
+
+    async def recover(self, stale_threshold: int = 300) -> dict:
+        """Recover a stalled pipeline whose status is stuck at 'running'.
+
+        Called when no WebSocket heartbeat has been received for stale_threshold seconds,
+        indicating the background task died (process restart, OOM, etc.).
+
+        Reads the LangGraph checkpoint to determine the true graph state:
+        - snapshot.next non-empty → graph is at an interrupt → restore to 'paused'
+        - snapshot.next empty    → graph never completed cleanly → mark 'error'
+
+        Returns {"recovered": bool, "status": str, "node": str | None}.
+        """
+        from langgraph_checkpoint_redis import AsyncRedisSaver
+        from backend.core.graph.pipeline import build_compiled_pipeline
+
+        status_info = await self.get_status()
+        if status_info.get("status") != "running":
+            return {"recovered": False, "status": status_info.get("status"), "node": None}
+
+        if time.time() - status_info.get("updated_at", 0) < stale_threshold:
+            return {"recovered": False, "status": "running", "node": None}
+
+        async with AsyncRedisSaver.from_conn_string(settings.redis_url) as checkpointer:
+            graph = build_compiled_pipeline(checkpointer=checkpointer)
+            config = {"configurable": {"thread_id": self.pipeline_id}}
+            snapshot = await graph.aget_state(config)
+
+            if not snapshot or not snapshot.values:
+                await self.set_status("error", None)
+                return {"recovered": True, "status": "error", "node": None}
+
+            if snapshot.next:
+                interrupted_node = snapshot.next[0]
+                interrupt_data = {}
+                for task in snapshot.tasks:
+                    if task.interrupts:
+                        interrupt_data = task.interrupts[0].value
+                        break
+                await self.set_status("paused", interrupted_node)
+                await self.save_state(dict(snapshot.values))
+                await self._notify_hitl_required(interrupted_node, interrupt_data)
+                return {"recovered": True, "status": "paused", "node": interrupted_node}
+
+            await self.set_status("error", None)
+            return {"recovered": True, "status": "error", "node": None}
 
     # ------------------------------------------------------------------
     # Public execution API
@@ -272,7 +336,7 @@ class PipelineExecutor:
         """
         state_to_prime = {k: v for k, v in state.items() if k != "request_budget"}
 
-        predecessors = _RERUN_PREDECESSORS.get(rerun_from)
+        predecessors = get_rerun_predecessors(state, rerun_from)
         if predecessors is None:
             logger.warning(
                 f"[{self.pipeline_id}] Unknown rerun_from='{rerun_from}'; "

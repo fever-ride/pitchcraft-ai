@@ -200,6 +200,13 @@ The proposal pipeline is a LangGraph `StateGraph` with `interrupt()` on 5 HITL n
 
 `RequestBudget` is excluded from Redis JSON — recreated fresh on each `start()` / `resume_pipeline()` call.
 
+### HITL design highlights
+
+- **Checkpoint vs app state**: LangGraph checkpoint (`AsyncRedisSaver`) is opaque and managed by LangGraph for resume. `pipeline:{id}:state` is the denormalized snapshot for frontend GET — never use one as a substitute for the other.
+- **Confirm flow** (`pipeline.py`): validate paused + matching `node` → `set_status("running")` → `BackgroundTasks.add_task(resume_pipeline)` — optimistic lock before async work starts.
+- **Rerun priming**: `get_rerun_predecessors(state, rerun_from)` + `_RERUN_PREDECESSORS` — fan-in nodes need multiple `aupdate_state(as_node=...)` calls; `deck_orchestrator` uses `hitl_media` or `resource_agent` based on whether Resource Agent ran.
+- **Per-node Redis writes**: non-HITL nodes call `save_state()` after each step in `_stream_run` for crash recovery and live GET data, not only at interrupts.
+
 ### 1. Start pipeline
 
 **Entry point:** `/pipeline` page → Brief Input
@@ -510,13 +517,15 @@ Prompt variants live in `backend/core/language/prompts.py` (pipeline agents) and
 
 8. **Pipeline state: two Redis layers**: `AsyncRedisSaver` checkpoint (graph resume) vs `pipeline:{id}:state` (frontend GET). Don't assume one replaces the other.
 
-9. **Full file rewrite for large TSX files**: when making multiple edits to large files (> 300 lines), use `Write` with the entire new content rather than multiple `Edit` calls. Partial edits on large files can leave stale trailing content.
+9. **Pipeline confirm optimistic lock**: `POST /confirm` sets `running` before `add_task(resume_pipeline)`. Duplicate confirms while in flight get 400 (`status != paused`). Frontend also disables buttons via `confirming` state.
 
-10. **ObjectId vs string IDs**: MongoDB `_id` is an `ObjectId` for most collections except `campaign_records` (which uses a plain UUID string). Use `bson.ObjectId(client_id)` when querying clients/projects/resources.
+10. **Full file rewrite for large TSX files**: when making multiple edits to large files (> 300 lines), use `Write` with the entire new content rather than multiple `Edit` calls. Partial edits on large files can leave stale trailing content.
 
-11. **i18n: `useTranslations` is a React hook** — it can only be called inside a component function body, not at module level. Badge helper functions that need translations must be converted to React components.
+11. **ObjectId vs string IDs**: MongoDB `_id` is an `ObjectId` for most collections except `campaign_records` (which uses a plain UUID string). Use `bson.ObjectId(client_id)` when querying clients/projects/resources.
 
-12. **i18n: `npm ci` in Dockerfile** — the Dockerfile uses `npm install --legacy-peer-deps` (not `npm ci`) because `npm ci` breaks when the local npm version differs from the container's npm version and generates an incompatible lockfile. Don't revert this to `npm ci`.
+12. **i18n: `useTranslations` is a React hook** — it can only be called inside a component function body, not at module level. Badge helper functions that need translations must be converted to React components.
+
+13. **i18n: `npm ci` in Dockerfile** — the Dockerfile uses `npm install --legacy-peer-deps` (not `npm ci`) because `npm ci` breaks when the local npm version differs from the container's npm version and generates an incompatible lockfile. Don't revert this to `npm ci`.
 
 ---
 

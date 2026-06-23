@@ -12,15 +12,16 @@ interface Props {
   disabled?: boolean;
 }
 
-const RERUN_NODES = [
-  { value: "brief_analyzer", label: "Re-analyze brief" },
-  { value: "research_agent", label: "Re-run research" },
-  { value: "strategy_phase1", label: "Re-run strategy phase 1" },
-  { value: "strategy_phase2", label: "Re-run strategy phase 2" },
-];
+const RERUN_NODE_KEYS = [
+  "brief_analyzer",
+  "research_agent",
+  "strategy_phase1",
+  "strategy_phase2",
+] as const;
 
 export function HitlStrategy({ pipelineId, onConfirm, onRevise, onRerun, disabled }: Props) {
   const t = useTranslations("pipeline");
+  const th = useTranslations("pipeline.hitlStrategy");
   const [strategy, setStrategy] = useState<Record<string, unknown>>({});
   const [research, setResearch] = useState<Record<string, unknown>>({});
   const [brandCheckPassed, setBrandCheckPassed] = useState<boolean | null>(null);
@@ -40,7 +41,7 @@ export function HitlStrategy({ pipelineId, onConfirm, onRevise, onRerun, disable
   }, [pipelineId]);
 
   if (loading) {
-    return <div className="p-8 text-center text-gray-500">{t("hitlStrategy.loading")}</div>;
+    return <div className="p-8 text-center text-gray-500">{th("loading")}</div>;
   }
 
   const strategyOutput = (strategy.strategy_output as string) || "";
@@ -101,14 +102,14 @@ export function HitlStrategy({ pipelineId, onConfirm, onRevise, onRerun, disable
               onChange={(e) => setRefreshResearch(e.target.checked)}
               className="w-3.5 h-3.5"
             />
-            {t("hitlStrategy.refreshResearch")}
+            {th("refreshResearch")}
           </label>
           <button
             onClick={() => { if (feedback.trim()) onRevise(feedback, refreshResearch); }}
             disabled={disabled || !feedback.trim()}
             className="px-4 py-2 bg-yellow-500 text-white rounded font-medium disabled:opacity-50"
           >
-            {t("hitlStrategy.requestRevision")}
+            {th("requestRevision")}
           </button>
         </div>
 
@@ -118,7 +119,7 @@ export function HitlStrategy({ pipelineId, onConfirm, onRevise, onRerun, disable
             onClick={() => setShowRerun((v) => !v)}
             className="text-xs text-gray-500 underline"
           >
-            {showRerun ? "Hide rerun options" : "Rerun from a specific node →"}
+            {showRerun ? th("hideRerunOptions") : th("showRerunOptions")}
           </button>
           {showRerun && (
             <div className="mt-2 flex items-center gap-3 p-3 bg-gray-50 rounded border">
@@ -127,8 +128,10 @@ export function HitlStrategy({ pipelineId, onConfirm, onRevise, onRerun, disable
                 onChange={(e) => setRerunFrom(e.target.value)}
                 className="border rounded px-2 py-1.5 text-sm"
               >
-                {RERUN_NODES.map((n) => (
-                  <option key={n.value} value={n.value}>{n.label}</option>
+                {RERUN_NODE_KEYS.map((key) => (
+                  <option key={key} value={key}>
+                    {th(`rerunNodes.${key}` as Parameters<typeof th>[0])}
+                  </option>
                 ))}
               </select>
               <label className="flex items-center gap-1 text-xs text-gray-600">
@@ -138,14 +141,14 @@ export function HitlStrategy({ pipelineId, onConfirm, onRevise, onRerun, disable
                   onChange={(e) => setRefreshResearch(e.target.checked)}
                   className="w-3.5 h-3.5"
                 />
-                {t("hitlStrategy.refreshResearch")}
+                {th("refreshResearch")}
               </label>
               <button
                 onClick={() => onRerun(rerunFrom, refreshResearch)}
                 disabled={disabled}
                 className="px-3 py-1.5 bg-orange-500 text-white rounded text-sm font-medium disabled:opacity-50"
               >
-                Rerun
+                {th("rerun")}
               </button>
             </div>
           )}

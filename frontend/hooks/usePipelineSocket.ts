@@ -10,6 +10,7 @@ import {
   setCompleted,
   setError,
 } from "@/store/pipelineSlice";
+import { apiFetch } from "@/lib/api";
 
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
 
@@ -67,6 +68,23 @@ export function usePipelineSocket(pipelineId: string | null) {
 
     ws.onerror = () => {
       dispatch(setError("WebSocket connection error"));
+    };
+
+    // On unexpected close, poll /status once so the backend auto-recover logic
+    // can detect a stale 'running' state and restore it to 'paused' or 'error'.
+    ws.onclose = (event) => {
+      if (!event.wasClean) {
+        apiFetch(`/api/v1/pipeline/${pipelineId}/status`)
+          .then((res) => res.json())
+          .then((data: { status: string; current_node?: string }) => {
+            if (data.status === "paused" && data.current_node) {
+              dispatch(setPaused(data.current_node));
+            } else if (data.status === "error") {
+              dispatch(setError("Pipeline stopped unexpectedly. Please rerun."));
+            }
+          })
+          .catch(() => {/* status fetch failed — user already sees WS error */});
+      }
     };
 
     return () => {

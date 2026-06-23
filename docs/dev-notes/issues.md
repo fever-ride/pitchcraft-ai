@@ -1410,3 +1410,152 @@ def process_archive_task(self, ...):
 | 任务的 except 块里也有 async 操作 | 单独再包一层 try/except，防止"标记失败"本身也失败 |
 | 文件上传后状态卡在 `processing` 不动 | 先查 `make logs s=worker`，看是否有 `RuntimeError: Event loop is closed` |
 | 新增 Celery 任务文件 | 模板参考 `archive_process.py`，所有 `async` 调用都走 `run_async()` |
+
+---
+
+## 42. Pipeline HITL：长协程 + Redis pub/sub → request-per-pause（Option B）
+
+**背景**：LangGraph pipeline 有 5 个 `interrupt()` HITL 节点。初版 executor 用「一个 `run()` 协程活很久」+ Redis pub/sub 等人确认。
+
+**现象 / 生产隐患**：
+
+```
+用户停在 hitl_strategy 审批界面（可能 10 分钟～几小时）
+        ↓
+期间 make build s=backend && make up（日常部署）
+        ↓
+run() 协程被杀，MemorySaver 随进程消失
+        ↓
+用户点「确认」，WebSocket publish → 无人订阅 → pipeline 卡死
+```
+
+即使不部署，架构上也有两层机制叠在一起：
+1. LangGraph 原生 `interrupt()` + `Command(resume=...)`
+2. 外层 `while True` + `wait_for_resume()` 阻塞在 Redis pub/sub
+
+**根因分析**：
+
+| 问题 | 说明 |
+|------|------|
+| 长生命周期协程 | `BackgroundTask` 里的 `run()` 从 start 到 ppt 完成一直不返回，worker 重启即丢执行上下文 |
+|  ephemeral checkpoint | 每次 `run()` 新建 `MemorySaver()`，checkpoint 不跨 HTTP 请求、不跨进程 |
+| pub/sub 当 HITL 邮箱 | `resume()` 只 publish，必须仍有协程在 `listen()`；与 LangGraph interrupt 语义重复 |
+| WebSocket 双向 resume | 确认走 WS，无 HTTP 状态码、难重试、依赖长连接 |
+
+Redis `pipeline:{id}:state` 虽在每个非 HITL 节点后 `save_state()`，external rerun 靠 `_prime_checkpointer_for_rerun` 模拟前驱——能跑，但和用户点确认后的 **原生 checkpoint resume** 不是同一条路。
+
+**方案（Option B，已落地）**：
+
+**执行模型 — 每次 HITL 一次短任务**：
+
+```
+POST /pipeline/start     → executor.start()        → astream 到 interrupt 或 END → 任务结束
+POST /pipeline/{id}/confirm → executor.resume_pipeline(Command(resume)) → 下一 interrupt 或 END → 结束
+（重复 5 次 in-graph HITL）
+```
+
+- 删除：`wait_for_resume()`、`resume()` Redis publish、`run()` 外层 HITL 循环
+- 保留：inline rerun（`hitl_strategy` `action=rerun`）在**同一次** `resume_pipeline()` 内链式 prime + restream
+
+**状态分层（不要混）**：
+
+| 层 | 存储 | 用途 |
+|----|------|------|
+| LangGraph checkpoint | `AsyncRedisSaver`，`thread_id=pipeline_id` | 跨 HTTP 请求 / 进程重启的图执行状态 |
+| App state | Redis `pipeline:{id}:state` | 前端 GET（brief/strategy/slides），每非 HITL 节点更新 |
+| Status | Redis `pipeline:{id}:status` | `paused` / `running` / `completed` |
+| Timings | Redis `pipeline:{id}:timings` | 跨多段执行累积 `node_timings` |
+
+`RequestBudget` 不进 Redis JSON，每次 `start()` / `resume_pipeline()` 重建。
+
+**前后端分工**：
+
+- HITL 确认：**HTTP** `POST /confirm` → `api.confirmNode()`（202，后台 `resume_pipeline`）
+- 进度推送：**WebSocket 只收** `node_entered` / `hitl_required` / `slide_generated` / `pipeline_complete`
+- 主 pipeline 跑在 FastAPI `BackgroundTasks`（backend 容器），**不是** Celery；Celery 仍负责 archive / campaign 提取等
+
+**与「只换 checkpointer」最小改动的区别**：
+
+仅把 `MemorySaver` 换成 `AsyncRedisSaver` **不够**——协程死后仍需**新任务**调 `Command(resume)`。Option B = 持久 checkpoint + HTTP 触发新 `resume_pipeline()` + 去掉 pub/sub 长协程，三者一起才闭环。
+
+**后续小修（同主题）**：
+
+- `get_rerun_predecessors()`：`deck_orchestrator` 在 Resource 跳过时 predecessor 为 `hitl_media` 而非 `resource_agent`
+- `/confirm` 校验 `request.node == current_node`，接受前先 `set_status("running")` 防连点双任务
+- 单元测试：`test_interrupt_resume_across_invocations` + `test_pipeline_confirm.py`
+
+**关键文件**：`backend/core/graph/executor.py`、`backend/api/v1/endpoints/pipeline.py`、`backend/api/v1/websocket.py`、`frontend/app/pipeline/page.tsx`
+
+**教训**：
+
+| 场景 | 做法 |
+|------|------|
+| LangGraph HITL + Web 集成 | interrupt 后 **结束当前任务**；用户确认用新请求 `Command(resume)`，不要长协程 + 自建邮箱 |
+| Checkpoint vs 业务快照 | checkpoint 管图能否 resume；Redis state 管前端读什么——两层都要 |
+| 部署中进行中 pipeline | Option B 后：部署杀的是短任务，用户再点 confirm 起新任务从 Redis checkpoint 继续 |
+| 简历 / 对外描述 | 写「interrupt-based HITL + HTTP resume」，不要写「Redis pub/sub HITL」 |
+
+---
+
+## D9. Pipeline 执行架构：从长协程迁到 request-per-pause
+
+**Situation**：Pitchcraft 的 proposal pipeline 用 LangGraph 编排 10+ 节点、5 个人工审批点（HITL）。第一版实现是：用户点「开始」后，后端起一个**一直活着**的协程，跑图 → 遇到 `interrupt()` 就挂起 → 用 Redis pub/sub 等用户点确认 → 再继续。WebSocket 负责把确认消息 publish 给这个协程。
+
+**Problem**：
+1. **部署即断线**：用户审批可能要几小时，期间正常 `docker compose up` 会杀掉协程；用户再点确认，消息无人接收，体验是「点了没反应」。
+2. **机制重复**：LangGraph 已有 interrupt/checkpoint/resume 语义，外面又套一层 pub/sub 等待，调试路径绕（WS → publish → 阻塞协程）。
+3. **Checkpoint 不持久**：每次 `run()` 新建内存 checkpointer，无法表达「标准 Web 集成」：start 到 interrupt 就结束，下一次 HTTP 接着跑。
+
+当时讨论过「只换 Redis checkpointer、5 行改动」——分析结论是：**只换存储不够**，还必须让 resume 由**新的 HTTP 请求**触发新 background task，否则协程死后仍无人 `Command(resume)`。
+
+**Action**：
+1. **执行模型**：拆成 `start()` / `resume_pipeline()`，每个方法跑到下一 interrupt 或结束就 **return**；每个 HITL 确认对应一次 `POST /confirm`。
+2. **持久 checkpoint**：`AsyncRedisSaver` + `thread_id=pipeline_id`，与 Redis 业务快照（`pipeline:{id}:state`）分工明确。
+3. **Option B 前后端**：HITL 只走 HTTP；WebSocket **只推送**进度，不再收 `hitl_response`。
+4. **保留能力**：external rerun（feedback）、inline rerun（strategy 节点内）、每节点 Redis 快照、WebSocket 广播——行为不变，寿命模型变了。
+5. **刻意没做**：主 pipeline 仍不用 Celery（短任务 + BackgroundTasks 足够单机 Compose）；没为了「架构好看」强行上多副本 checkpointer 共享（规模化时再评估）。
+
+**Result**：
+- 用户审批期间部署 backend：checkpoint 在 Redis，再点 confirm 可继续，不必重跑 brief/research。
+- 去掉 pub/sub 和「等一辈子」协程，executor 代码路径与 LangGraph 文档一致，新人 onboarding 更简单。
+- 连点确认、错节点 confirm 等边界用 status 乐观锁 + node 校验补上（#42 后续小修）。
+
+**Key takeaway**：HITL 系统的核心不是「怎么阻塞等人」，而是「interrupt 时安全落盘 + 下次请求能原子 resume」。长协程 + 消息队列邮箱是可行 hack，但在会重启的 Web 服务里脆弱；**request-per-pause** 才是和 LangGraph interrupt 对齐的形态。换 checkpointer 解决「状态存哪」，request-per-pause 解决「谁、何时触发 resume」——两件事要一起设计。
+
+**面试可讲的一句话**：我们把 agency pitch pipeline 从「一个后台协程挂几小时等 Redis 消息」改成「每次人工审批一次 HTTP、LangGraph checkpoint 落 Redis」，部署重启后用户仍能点确认接着跑，而不是整条 pipeline 作废。
+
+---
+
+## Future: Evaluator-Optimizer — brand_check 闭环
+
+> **状态：暂不实现，记录设计思路供后续参考**
+
+**背景**：LangGraph 的条件边天然支持「评估 → 原路返回」的循环，但 `brand_check_node` 目前只是单次打标签（`brand_check_passed: bool`），失败时把布尔值传给 HITL 让人类决定，LLM 不会自动修改策略。
+
+**设计方案**：
+
+```
+strategy_phase2
+    ↓
+brand_check
+    ├── passed=True ──────────────────────────────→ hitl_strategy
+    └── passed=False + retry_count=0 → (带 critique) strategy_phase2   ← 只重试一次
+                   + retry_count=1 ──────────────→ hitl_strategy（人类决定）
+```
+
+**实现所需改动（纯后端，前端零改动）**：
+1. `schemas.py`：`BrandCheckResult` 加 `critique: str`（给重试时 strategy_phase2 用的修改指令）
+2. `state.py`：`PipelineState` 加 `brand_check_retry_count: int = 0`、`brand_critique: str = ""`
+3. `strategy.py`：`run_strategy_phase2` 接受可选 `brand_critique` 参数，写进 prompt
+4. `pipeline.py`：`brand_check_node` 写 retry_count 和 critique；加条件边函数；`strategy_phase2_node` 传 `brand_critique`
+
+**打分方式**：不用连续分数（LLM 输出的 0-1 分数不可靠、无法校准）。用 `severity` 分类：
+- `blocking`：违反明确的品牌禁区（如禁用词、禁止调性）→ 触发重试
+- `advisory`：风格建议，非硬规则 → 直接传 HITL，不重试
+
+**前提条件（满足后再实现）**：
+1. **Brand profile 覆盖率**：大多数客户已填写 `forbidden_directions`（3 条以上具体禁区）。没有结构化品牌档案时 `brand_check` 直接返回 `passed=True`，优化循环永远不触发。
+2. **`forbidden_directions` 粒度正确**：必须是可判断的具体禁区（如"不得使用恐惧诉求"），而非模糊风格偏好（如"调性要高端"）。粒度不对 LLM 无法可靠判断 `blocking` vs `advisory`。
+3. **有真实失败案例**：积累足够多的真实 `brand_check` 失败记录，才能验证重试是否确实改善了策略质量，而不是在没有数据的情况下优化一个极少触发的路径。
+
+**入口**：`/clients/[clientId]` → Brand Profile tab → `forbidden_directions` 编辑入口（需要前端加字段编辑 UI，这是解锁此功能的真正前置工作）。

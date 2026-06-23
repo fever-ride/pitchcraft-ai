@@ -3,12 +3,12 @@ import json
 
 import pytest
 
-from backend.core.graph.executor import _RERUN_PREDECESSORS
+from backend.core.graph.executor import _RERUN_PREDECESSORS, get_rerun_predecessors
 from backend.core.graph.pipeline import (
     _CANONICAL_SEQUENCE,
     build_compiled_pipeline,
 )
-from backend.core.graph.state import BudgetExceeded, RequestBudget
+from backend.core.graph.state import RequestBudget
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +84,91 @@ def test_predecessor_always_precedes_target():
                 f"Predecessor '{pred}' (idx {pred_idx}) should come before "
                 f"'{node}' (idx {node_idx})"
             )
+
+
+def test_get_rerun_predecessors_deck_orchestrator_after_resource():
+    state = {
+        "resource_types_needed": ["kol"],
+        "resource_result": {"recommended_resources": []},
+    }
+    assert get_rerun_predecessors(state, "deck_orchestrator") == ["resource_agent"]
+
+
+def test_get_rerun_predecessors_deck_orchestrator_skip_resource():
+    state = {"resource_types_needed": []}
+    assert get_rerun_predecessors(state, "deck_orchestrator") == ["hitl_media"]
+
+
+def test_get_rerun_predecessors_deck_orchestrator_skipped_result():
+    state = {
+        "resource_types_needed": ["kol"],
+        "resource_result": {"skipped": True},
+    }
+    assert get_rerun_predecessors(state, "deck_orchestrator") == ["hitl_media"]
+
+
+def test_get_rerun_predecessors_unknown_node():
+    assert get_rerun_predecessors({}, "nonexistent_node") is None
+
+
+def test_get_rerun_predecessors_strategy_phase2():
+    assert get_rerun_predecessors({}, "strategy_phase2") == [
+        "research_agent",
+        "strategy_phase1",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Option B: interrupt → separate resume invocation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_interrupt_resume_across_invocations():
+    """First astream hits interrupt; second Command(resume) continues to END."""
+    from typing import TypedDict
+
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.graph import StateGraph, END
+    from langgraph.types import Command, interrupt
+
+    class S(TypedDict, total=False):
+        val: int
+
+    def step_a(_s):
+        return {"val": 1}
+
+    def hitl_node(s):
+        interrupt({"pause": True})
+        return {"val": s.get("val", 0) + 10}
+
+    def step_c(s):
+        return {"val": s.get("val", 0) + 100}
+
+    g = StateGraph(S)
+    g.add_node("a", step_a)
+    g.add_node("hitl", hitl_node)
+    g.add_node("c", step_c)
+    g.set_entry_point("a")
+    g.add_edge("a", "hitl")
+    g.add_edge("hitl", "c")
+    g.add_edge("c", END)
+    graph = g.compile(checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": "option_b_flow_test"}}
+
+    async for event in graph.astream({"val": 0}, config=config, stream_mode="updates"):
+        if "__interrupt__" in event:
+            break
+
+    snap = await graph.aget_state(config)
+    assert snap.next
+
+    async for _ in graph.astream(
+        Command(resume={"action": "confirm"}), config=config, stream_mode="updates"
+    ):
+        pass
+
+    final = await graph.aget_state(config)
+    assert final.values["val"] == 111
 
 
 # ---------------------------------------------------------------------------

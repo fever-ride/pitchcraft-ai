@@ -317,6 +317,7 @@
   "pipeline": {
     "title": "新建提案",
     "startError": "启动流程失败",
+    "confirmError": "提交审核失败，请重试",
     "proposalReady": "提案已生成",
     "proposalReadyDesc": "PPT 已成功生成。",
     "viewDownload": "查看 & 下载",
@@ -373,6 +374,16 @@
       "confirmStrategy": "确认策略",
       "feedbackPlaceholder": "建议修改…",
       "requestRevision": "申请修改",
+      "refreshResearch": "刷新调研",
+      "hideRerunOptions": "收起重跑选项",
+      "showRerunOptions": "从指定节点重跑 →",
+      "rerun": "重跑",
+      "rerunNodes": {
+        "brief_analyzer": "重新解析 Brief",
+        "research_agent": "重新调研",
+        "strategy_phase1": "重跑策略阶段 1",
+        "strategy_phase2": "重跑策略阶段 2"
+      },
       "loading": "策略加载中…"
     },
     "hitlMedia": {

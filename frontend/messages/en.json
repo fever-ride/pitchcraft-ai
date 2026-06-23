@@ -317,6 +317,7 @@
   "pipeline": {
     "title": "New Proposal",
     "startError": "Failed to start pipeline",
+    "confirmError": "Failed to submit review — please try again",
     "proposalReady": "Proposal Ready",
     "proposalReadyDesc": "Your PPT has been generated.",
     "viewDownload": "View & Download",
@@ -373,6 +374,16 @@
       "confirmStrategy": "Confirm Strategy",
       "feedbackPlaceholder": "Suggest changes...",
       "requestRevision": "Request Revision",
+      "refreshResearch": "Refresh research",
+      "hideRerunOptions": "Hide rerun options",
+      "showRerunOptions": "Rerun from a specific node →",
+      "rerun": "Rerun",
+      "rerunNodes": {
+        "brief_analyzer": "Re-analyze brief",
+        "research_agent": "Re-run research",
+        "strategy_phase1": "Re-run strategy phase 1",
+        "strategy_phase2": "Re-run strategy phase 2"
+      },
       "loading": "Loading strategy..."
     },
     "hitlMedia": {
