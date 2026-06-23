@@ -56,10 +56,23 @@ async def _process_archive(
     report_text = parse_file(file_bytes, filename)
 
     if not report_text.strip():
+        error_msg = "无法提取文本内容，可能是图片型 PDF。请上传含文字层的 PDF、DOCX 或 PPTX 文档。"
         await collection.update_one(
             {"_id": archive_id},
-            {"$set": {"status": "done", "extraction": None, "note": "Empty report"}},
+            {"$set": {"status": "failed", "processing_error": error_msg}},
         )
+        if org_id:
+            import json
+            import redis.asyncio as aioredis
+            from backend.core.config import settings
+            r = aioredis.from_url(settings.redis_url)
+            try:
+                await r.publish(
+                    f"campaign:{org_id}",
+                    json.dumps({"event": "campaign_extract_failed", "archive_id": archive_id, "error": error_msg}),
+                )
+            finally:
+                await r.aclose()
         return
 
     extraction = await extract_archive(report_text)
@@ -96,8 +109,28 @@ async def _store_campaign_record(
     campaign_dict["project_id"] = project_id
     campaign_dict["org_id"] = org_id
     campaign_dict["source_archive_id"] = archive_id
+    record_id = campaign_dict["_id"]
     await db["campaign_records"].insert_one(campaign_dict)
     logger.info(f"Campaign record stored for archive {archive_id}")
+
+    # Notify connected campaign WS clients that a new record is ready for review
+    if org_id:
+        import json
+        import redis.asyncio as aioredis
+        from backend.core.config import settings
+        r = aioredis.from_url(settings.redis_url)
+        try:
+            await r.publish(
+                f"campaign:{org_id}",
+                json.dumps({
+                    "event": "campaign_record_ready",
+                    "record_id": record_id,
+                    "archive_id": archive_id,
+                    "client_id": client_id,
+                }),
+            )
+        finally:
+            await r.aclose()
 
 
 

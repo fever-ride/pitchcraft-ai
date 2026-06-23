@@ -13,7 +13,7 @@ from backend.core.database.repositories.projects import ProjectRepository
 router = APIRouter()
 
 ALLOWED_ARCHIVE_EXTENSIONS = {".pdf", ".docx", ".pptx", ".ppt"}
-MAX_ARCHIVE_SIZE = 30 * 1024 * 1024  # 30 MB
+MAX_ARCHIVE_SIZE = 100 * 1024 * 1024  # 100 MB
 CHUNK_SIZE = 64 * 1024
 
 
@@ -122,7 +122,7 @@ async def archive_project(
             total += len(chunk)
             if total > MAX_ARCHIVE_SIZE:
                 dest.unlink(missing_ok=True)
-                raise HTTPException(status_code=400, detail="File exceeds 30 MB limit")
+                raise HTTPException(status_code=400, detail="File exceeds 100 MB limit")
             f.write(chunk)
 
     await db["project_archives"].insert_one({

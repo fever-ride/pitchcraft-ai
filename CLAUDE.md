@@ -154,7 +154,9 @@ The Campaign KB is how the agency accumulates institutional memory from past pro
 
 ### 3. Human review
 
-`/campaigns` page auto-polls every 5 seconds after upload (up to 3 minutes) and switches to the Pending tab when a new record appears.
+After upload, the Celery task publishes a `campaign_record_ready` event to Redis pub/sub (`campaign:{org_id}` channel) when extraction completes. The frontend maintains a persistent WebSocket connection to `/ws/campaigns/{org_id}` and switches to the Pending tab automatically when the push arrives — no polling or timeout.
+
+On page load/refresh, `GET /api/v1/campaigns/archives/processing` restores any in-flight upload banners by querying `project_archives` for `status ∈ {pending, processing}`. Each in-flight upload shows a per-file spinner with the filename. Multiple concurrent uploads are tracked independently by `archive_id`.
 
 Clicking a record opens `/campaigns/[recordId]` for full review and editing:
 - All extracted fields are editable inline
@@ -294,7 +296,8 @@ Post-pipeline client feedback on `/proposals/[id]` can trigger rerun — separat
 | `GET` | `/api/v1/campaigns` | List all records (filter by client_id, status) |
 | `GET` | `/api/v1/campaigns/pending` | List pending records |
 | `GET` | `/api/v1/campaigns/search` | Search confirmed records by metadata |
-| `POST` | `/api/v1/campaigns/upload` | Upload a recap document → triggers async extraction |
+| `GET` | `/api/v1/campaigns/archives/processing` | List archives currently extracting (status=pending/processing); used by frontend to restore in-progress banners after refresh |
+| `POST` | `/api/v1/campaigns/upload` | Upload a recap document → triggers async extraction; returns `{archive_id, status}` |
 | `GET` | `/api/v1/campaigns/{id}` | Get a single record |
 | `PUT` | `/api/v1/campaigns/{id}/confirm` | Confirm + optionally edit a record → triggers indexing |
 | `DELETE` | `/api/v1/campaigns/{id}` | Delete record (+ Pinecone cleanup for confirmed records) |

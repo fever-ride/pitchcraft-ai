@@ -8,8 +8,16 @@ Clients connect to /ws/pipeline/{pipeline_id} to receive real-time events:
 
 HITL responses are NOT sent through WebSocket in Option B.
 Use POST /api/v1/pipeline/{id}/confirm to submit a HITL response.
+
+Clients also connect to /ws/campaigns/{org_id} to receive:
+  - campaign_record_ready — a new campaign record is ready for review
 """
+import asyncio
+
+import redis.asyncio as aioredis
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from backend.core.config import settings
 
 router = APIRouter()
 
@@ -69,6 +77,37 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+@router.websocket("/ws/campaigns/{org_id}")
+async def campaigns_websocket(websocket: WebSocket, org_id: str):
+    """Push-only WebSocket for campaign extraction completion events.
+
+    Subscribes to Redis pub/sub channel campaign:{org_id} and forwards
+    campaign_record_ready events to the connected frontend client.
+    """
+    await websocket.accept()
+    r = aioredis.from_url(settings.redis_url)
+    pubsub = r.pubsub()
+    await pubsub.subscribe(f"campaign:{org_id}")
+    try:
+        async def _listen():
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    await websocket.send_text(message["data"].decode())
+
+        listen_task = asyncio.create_task(_listen())
+        # Keep alive; ignore any client messages
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            listen_task.cancel()
+    finally:
+        await pubsub.unsubscribe(f"campaign:{org_id}")
+        await r.aclose()
 
 
 @router.websocket("/ws/pipeline/{pipeline_id}")

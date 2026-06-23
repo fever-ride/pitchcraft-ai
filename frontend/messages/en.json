@@ -83,7 +83,7 @@
     "noBigIdea": "No big idea extracted",
     "upload": {
       "title": "Upload Campaign Recap",
-      "subtitle": "Upload post-campaign reports, case studies or pitch decks. The system extracts campaign data for your knowledge base. Supports PDF, DOCX, PPTX — up to 30 MB.",
+      "subtitle": "Upload post-campaign reports, case studies or pitch decks. The system extracts campaign data for your knowledge base. Supports PDF, DOCX, PPTX — up to 100 MB.",
       "clientLabel": "Client *",
       "clientHint": "(needed for retrieval & resource matching)",
       "selectClient": "— Select a client —",
@@ -304,7 +304,7 @@
     },
     "archive": {
       "uploadTitle": "Upload a recap report or case study to extract campaign insights",
-      "uploadSubtitle": "PDF, DOCX, PPTX — up to 30 MB",
+      "uploadSubtitle": "PDF, DOCX, PPTX — up to 100 MB",
       "chooseFile": "Choose file",
       "uploading": "Uploading…",
       "loading": "Loading archives…",

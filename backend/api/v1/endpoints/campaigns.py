@@ -98,8 +98,37 @@ async def search_campaign_records(
     return records
 
 
+@router.get("/archives/processing")
+async def list_processing_archives(
+    user: CurrentUser = Depends(get_current_user),
+):
+    """List archives that are in-progress or recently failed for this org.
+
+    Used by the frontend on page load/refresh to restore upload banners:
+    - status pending/processing → spinning banner
+    - status failed → error banner (shown for up to 1 hour after failure)
+    """
+    from datetime import timedelta
+    db = await get_database()
+    one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+    cursor = db["project_archives"].find(
+        {
+            "org_id": user.organization_id,
+            "$or": [
+                {"status": {"$in": ["pending", "processing"]}},
+                {"status": "failed", "uploaded_at": {"$gte": one_hour_ago}},
+            ],
+        },
+        {"_id": 1, "filename": 1, "client_id": 1, "status": 1, "processing_error": 1, "uploaded_at": 1},
+    ).sort("uploaded_at", -1)
+    archives = await cursor.to_list(length=20)
+    for a in archives:
+        a["archive_id"] = str(a.pop("_id"))
+    return archives
+
+
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".ppt"}
-MAX_FILE_SIZE = 30 * 1024 * 1024  # 30 MB
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 CHUNK_SIZE = 64 * 1024
 
 
@@ -144,13 +173,14 @@ async def upload_recap(
             total += len(chunk)
             if total > MAX_FILE_SIZE:
                 dest.unlink(missing_ok=True)
-                raise HTTPException(status_code=400, detail="File exceeds 30 MB limit")
+                raise HTTPException(status_code=400, detail="File exceeds 100 MB limit")
             f.write(chunk)
 
     await db["project_archives"].insert_one({
         "_id": archive_id,
         "project_id": project_id,
         "client_id": client_id,
+        "org_id": user.organization_id,
         "filename": file.filename,
         "storage_path": str(dest),
         "status": "pending",

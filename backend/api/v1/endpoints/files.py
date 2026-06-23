@@ -16,7 +16,7 @@ from backend.core.rag.visual_process import process_visual_file_task
 router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".ppt"}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 CHUNK_SIZE = 64 * 1024  # 64 KB streaming chunks
 
 

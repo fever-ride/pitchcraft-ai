@@ -83,7 +83,7 @@
     "noBigIdea": "未提取到 Big Idea",
     "upload": {
       "title": "上传结案/提案文档",
-      "subtitle": "上传结案报告、案例研究或提案 PPT，系统将自动提取结构化 Campaign 数据。支持 PDF、DOCX、PPTX，最大 30MB。",
+      "subtitle": "上传结案报告、案例研究或提案 PPT，系统将自动提取结构化 Campaign 数据。支持 PDF、DOCX、PPTX，最大 100MB。",
       "clientLabel": "客户 *",
       "clientHint": "（用于检索匹配和资源推荐）",
       "selectClient": "— 选择客户 —",
@@ -304,7 +304,7 @@
     },
     "archive": {
       "uploadTitle": "上传结案报告或案例研究，提取 Campaign 洞察",
-      "uploadSubtitle": "支持 PDF、DOCX、PPTX，最大 30 MB",
+      "uploadSubtitle": "支持 PDF、DOCX、PPTX，最大 100MB",
       "chooseFile": "选择文件",
       "uploading": "上传中…",
       "loading": "存档加载中…",

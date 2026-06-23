@@ -120,7 +120,9 @@ The same pipeline handles both pitch decks and recap reports. `record_type` is *
 
 4. Store for Review
    MongoDB campaign_records, status = pending_confirmation
-   Accessible at /campaigns (pending tab)
+   Celery task publishes campaign_record_ready to Redis pub/sub (campaign:{org_id})
+   Frontend /ws/campaigns/{org_id} WebSocket receives push → switches to Pending tab
+   Page refresh resilience: GET /archives/processing restores in-progress banners from DB
 
 5. Human Confirmation
    AE reviews extracted record, corrects errors, fills gaps

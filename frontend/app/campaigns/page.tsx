@@ -9,12 +9,22 @@ import type { AppDispatch, RootState } from "@/store/store";
 import { fetchRecords, setTab } from "@/store/campaignsSlice";
 import { apiFetch } from "@/lib/api";
 
+const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Client {
   _id: string;
   name: string;
   industry: string | null;
+}
+
+interface ProcessingArchive {
+  archive_id: string;
+  filename: string;
+  client_id: string;
+  status?: "pending" | "processing" | "failed";
+  processing_error?: string;
 }
 
 // ── Badge helpers (components so they can use hooks) ───────────────────────────
@@ -69,21 +79,73 @@ function BudgetTierBadge({ value }: { value: string }) {
   );
 }
 
+// ── Processing banner — shown per in-flight archive ───────────────────────────
+
+function ProcessingBanner({
+  archives,
+  onDismissError,
+}: {
+  archives: ProcessingArchive[];
+  onDismissError: (archiveId: string) => void;
+}) {
+  const t = useTranslations("campaigns");
+  if (archives.length === 0) return null;
+  return (
+    <div className="mb-4 space-y-2">
+      {archives.map((a) => {
+        const failed = a.status === "failed";
+        return (
+          <div
+            key={a.archive_id}
+            className={`flex items-start gap-2 text-sm rounded px-3 py-2 border ${
+              failed
+                ? "text-red-700 bg-red-50 border-red-200"
+                : "text-blue-700 bg-blue-50 border-blue-200"
+            }`}
+          >
+            {failed ? (
+              <svg className="w-4 h-4 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            ) : (
+              <svg className="animate-spin w-4 h-4 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+            )}
+            <div className="flex-1 min-w-0">
+              <span className="font-medium">{a.filename}</span>
+              {failed ? (
+                <p className="mt-0.5 text-red-600 text-xs">{a.processing_error}</p>
+              ) : (
+                <span className="ml-1 text-blue-500">{t("upload.processingMsg")}</span>
+              )}
+            </div>
+            {failed && (
+              <button
+                onClick={() => onDismissError(a.archive_id)}
+                className="shrink-0 text-red-400 hover:text-red-600 ml-1"
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Upload panel ───────────────────────────────────────────────────────────────
 
-function UploadPanel({ onUploaded, resetSignal }: { onUploaded: () => void; resetSignal?: number }) {
+function UploadPanel({ onUploaded }: { onUploaded: (archive: ProcessingArchive) => void }) {
   const t = useTranslations("campaigns");
   const tc = useTranslations("common");
   const [clients, setClients] = useState<Client[]>([]);
   const [clientId, setClientId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<"idle" | "processing" | "error">("idle");
-
-  // Clear banner when parent detects the new record arrived
-  useEffect(() => {
-    if (resetSignal) setUploadStatus("idle");
-  }, [resetSignal]);
   const [errorMsg, setErrorMsg] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -138,7 +200,6 @@ function UploadPanel({ onUploaded, resetSignal }: { onUploaded: () => void; rese
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFile(e.target.files?.[0] ?? null);
-    setUploadStatus("idle");
     setErrorMsg("");
   };
 
@@ -158,12 +219,11 @@ function UploadPanel({ onUploaded, resetSignal }: { onUploaded: () => void; rese
         const err = await res.json().catch(() => ({}));
         throw new Error((err as { detail?: string }).detail ?? `Upload failed (${res.status})`);
       }
-      setUploadStatus("processing");
+      const data = await res.json();
       setFile(null);
       if (fileRef.current) fileRef.current.value = "";
-      onUploaded();
+      onUploaded({ archive_id: data.archive_id, filename: file.name, client_id: clientId });
     } catch (e: unknown) {
-      setUploadStatus("error");
       setErrorMsg(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setUploading(false);
@@ -173,7 +233,7 @@ function UploadPanel({ onUploaded, resetSignal }: { onUploaded: () => void; rese
   const selectedClientName = clients.find((c) => c._id === clientId)?.name;
 
   return (
-    <div className="border rounded-xl bg-white p-6 mb-8 shadow-sm">
+    <div className="border rounded-xl bg-white p-6 mb-6 shadow-sm">
       {/* Header */}
       <div className="flex items-start gap-4 mb-5">
         <div className="shrink-0 w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
@@ -288,21 +348,24 @@ function UploadPanel({ onUploaded, resetSignal }: { onUploaded: () => void; rese
         </button>
       </div>
 
-      {/* Status feedback */}
-      {uploadStatus === "processing" && (
-        <div className="mt-3 flex items-center gap-2 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded px-3 py-2">
-          <svg className="animate-spin w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-          </svg>
-          {t("upload.processingMsg")}
-        </div>
-      )}
-      {uploadStatus === "error" && (
+      {errorMsg && (
         <p className="mt-3 text-sm text-red-600">{errorMsg}</p>
       )}
     </div>
   );
+}
+
+// ── Decode org_id from JWT (no verification needed — display only) ─────────────
+
+function getOrgIdFromToken(): string | null {
+  try {
+    const token = localStorage.getItem("token");
+    if (!token) return null;
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.organization_id ?? payload.org_id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────────
@@ -315,11 +378,71 @@ export default function CampaignsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [clientFilter, setClientFilter] = useState("");
 
-  // Polling after upload
-  const [polling, setPolling] = useState(false);
-  const [panelReset, setPanelReset] = useState(0);
-  const pollCountRef = useRef(0);
-  const prevPendingCount = useRef<number | null>(null);
+  // processingArchives is the source-of-truth list of in-flight uploads.
+  // Seeded from GET /archives/processing on mount, updated locally on upload
+  // and cleared per-archive when WS push arrives.
+  const [processingArchives, setProcessingArchives] = useState<ProcessingArchive[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // On mount: fetch currently-processing archives to restore banners after refresh
+  useEffect(() => {
+    apiFetch("/api/v1/campaigns/archives/processing")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: ProcessingArchive[]) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setProcessingArchives(data);
+          dispatch(setTab("pending"));
+        }
+      })
+      .catch(() => {});
+  }, [dispatch]);
+
+  // Connect to campaign WS on mount and stay connected.
+  // On campaign_record_ready: remove the matching archive from processingArchives,
+  // switch to Pending tab, and refresh records.
+  useEffect(() => {
+    const orgId = getOrgIdFromToken();
+    if (!orgId) return;
+
+    const connect = () => {
+      const ws = new WebSocket(`${WS_BASE}/ws/campaigns/${orgId}`);
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.event === "campaign_record_ready") {
+            setProcessingArchives((prev) =>
+              prev.filter((a) => a.archive_id !== data.archive_id)
+            );
+            dispatch(setTab("pending"));
+            dispatch(fetchRecords({ tab: "pending", clientId: undefined }));
+          } else if (data.event === "campaign_extract_failed") {
+            setProcessingArchives((prev) =>
+              prev.map((a) =>
+                a.archive_id === data.archive_id
+                  ? { ...a, status: "failed" as const, processing_error: data.error }
+                  : a
+              )
+            );
+          }
+        } catch {
+          // ignore malformed messages
+        }
+      };
+
+      ws.onclose = (event) => {
+        if (!event.wasClean) {
+          setTimeout(connect, 3000);
+        }
+      };
+    };
+
+    connect();
+    return () => {
+      wsRef.current?.close();
+    };
+  }, [dispatch]);
 
   useEffect(() => {
     apiFetch("/api/v1/clients")
@@ -332,45 +455,23 @@ export default function CampaignsPage() {
     dispatch(fetchRecords({ tab, clientId: clientFilter || undefined }));
   }, [dispatch, tab, clientFilter]);
 
-  useEffect(() => {
-    if (!polling) return;
-    const interval = setInterval(() => {
-      pollCountRef.current += 1;
-      dispatch(fetchRecords({ tab: "pending", clientId: clientFilter || undefined }));
-      if (pollCountRef.current >= 36) {
-        setPolling(false);
-        pollCountRef.current = 0;
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [polling, dispatch, clientFilter]);
-
-  const pendingCount = records.filter((r) => r.status === "pending_confirmation").length;
-  useEffect(() => {
-    if (!polling) return;
-    if (prevPendingCount.current === null) { prevPendingCount.current = pendingCount; return; }
-    if (pendingCount > prevPendingCount.current) {
-      setPolling(false);
-      setPanelReset(v => v + 1);
-      pollCountRef.current = 0;
-      prevPendingCount.current = null;
-    }
-  }, [pendingCount, polling]);
-
-  const reload = useCallback(() => {
-    dispatch(fetchRecords({ tab, clientId: clientFilter || undefined }));
+  const handleUploaded = useCallback((archive: ProcessingArchive) => {
+    setProcessingArchives((prev) => [...prev, { ...archive, status: "processing" as const }]);
     dispatch(setTab("pending"));
-    setPolling(true);
-    pollCountRef.current = 0;
-    prevPendingCount.current = null;
-  }, [dispatch, tab, clientFilter]);
+  }, [dispatch]);
+
+  const handleDismissError = useCallback((archiveId: string) => {
+    setProcessingArchives((prev) => prev.filter((a) => a.archive_id !== archiveId));
+  }, []);
 
   return (
     <div className="max-w-5xl mx-auto p-8">
       <h1 className="text-2xl font-bold mb-1">{t("title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("subtitle")}</p>
 
-      <UploadPanel onUploaded={reload} resetSignal={panelReset} />
+      <UploadPanel onUploaded={handleUploaded} />
+
+      <ProcessingBanner archives={processingArchives} onDismissError={handleDismissError} />
 
       {/* Filters + tabs */}
       <div className="flex flex-wrap gap-3 mb-5 items-center">
@@ -400,19 +501,8 @@ export default function CampaignsPage() {
         </div>
       </div>
 
-      {/* Polling indicator */}
-      {polling && (
-        <div className="flex items-center gap-2 text-sm text-blue-600 mb-4">
-          <svg className="animate-spin w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-          </svg>
-          {t("polling")}
-        </div>
-      )}
-
       {/* Records list */}
-      {loading && !polling && <p className="text-gray-500 text-sm">{t("loadingRecords")}</p>}
+      {loading && <p className="text-gray-500 text-sm">{t("loadingRecords")}</p>}
 
       {!loading && records.length === 0 && (
         <div className="border border-dashed rounded-xl p-10 text-center text-gray-400 text-sm">
