@@ -108,6 +108,7 @@ async def generate_slide_content(
     project_id: str | None = None,
     budget: RequestBudget | None = None,
     output_language: str = "auto",
+    revision_feedback: str | None = None,
 ) -> SlideContent:
     """Generate content for a single slide using only the fields it needs."""
     lang = resolve_output_language(output_language, big_idea)
@@ -123,6 +124,8 @@ async def generate_slide_content(
         f"Brand Direction: {brand_direction}\n"
         f"Brand Tone Reference:\n{brand_tone[:1000]}"
     )
+    if revision_feedback:
+        user_msg += f"\n\nRevision required. Previous version was flagged with this feedback:\n{revision_feedback}\nPlease address this feedback in the new version."
     messages = [
         SystemMessage(content=SLIDE_CONTENT_SYSTEM[lang]),
         HumanMessage(content=user_msg),

@@ -1559,3 +1559,98 @@ brand_check
 3. **有真实失败案例**：积累足够多的真实 `brand_check` 失败记录，才能验证重试是否确实改善了策略质量，而不是在没有数据的情况下优化一个极少触发的路径。
 
 **入口**：`/clients/[clientId]` → Brand Profile tab → `forbidden_directions` 编辑入口（需要前端加字段编辑 UI，这是解锁此功能的真正前置工作）。
+
+---
+
+## 43. Pipeline 端点缺少归属校验 → 任意认证用户可操作他人 pipeline
+
+**问题**：`POST /pipeline/{id}/confirm`、`POST /pipeline/{id}/rerun`、`GET /pipeline/{id}/status` 等所有以 `pipeline_id` 为参数的端点，只校验 JWT token 有效，不验证该 pipeline 是否属于当前用户的 org。知道 UUID 的任意认证用户可以读取、确认或重跑他人的 pipeline。
+
+**根因**：`PipelineExecutor` 设计时只关注执行逻辑，归属校验完全缺席。
+
+**修复**（`backend/api/v1/endpoints/pipeline.py`）：
+
+```python
+async def _require_owner(executor: PipelineExecutor, user: CurrentUser) -> dict:
+    state = await executor.load_state()
+    if not state:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    if state.get("org_id") != user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return state
+```
+
+所有 7 个 pipeline 端点（`/confirm`、`/rerun`、`/recover`、`/status`、`/brief`、`/strategy`、`/media-plan`、`/slides`）统一在入口调用 `_require_owner()`，返回 state 供后续逻辑复用，避免二次 `load_state()` 调用。`/start` 不需要校验（创建操作，`org_id` 来自 JWT）。
+
+**教训**：Resource/行为型端点（通过 ID 操作某个对象）必须在业务逻辑前先做归属校验，不能只依赖 JWT 认证。认证（你是谁）≠ 授权（你能操作什么）。
+
+---
+
+## 44. Pipeline 进程重启后 status 卡在 `running`，无自动恢复
+
+**问题**：Backend 进程重启（OOM、部署）会杀死正在执行的 `BackgroundTask`，但 Redis 中的 `pipeline:{id}:status` 仍显示 `running`。用户看到 pipeline 卡死，只能手动 rerun。LangGraph checkpoint 在 `AsyncRedisSaver` 里完好保存——图知道它在哪，但没有人去触发恢复。
+
+**修复**：
+
+1. **`PipelineExecutor.recover(stale_threshold=300)`**（`executor.py`）：检测 `running` 状态超过阈值时，读 LangGraph checkpoint：
+   - `snapshot.next` 非空 → 图在 interrupt → 改回 `paused` + 重发 `hitl_required` WebSocket 事件
+   - `snapshot.next` 为空 → 图未正常完成 → 标 `error`
+
+2. **`GET /pipeline/{id}/status` 自动触发**：若 `running` 超过 5 分钟，自动调 `recover()`，返回修正后的状态。前端无需额外轮询。
+
+3. **`POST /pipeline/{id}/recover` 显式端点**：前端可主动调用（`stale_threshold=0`，跳过时间检查）。
+
+4. **`usePipelineSocket.ts` `onclose` 处理**：WebSocket 非正常断开时（`wasClean=false`），拉一次 `/status`；若后端已自动恢复为 `paused`，前端 Redux 状态同步，HITL 组件自动出现。
+
+**局限**：进程重启时若图正跑在两个 HITL 之间的 LLM 节点（`snapshot.next` 为空），只能标 `error`，用户需手动 rerun。这是预期行为——无法从中途 LLM 调用恢复，只能从最近 HITL 节点重跑。
+
+---
+
+## 45. Feedback rerun 三个实现缺口
+
+**背景**：Pipeline 完成后，用户在 `/proposals/[id]` 提交 feedback 可触发部分重跑（`RERUN_SUGGESTIONS` 映射 target → 重跑节点）。设计正确，但实现有三处缺口。
+
+---
+
+**缺口 A：Redis 过期后 rerun 静默失败**
+
+`submit_feedback` 调 `executor.load_state()` 获取 pipeline state 用于重跑，但 Redis TTL 24 小时，pipeline 完成后用户可能隔很久才提交 feedback，此时 state=None，rerun 条件判断 `if ... and state` 静默跳过，response 里 `rerun_triggered=False`，用户不知道为什么没反应。
+
+**修复**（`backend/api/v1/endpoints/proposals.py`）：state 为 None 时从 `ProposalVersionRepository.get_latest()` 读最新 MongoDB 版本快照，重建包含 identity 字段（`proposal_id`、`client_id`、`project_id`、`org_id`）的 state：
+
+```python
+if not state:
+    latest = await version_repo.get_latest(proposal_id)
+    if latest:
+        snap = latest.get("snapshot", {})
+        state = {**snap, "proposal_id": proposal_id, "client_id": ..., "org_id": ...}
+```
+
+---
+
+**缺口 B：proposals 页重跑进度不可见**
+
+Rerun 触发后 backend 广播 WebSocket 事件到 `pipeline/{proposal_id}`，但 `/proposals/[id]` 页面不连接这个 channel，用户看不到进度。
+
+**修复**（`frontend/app/proposals/[proposalId]/page.tsx`）：`FeedbackPanel.onRerunTriggered` 回调里开 WebSocket 连接，监听 `node_entered`（显示当前节点）和 `pipeline_complete`（reload 提案 + 关闭 socket）。`FeedbackPanel` 收到 `rerun_triggered=true` 时调 `onRerunTriggered`。新增 `rerunning` / `rerunComplete` i18n 键。
+
+---
+
+**缺口 C：slide 级重跑忽略 flagged feedback，重跑全部 slide**
+
+`target=SLIDE` 触发 `slide_content` 重跑时，之前在 HITL gallery 标记的 flagged slides 的 feedback 没有注入 prompt，且未 flagged 的 slide 也被重新生成（浪费 LLM 调用）。
+
+**修复**（`backend/core/graph/pipeline.py`、`backend/core/agents/deck.py`）：
+- `slide_content_node`：按 index 对比现有 slides，`status != "flagged"` 的直接复用，flagged 的把 `slide.feedback` 作为 `revision_feedback` 传给 `generate_slide_content`
+- `generate_slide_content`：接受可选 `revision_feedback` 参数，追加到 prompt 末尾作为修改约束
+
+效果：M 张 slides 里只有 K 张被 flagged，重跑只产生 K 次 LLM 调用，且每次都带着用户的具体反馈。
+
+**通用经验**：
+
+| 场景 | 做法 |
+|------|------|
+| 认证 vs 授权 | JWT 验证"你是谁"；归属校验验证"你能操作什么"；两者都要，缺一不可 |
+| 进程重启后状态恢复 | checkpoint 解决"状态存哪"，recover 机制解决"谁来触发恢复"——两件事一起设计 |
+| Redis TTL 与持久化 | 短期状态放 Redis（执行上下文），完成后落 MongoDB（结果快照）；两者都为 None 才真的没有 |
+| 部分重跑的精准粒度 | 只重跑需要变更的部分，用 feedback 作为约束注入——数量和质量都受益 |

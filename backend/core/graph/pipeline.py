@@ -324,10 +324,23 @@ async def slide_content_node(state: PipelineState) -> dict:
     budget = state.get("request_budget")
     output_language = state.get("output_language", "auto")
 
-    # Semaphore caps concurrent Anthropic API calls to avoid 429 rate limits
+    # On a feedback-driven rerun, existing slides that were not flagged are
+    # preserved as-is. Only flagged slides (status="flagged") are regenerated,
+    # with their user feedback injected as a revision constraint.
+    existing_slides: list[dict] = state.get("slides", [])
+    existing_by_index = {s["index"]: s for s in existing_slides}
+
     sem = asyncio.Semaphore(3)
 
-    async def _generate_one(slide_info: dict, idx: int):
+    async def _generate_one(slide_info: dict, idx: int) -> dict:
+        slide_index = slide_info.get("slide_index", idx)
+        existing = existing_by_index.get(slide_index)
+
+        # Reuse unchanged slides; regenerate only flagged ones.
+        if existing and existing.get("status") != "flagged":
+            return {**existing, "status": "pending"}
+
+        feedback_note = (existing or {}).get("feedback", "") if existing else ""
         async with sem:
             content = await generate_slide_content(
                 slide=slide_info,
@@ -337,9 +350,10 @@ async def slide_content_node(state: PipelineState) -> dict:
                 project_id=project_id,
                 budget=budget,
                 output_language=output_language,
+                revision_feedback=feedback_note or None,
             )
         return {
-            "index": slide_info.get("slide_index", idx),
+            "index": slide_index,
             "content": content.model_dump(),
             "status": "pending",
         }

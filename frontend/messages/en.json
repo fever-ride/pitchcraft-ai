@@ -436,7 +436,10 @@
     "strategy": "Strategy",
     "bigIdea": "Big Idea: ",
     "slides": "Slides ({{count}})",
-    "slide": "Slide {{num}}"
+    "slide": "Slide {{num}}",
+    "rerunning": "Rerunning pipeline…",
+    "rerunningNode": "Running: {{node}}",
+    "rerunComplete": "Rerun complete — proposal updated"
   },
   "files": {
     "title": "File Library",

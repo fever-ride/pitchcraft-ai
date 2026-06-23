@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiFetch } from "@/lib/api";
 
 type FeedbackTarget = "strategy" | "structure" | "slide" | "resource" | "overall";
 
@@ -10,12 +9,14 @@ interface FeedbackPanelProps {
   proposalId: string;
   defaultTarget?: FeedbackTarget;
   onSubmitted?: () => void;
+  onRerunTriggered?: () => void;
 }
 
 export default function FeedbackPanel({
   proposalId,
   defaultTarget = "overall",
   onSubmitted,
+  onRerunTriggered,
 }: FeedbackPanelProps) {
   const [target, setTarget] = useState<FeedbackTarget>(defaultTarget);
   const [content, setContent] = useState("");
@@ -41,13 +42,9 @@ export default function FeedbackPanel({
     if (!content.trim()) return;
     setSubmitting(true);
 
-    const token = localStorage.getItem("token");
-    const res = await fetch(`${API_BASE}/api/v1/proposals/${proposalId}/feedback`, {
+    const res = await apiFetch(`/api/v1/proposals/${proposalId}/feedback`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         target,
         content,
@@ -61,6 +58,9 @@ export default function FeedbackPanel({
     setResult(data);
     setSubmitting(false);
     onSubmitted?.();
+    if (data.rerun_triggered) {
+      onRerunTriggered?.();
+    }
   };
 
   return (

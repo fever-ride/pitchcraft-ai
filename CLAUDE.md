@@ -280,7 +280,8 @@ Post-pipeline client feedback on `/proposals/[id]` can trigger rerun — separat
 | `POST` | `/api/v1/pipeline/start` | Start pipeline → background `executor.start()` |
 | `POST` | `/api/v1/pipeline/{id}/confirm` | HITL response → background `executor.resume_pipeline()` |
 | `POST` | `/api/v1/pipeline/{id}/rerun` | Rerun from node → background `executor.start(state, start_from)` |
-| `GET` | `/api/v1/pipeline/{id}/status` | Current status + confirmation flags |
+| `POST` | `/api/v1/pipeline/{id}/recover` | Recover stalled pipeline (process restart); reads LangGraph checkpoint to restore `paused` or `error` |
+| `GET` | `/api/v1/pipeline/{id}/status` | Current status + confirmation flags; auto-recovers if `running` > 5 min |
 | `GET` | `/api/v1/pipeline/{id}/brief` | Structured brief for HITL 1 |
 | `GET` | `/api/v1/pipeline/{id}/strategy` | Strategy + research for HITL 2 |
 | `GET` | `/api/v1/pipeline/{id}/media-plan` | Media plan for HITL 3 |
@@ -526,6 +527,12 @@ Prompt variants live in `backend/core/language/prompts.py` (pipeline agents) and
 12. **i18n: `useTranslations` is a React hook** — it can only be called inside a component function body, not at module level. Badge helper functions that need translations must be converted to React components.
 
 13. **i18n: `npm ci` in Dockerfile** — the Dockerfile uses `npm install --legacy-peer-deps` (not `npm ci`) because `npm ci` breaks when the local npm version differs from the container's npm version and generates an incompatible lockfile. Don't revert this to `npm ci`.
+
+14. **Pipeline endpoints require org ownership**: all `/{pipeline_id}/*` endpoints call `_require_owner()` before any logic — returns 403 if `state.org_id != user.organization_id`. `/start` is exempt (creation, org_id comes from JWT).
+
+15. **Pipeline process-restart recovery**: if `pipeline:{id}:status` is `running` for > 5 min, `GET /status` auto-calls `executor.recover()` which reads the LangGraph checkpoint. If `snapshot.next` is non-empty (graph at interrupt), status is restored to `paused` and `hitl_required` is re-broadcast. If empty, marked `error`. `POST /recover` also available for explicit recovery.
+
+16. **Feedback rerun state fallback**: `POST /proposals/{id}/feedback` with `trigger_rerun=true` first tries Redis state; if expired (24h TTL), falls back to `ProposalVersionRepository.get_latest()` snapshot. Always check both before concluding state is unavailable.
 
 ---
 

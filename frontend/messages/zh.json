@@ -436,7 +436,10 @@
     "strategy": "策略",
     "bigIdea": "Big Idea：",
     "slides": "Slides（{{count}} 张）",
-    "slide": "Slide {{num}}"
+    "slide": "Slide {{num}}",
+    "rerunning": "重跑中…",
+    "rerunningNode": "正在执行：{{node}}",
+    "rerunComplete": "重跑完成，提案已更新"
   },
   "files": {
     "title": "文件库",

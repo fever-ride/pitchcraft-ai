@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiFetch } from "@/lib/api";
 
 interface VersionSummary {
   _id: string;
@@ -31,12 +30,8 @@ export default function VersionPanel({ proposalId, onRollback }: Props) {
   const [noteText, setNoteText] = useState("");
   const [rolling, setRolling] = useState(false);
 
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-
   const loadVersions = async () => {
-    const res = await fetch(`${API_BASE}/api/v1/proposals/${proposalId}/versions`, { headers });
+    const res = await apiFetch(`/api/v1/proposals/${proposalId}/versions`);
     if (res.ok) {
       const data = await res.json();
       setVersions(data.sort((a: VersionSummary, b: VersionSummary) => b.version - a.version));
@@ -48,10 +43,7 @@ export default function VersionPanel({ proposalId, onRollback }: Props) {
   }, [proposalId]);
 
   const loadDiff = async (v1: number, v2: number) => {
-    const res = await fetch(
-      `${API_BASE}/api/v1/proposals/${proposalId}/versions/${v1}/diff/${v2}`,
-      { headers }
-    );
+    const res = await apiFetch(`/api/v1/proposals/${proposalId}/versions/${v1}/diff/${v2}`);
     if (res.ok) {
       setDiff(await res.json());
     }
@@ -66,9 +58,9 @@ export default function VersionPanel({ proposalId, onRollback }: Props) {
   const handleRollback = async (version: number) => {
     if (!confirm(`Roll back to version ${version}? This creates a new version from the old state.`)) return;
     setRolling(true);
-    const res = await fetch(
-      `${API_BASE}/api/v1/proposals/${proposalId}/versions/${version}/rollback`,
-      { method: "POST", headers }
+    const res = await apiFetch(
+      `/api/v1/proposals/${proposalId}/versions/${version}/rollback`,
+      { method: "POST" }
     );
     setRolling(false);
     if (res.ok) {
@@ -79,10 +71,11 @@ export default function VersionPanel({ proposalId, onRollback }: Props) {
   };
 
   const handleSaveNote = async (version: number) => {
-    await fetch(
-      `${API_BASE}/api/v1/proposals/${proposalId}/versions/${version}/note`,
-      { method: "PUT", headers, body: JSON.stringify({ note: noteText }) }
-    );
+    await apiFetch(`/api/v1/proposals/${proposalId}/versions/${version}/note`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: noteText }),
+    });
     setEditingNote(null);
     loadVersions();
   };

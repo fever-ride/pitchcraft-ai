@@ -8,8 +8,8 @@ from pydantic import BaseModel
 from backend.api.v1.permissions import CurrentUser, get_current_user
 from backend.core.database.connection import get_database
 from backend.core.database.repositories.feedback import FeedbackRepository
-from backend.core.database.repositories.proposals import ProposalRepository
 from backend.core.database.repositories.proposal_versions import ProposalVersionRepository
+from backend.core.database.repositories.proposals import ProposalRepository
 from backend.core.graph.executor import PipelineExecutor
 from backend.core.models.feedback import RERUN_SUGGESTIONS, FeedbackTarget
 
@@ -102,6 +102,23 @@ async def submit_feedback(
 ):
     executor = PipelineExecutor(proposal_id)
     state = await executor.load_state()
+
+    # Redis TTL (24h) may have expired after pipeline completion.
+    # Fall back to the latest MongoDB version snapshot so rerun still has state.
+    if not state:
+        db_fallback = await get_database()
+        version_repo = ProposalVersionRepository(db_fallback)
+        latest = await version_repo.get_latest(proposal_id)
+        if latest:
+            snap = latest.get("snapshot", {})
+            state = {
+                **snap,
+                "proposal_id": proposal_id,
+                "client_id": latest.get("client_id", snap.get("client_id", "")),
+                "project_id": latest.get("project_id", snap.get("project_id")),
+                "org_id": snap.get("org_id", ""),
+            }
+
     client_id = (state or {}).get("client_id", "")
     project_id = (state or {}).get("project_id")
 
@@ -261,11 +278,15 @@ async def rollback_to_version(
         note=f"Rolled back to version {version}",
     )
 
-    # Update Redis state so the active proposal reflects the rollback
+    # Update Redis state so the active proposal reflects the rollback.
+    # Fall back to identity fields if Redis has expired (24h TTL).
     executor = PipelineExecutor(proposal_id)
-    current_state = await executor.load_state()
-    if current_state:
-        current_state.update(snapshot)
-        await executor.save_state(current_state)
+    current_state = await executor.load_state() or {
+        "proposal_id": proposal_id,
+        "project_id": target.get("project_id", ""),
+        "client_id": target.get("client_id", ""),
+    }
+    current_state.update(snapshot)
+    await executor.save_state(current_state)
 
     return {"status": "rolled_back", "new_version": new_version}
